@@ -1,0 +1,16 @@
+Core/Inc/
+Core/Startup/
+Core/Src/*
+!Core/Src/main.c
+
+build/
+Drivers/
+
+.clang-format
+.cproject
+.mxproject
+.project
+STM32H723VGTX_FLASH.ld
+STM32H723VGTX_RAM.ld
+
+plan.md
