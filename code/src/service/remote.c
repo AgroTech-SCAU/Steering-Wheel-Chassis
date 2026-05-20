@@ -171,7 +171,7 @@ static RemoteSpeedLimit remote_get_speed_limit(uint16_t swb);
  * @brief 初始化遥控服务内部状态
  *
  * 该函数只清空最近命令；
- * i.BUS 接收驱动由 assemble_remote() 单独初始化
+ * i.BUS 接收驱动由 assemble_remote() 注册，实际接收由 remote_process() 维护
  */
 void remote_init(void) {
     memset(&s_command, 0, sizeof(s_command));
@@ -198,14 +198,14 @@ void remote_process(void) {
         return;
     }
 
-    if(rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_LOW) {
+    if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_SW_LOW) {
         (void)chassis.set_steer_then_drive_enabled(false);
     }
-    else {
+    else if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_CENTER) {
         (void)chassis.set_steer_then_drive_enabled(true);
     }
 
-    if(rc_data.channel[REMOTE_CH_SWA] == REMOTE_SW_LOW || rc_data.channel[REMOTE_CH_VRA] <= REMOTE_VR_LOW_THRESHOLD) {
+    if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_SW_HIGH || rc_data.channel[REMOTE_CH_VRA] <= REMOTE_VR_LOW_THRESHOLD) {
         s_command.vx = 0.0f;
         s_command.vy = 0.0f;
         s_command.wz = 0.0f;

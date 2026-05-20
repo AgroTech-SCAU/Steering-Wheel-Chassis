@@ -74,6 +74,8 @@ bool uart_receive_it(UART_HandleTypeDef* huart, uint8_t* data, uint16_t len) {
  * @return bool `true` 表示启动成功
  */
 bool uart_receive_to_idle_dma(UART_HandleTypeDef* huart, uint8_t* data, uint16_t len) {
+    HAL_StatusTypeDef status;
+
     if(huart == NULL || data == NULL || len == 0u) {
         return false;
     }
@@ -84,17 +86,9 @@ bool uart_receive_to_idle_dma(UART_HandleTypeDef* huart, uint8_t* data, uint16_t
     __HAL_UART_CLEAR_OREFLAG(huart);
     __HAL_UART_CLEAR_IDLEFLAG(huart);
 
-    if(HAL_UARTEx_ReceiveToIdle_DMA(huart, data, len) != HAL_OK) {
-        (void)HAL_UART_AbortReceive(huart);
-        __HAL_UART_CLEAR_PEFLAG(huart);
-        __HAL_UART_CLEAR_FEFLAG(huart);
-        __HAL_UART_CLEAR_NEFLAG(huart);
-        __HAL_UART_CLEAR_OREFLAG(huart);
-        __HAL_UART_CLEAR_IDLEFLAG(huart);
-
-        if(HAL_UARTEx_ReceiveToIdle_DMA(huart, data, len) != HAL_OK) {
-            return false;
-        }
+    status = HAL_UARTEx_ReceiveToIdle_DMA(huart, data, len);
+    if(status != HAL_OK) {
+        return false;
     }
 
     if(huart->hdmarx != NULL) {

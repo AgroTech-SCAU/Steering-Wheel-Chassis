@@ -1,9 +1,6 @@
 ﻿#include "chassis.h"
 
 #include "bus_motor/agv_motor.h"
-#include "bus_motor/dji_motor.h"
-#include "bus_motor/dm_motor.h"
-#include "delay.h"
 #include "log.h"
 
 #include <math.h>
@@ -26,116 +23,123 @@
  * 当前机械结构按一比一处理；
  * 若后续更换传动结构，可通过配置覆盖
  */
-#define CHASSIS_DEFAULT_WHEEL_DRIVE_RATIO 1.0f
+#define CHASSIS_DEFAULT_WHEEL_DRIVE_RATIO       1.0f
 /**
  * @brief 转向电机 S 曲线规划后的最大跟踪速度
  *
  * 单位为 rad/s；
  * 该值越大转向越快，但也更容易引入抖动
  */
-#define CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S   9.42f
+#define CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S     12.56f
 /**
  * @brief 转向电机 S 曲线规划使用的最低跟踪速度
  *
  * 单位为 rad/s；
  * 用于避免速度过低导致转向响应迟滞
  */
-#define CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S     4.71f
+#define CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S     1.57f
 /**
  * @brief 转向跟踪速度从最低值爬升到最高值的时间
  *
  * 单位为秒；
  * 该时间决定 S 曲线加速段的柔和程度
  */
-#define CHASSIS_STEER_SPEED_RAMP_TIME_S   0.20f
+#define CHASSIS_STEER_SPEED_RAMP_TIME_S         0.1f
 /**
  * @brief 转向接近目标角时开始降速的角度窗口
  *
  * 单位为 rad；
  * 误差进入该窗口后速度会平滑降低
  */
-#define CHASSIS_STEER_SLOWDOWN_ANGLE_RAD  0.628f
+#define CHASSIS_STEER_SLOWDOWN_ANGLE_RAD        0.628f
 /**
  * @brief 底盘控制任务周期
  *
  * 单位为秒；
  * 需与 TIM6 触发周期保持一致
  */
-#define CHASSIS_CONTROL_PERIOD_S          0.002f
+#define CHASSIS_CONTROL_PERIOD_S                0.002f
 /**
  * @brief 判定转向目标明显变化的角度阈值
  *
  * 单位为 rad；
- * 超过该阈值会重新启动 S 曲线速度规划
+ * 超过该阈值会启动 S 曲线速度规划
  */
-#define CHASSIS_STEER_TARGET_CHANGE_RAD   0.03f
+#define CHASSIS_STEER_TARGET_CHANGE_RAD         0.0628f
 /**
  * @brief 允许驱动电机出力的转向角误差阈值
  *
  * 单位为 rad；
  * 未进入该误差范围前，驱动速度会被置零以防漂移
  */
-#define CHASSIS_DRIVE_ANGLE_TOL_RAD       0.1f
+#define CHASSIS_DRIVE_ANGLE_TOL_RAD             0.0628f
 /**
  * @brief 驻车刹车流程使用的转向到位误差阈值
  *
  * 单位为 rad；
  * 转向角到位后才会进入电机抱死状态
  */
-#define CHASSIS_BRAKE_ANGLE_TOL_RAD       0.1f
+#define CHASSIS_BRAKE_ANGLE_TOL_RAD             0.0628f
 /**
  * @brief 圆周率常量
  *
  * 用于角度归一化和等效角计算；
  * 保持 float 精度即可满足底盘控制需求
  */
-#define CHASSIS_PI                        3.14159265358979323846f
+#define CHASSIS_PI                              3.14159265358979323846f
 /**
  * @brief 转向角完整周期
  *
  * 单位为 rad；
  * 用于选择离当前位置最近的等效转向角
  */
-#define CHASSIS_2PI                       (2.0f * CHASSIS_PI)
+#define CHASSIS_2PI                             (2.0f * CHASSIS_PI)
 /**
  * @brief 转向电机位置命令的安全绝对边界
  *
  * 单位为 rad；
  * 目标角会被限制在该范围内
  */
-#define CHASSIS_STEER_POS_LIMIT_RAD       12.4f
+#define CHASSIS_STEER_POS_LIMIT_RAD             12.4f
 /**
  * @brief 等效转向角切换滞回
  *
  * 单位为 rad；
  * 用于避免目标角在两个等效解之间来回跳变
  */
-#define CHASSIS_EQUIV_ANGLE_HYST_RAD      0.12f
+#define CHASSIS_EQUIV_ANGLE_HYST_RAD            0.12f
 /**
  * @brief 驱动方向等效优化的滞回角
  *
  * 单位为 rad；
  * 用于避免前进/后退等效解在临界角附近抖动
  */
-#define CHASSIS_DRIVE_EQUIV_HYST_RAD      0.03f
+#define CHASSIS_DRIVE_EQUIV_HYST_RAD            0.03f
 /**
- * @brief 转向电机使能重试间隔
+ * @brief 转向电机上电准备重试间隔
  *
  * 单位为底盘控制周期；
- * 冷启动未收到反馈时会按该间隔重新发送使能序列
+ * 启动未收到反馈时会按该间隔重新发送准备序列
  */
-#define CHASSIS_STEER_ENABLE_RETRY_CYCLES 250u
+#define CHASSIS_STEER_PREPARE_RETRY_CYCLES      250u
+/**
+ * @brief 驱动电机上电准备重试间隔
+ *
+ * 单位为底盘控制周期；
+ * 启动未收到反馈时会按该间隔重新发送准备序列
+ */
+#define CHASSIS_DRIVE_PREPARE_RETRY_CYCLES      250u
 
 /**
  * @brief 逻辑舵轮模块到物理 CAN 电机的映射关系
  *
- * 每个模块包含一个达妙转向电机和一个 DJI 驱动电机；
+ * 每个模块包含一个转向电机和一个驱动电机；
  * drive_sign 用于修正驱动电机安装方向
  */
 typedef struct {
     ChassisModule module; /**< 舵轮模块逻辑编号 */
-    uint8_t dm_id;        /**< 转向达妙电机 CAN ID */
-    uint8_t dji_id;       /**< 驱动大疆电机 CAN ID */
+    uint8_t steer_id;     /**< 转向电机 CAN ID */
+    uint8_t drive_id;     /**< 驱动电机 CAN ID */
     int8_t drive_sign;    /**< 驱动电机安装方向修正符号，取值为 1 或 -1 */
 } ChassisModuleMap;
 
@@ -175,12 +179,19 @@ static float s_steer_speed_last_target[CHASSIS_MODULE_COUNT] = { 0.0f };
  */
 static uint8_t s_steer_speed_initialized[CHASSIS_MODULE_COUNT] = { 0u };
 /**
- * @brief 转向电机使能重试倒计时
+ * @brief 转向电机上电准备重试倒计时
  *
  * 单位为底盘控制周期；
- * 倒计时归零后会再次发送初始化使能序列
+ * 倒计时归零后会再次发送初始化准备序列
  */
-static uint16_t s_steer_enable_retry_countdown = 0u;
+static uint16_t s_steer_prepare_retry_countdown = 0u;
+/**
+ * @brief 驱动电机上电准备重试倒计时
+ *
+ * 单位为底盘控制周期；
+ * 倒计时归零后会再次发送初始化准备序列
+ */
+static uint16_t s_drive_prepare_retry_countdown = 0u;
 /**
  * @brief 上一次记录的转向反馈缺失掩码
  *
@@ -189,27 +200,19 @@ static uint16_t s_steer_enable_retry_countdown = 0u;
  */
 static uint8_t s_last_steer_missing_mask = 0xFFu;
 /**
- * @brief 转向电机所在 FDCAN 句柄
+ * @brief 上一次记录的驱动反馈缺失掩码
  *
- * 达妙转向电机发送函数通过该句柄访问总线；
- * 初始化配置会写入该指针
+ * 每一位对应一个舵轮模块；
+ * 仅当掩码变化时才打印日志以避免刷屏
  */
-static FDCAN_HandleTypeDef* s_dm_can = NULL;
-/**
- * @brief 驱动电机所在 FDCAN 句柄
- *
- * DJI 驱动电机发送函数通过该句柄访问总线；
- * 初始化配置会写入该指针
- */
-static FDCAN_HandleTypeDef* s_dji_can = NULL;
-
+static uint8_t s_last_drive_missing_mask = 0xFFu;
 /**
  * @brief 展开舵轮模块表生成物理电机映射项
  *
  * 该宏只在 s_module_map 初始化时使用；
  * 展开后立即取消定义
  */
-#define X(name, index, dm_id, dji_index) [CHASSIS_MODULE_##name] = { CHASSIS_MODULE_##name, (dm_id), (uint8_t)((dji_index) + 1u), (((dji_index) == 1 || (dji_index) == 2) ? -1 : 1) },
+#define X(name, index, steer_id, drive_id) [CHASSIS_MODULE_##name] = { CHASSIS_MODULE_##name, (steer_id), (uint8_t)((drive_id) + 1u), (((drive_id) == 1 || (drive_id) == 2) ? -1 : 1) },
 /**
  * @brief 四个舵轮模块的固定电机映射表
  *
@@ -239,7 +242,6 @@ const struct ChassisInterface chassis_interface = {
         CHASSIS_STATUS_TABLE
     },
     .init = chassis_init,
-    .init_with_config = chassis_init_with_config,
     .set_velocity = chassis_set_velocity,
     .set_steer_then_drive_enabled = chassis_set_steer_then_drive_enabled,
     .process = chassis_process,
@@ -278,19 +280,9 @@ static float chassis_wheel_omega_to_drive_omega(float wheel_omega);
 static float chassis_drive_omega_to_wheel_omega(float drive_omega);
 
 /**
- * @brief 构造默认底盘配置
- *
- * 默认配置包含当前硬件使用的 CAN 总线和几何参数；
- * chassis_init() 会使用该配置完成初始化
- *
- * @return ChassisConfig 默认底盘配置对象
- */
-static ChassisConfig chassis_default_config(void);
-
-/**
  * @brief 检查底盘初始化配置是否合法
  *
- * 函数会检查总线句柄、几何尺寸和传动比；
+ * 函数会检查抽象电机实例、端口操作表、启动回调、几何尺寸和传动比；
  * 任何无效参数都会阻止底盘初始化
  *
  * @param config 待检查的底盘配置指针
@@ -299,68 +291,15 @@ static ChassisConfig chassis_default_config(void);
 static ChassisErrorCode chassis_check_config(const ChassisConfig* config);
 
 /**
- * @brief 通过转向电机 CAN 总线发送一帧数据
+ * @brief 向所有转向电机发送上电准备序列
  *
- * 该函数作为达妙电机设备层的发送端口；
- * 底层实际调用平台 CAN 发送接口
- *
- * @param id CAN 标识符
- * @param data CAN 数据指针
- * @param len CAN 数据长度，单位字节
- * @return true 平台层接受发送请求
- * @return false 发送请求失败
- */
-static bool chassis_dm_can_send(uint32_t id, const uint8_t* data, uint8_t len);
-
-/**
- * @brief 通过驱动电机 CAN 总线发送一帧数据
- *
- * 该函数作为 DJI 电机设备层的发送端口；
- * 底层实际调用平台 CAN 发送接口
- *
- * @param id CAN 标识符
- * @param data CAN 数据指针
- * @param len CAN 数据长度，单位字节
- * @return true 平台层接受发送请求
- * @return false 发送请求失败
- */
-static bool chassis_dji_can_send(uint32_t id, const uint8_t* data, uint8_t len);
-
-/**
- * @brief 向所有转向电机发送冷启动使能序列
- *
- * 序列包含清错、使能、切模式、设置速度、设置力矩和刹车；
+ * 具体序列由 assemble 层注册的回调决定；
  * 单个电机失败不会阻止后续电机继续尝试
  *
  * @return ChassisErrorCode 所有电机是否都接受了命令
  */
-static ChassisErrorCode chassis_enable_steer_motors(void);
-
-/**
- * @brief 分发转向电机 CAN 反馈帧
- *
- * 平台 CAN 层收到达妙电机反馈后调用本函数；
- * 函数会交给达妙电机解析器更新设备层状态
- *
- * @param hcan 收到帧的 FDCAN 句柄
- * @param header FDCAN 接收帧头
- * @param data 8 字节 CAN 数据
- * @param user 注册回调时传入的用户上下文
- */
-static void chassis_dm_can_rx_callback(FDCAN_HandleTypeDef* hcan, const FDCAN_RxHeaderTypeDef* header, const uint8_t data[8], void* user);
-
-/**
- * @brief 分发驱动电机 CAN 反馈帧
- *
- * 平台 CAN 层收到 DJI 电机反馈后调用本函数；
- * 函数会交给 DJI 电机解析器更新设备层状态
- *
- * @param hcan 收到帧的 FDCAN 句柄
- * @param header FDCAN 接收帧头
- * @param data 8 字节 CAN 数据
- * @param user 注册回调时传入的用户上下文
- */
-static void chassis_dji_can_rx_callback(FDCAN_HandleTypeDef* hcan, const FDCAN_RxHeaderTypeDef* header, const uint8_t data[8], void* user);
+static ChassisErrorCode chassis_prepare_steer_motors(void);
+static ChassisErrorCode chassis_prepare_drive_motors(void);
 
 /**
  * @brief 将外部底盘速度命令转换到内部坐标系
@@ -485,15 +424,15 @@ static float chassis_calc_steer_track_speed(ChassisModule module, float target_a
 /**
  * @brief 立即停止所有驱动电机
  *
- * 冷启动未就绪或遥控离线时调用；
+ * 启动未就绪或遥控离线时调用；
  * 只影响驱动电机，不改变转向目标
  */
 static void chassis_stop_all_drive_motors(void);
 
 /**
- * @brief 在转向反馈缺失时重试电机使能
+ * @brief 在转向反馈缺失时重试上电准备序列
  *
- * 函数负责维护冷启动 ready 状态；
+ * 函数负责维护 ready 状态；
  * 未就绪时会要求底盘保持驱动输出为零
  *
  * @param steer_feedback_ready 四个转向电机是否均有有效反馈
@@ -501,7 +440,11 @@ static void chassis_stop_all_drive_motors(void);
  * @return true 可以继续正常底盘控制
  * @return false 应保持驱动输出为零
  */
-static bool chassis_retry_enable_steer_motors(bool steer_feedback_ready, uint8_t missing_mask);
+static bool chassis_maintain_motor_startup(
+    bool steer_feedback_observed,
+    uint8_t steer_missing_mask,
+    bool drive_feedback_observed,
+    uint8_t drive_missing_mask);
 
 /**
  * @brief 检查转向目标是否已接近到允许驱动输出
@@ -532,38 +475,22 @@ static void chassis_set_brake_targets(void);
  * @return false 驻车转向目标仍在调整
  */
 static bool chassis_brake_targets_reached(void);
-bool chassis_is_ready(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 /**
- * @brief 使用默认配置初始化底盘
- * @return ChassisErrorCode 状态码
- */
-ChassisErrorCode chassis_init(void) {
-    ChassisConfig config = chassis_default_config();
-    return chassis_init_with_config(&config);
-}
-
-/**
- * @brief 使用指定配置初始化底盘
+ * @brief 初始化底盘
  * @param config 底盘配置
  * @return ChassisErrorCode 状态码
  */
-ChassisErrorCode chassis_init_with_config(const ChassisConfig* config) {
-    static const BusMotorPortOps steer_ops = {
-        .send = chassis_dm_can_send,
-    };
-    static const BusMotorPortOps drive_ops = {
-        .send = chassis_dji_can_send,
-    };
+ChassisErrorCode chassis_init(const ChassisConfig* config) {
     BusMotorConfig steer_config = {
-        .ops = &steer_ops,
+        .ops = config != NULL ? config->steer_ops : NULL,
         .timeout_ms = 0u,
         .retry_count = 0u,
     };
     BusMotorConfig drive_config = {
-        .ops = &drive_ops,
+        .ops = config != NULL ? config->drive_ops : NULL,
         .timeout_ms = 0u,
         .retry_count = 0u,
     };
@@ -576,8 +503,18 @@ ChassisErrorCode chassis_init_with_config(const ChassisConfig* config) {
         return config_status;
     }
 
-    steer_motor_set_instance(&dm_motor_instance);
-    drive_motor_set_instance(&dji_motor_instance);
+    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL
+        || config->steer_ops == NULL || config->drive_ops == NULL
+        || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL) {
+        log_error("CHASSIS dependency missing before init");
+        return ch.DEPENDENCY_MISSING;
+    }
+
+    if(steer_motor_set_instance(config->steer_motor_interface) != MOTOR_STATUS_OK
+        || drive_motor_set_instance(config->drive_motor_interface) != MOTOR_STATUS_OK) {
+        log_error("CHASSIS motor instance bind failed");
+        return ch.INVALID_PARAM;
+    }
 
     s_chassis.config = *config;
     s_chassis.brake_requested = 0u;
@@ -585,10 +522,12 @@ ChassisErrorCode chassis_init_with_config(const ChassisConfig* config) {
     s_chassis.steer_then_drive_enabled = 1u;
     s_chassis.initialized = 0u;
     chassis_reset_steer_speed_profiles();
-    s_steer_enable_retry_countdown = 0u;
-    s_chassis.steer_ready = 0u;
-    s_dm_can = config->dm_hcan;
-    s_dji_can = config->dji_hcan;
+    s_steer_prepare_retry_countdown = 0u;
+    s_drive_prepare_retry_countdown = 0u;
+    s_last_steer_missing_mask = 0xFFu;
+    s_last_drive_missing_mask = 0xFFu;
+    s_chassis.steer_motor_ready = 0u;
+    s_chassis.drive_motor_ready = 0u;
 
     if(steer_motor.init(&steer_config) != MOTOR_STATUS_OK) {
         log_error("CHASSIS steer motor device init failed");
@@ -599,23 +538,16 @@ ChassisErrorCode chassis_init_with_config(const ChassisConfig* config) {
         return ch.INVALID_PARAM;
     }
 
-    if(can_register_rx_callback(config->dm_hcan, chassis_dm_can_rx_callback, NULL) != STM32_HAL_CAN_OK) {
-        log_error("CHASSIS DM CAN rx callback register failed");
-        return ch.CAN_REGISTER_FAILED;
-    }
-    if(can_register_rx_callback(config->dji_hcan, chassis_dji_can_rx_callback, NULL) != STM32_HAL_CAN_OK) {
-        log_error("CHASSIS DJI CAN rx callback register failed");
-        return ch.CAN_REGISTER_FAILED;
-    }
-
     if(swheel.init(&s_chassis.kine, config->model) != swheel.OK) {
         log_error("CHASSIS kinematics init failed");
         return ch.KINEMATICS_FAILED;
     }
 
-    log_info("CHASSIS sending initial steer enable sequence");
-    if(chassis_enable_steer_motors() != ch.OK) {
-        log_warn("CHASSIS initial steer enable incomplete, will retry in process");
+    if(chassis_prepare_steer_motors() != ch.OK) {
+        log_warn("CHASSIS initial steer prepare incomplete, will retry in process");
+    }
+    if(chassis_prepare_drive_motors() != ch.OK) {
+        log_warn("CHASSIS initial drive prepare incomplete, will retry in process");
     }
 
     s_chassis.initialized = 1u;
@@ -663,8 +595,10 @@ ChassisErrorCode chassis_set_steer_then_drive_enabled(bool enabled) {
  */
 ChassisErrorCode chassis_process(void) {
     uint8_t i;
-    bool steer_feedback_ready = true;
+    bool steer_feedback_observed = true;
+    bool drive_feedback_observed = true;
     uint8_t steer_missing_mask = 0u;
+    uint8_t drive_missing_mask = 0u;
 
     if(s_chassis.initialized == 0u) {
         return ch.NOT_INITIALIZED;
@@ -673,14 +607,18 @@ ChassisErrorCode chassis_process(void) {
     for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
         const ChassisModuleMap* map = &s_module_map[i];
 
-        if(steer_motor.update_feedback(map->dm_id, NULL) != MOTOR_STATUS_OK) {
-            steer_feedback_ready = false;
+        if(steer_motor.update_feedback(map->steer_id, NULL) != MOTOR_STATUS_OK) {
+            steer_feedback_observed = false;
             steer_missing_mask |= (uint8_t)(1u << map->module);
         }
-        drive_motor.update_feedback(map->dji_id, NULL);
+        if(drive_motor.update_feedback(map->drive_id, NULL) != MOTOR_STATUS_OK) {
+            drive_feedback_observed = false;
+            drive_missing_mask |= (uint8_t)(1u << map->module);
+        }
     }
 
-    if(chassis_retry_enable_steer_motors(steer_feedback_ready, steer_missing_mask) == false) {
+    if(chassis_maintain_motor_startup(steer_feedback_observed, steer_missing_mask,
+        drive_feedback_observed, drive_missing_mask) == false) {
         chassis_stop_all_drive_motors();
         s_chassis.kine.state.cur_vx = 0.0f;
         s_chassis.kine.state.cur_vy = 0.0f;
@@ -693,9 +631,9 @@ ChassisErrorCode chassis_process(void) {
         const ChassisModuleMap* map = &s_module_map[i];
 
         s_chassis.kine.state.cur_wheels[map->module].wheel_omega =
-            chassis_drive_omega_to_wheel_omega((float)map->drive_sign * drive_motor.get_spd(map->dji_id));
+            chassis_drive_omega_to_wheel_omega((float)map->drive_sign * drive_motor.get_spd(map->drive_id));
         s_chassis.kine.state.cur_wheels[map->module].steer_angle =
-            steer_motor.get_pos(map->dm_id);
+            steer_motor.get_pos(map->steer_id);
     }
 
     if(s_chassis.brake_requested != 0u) {
@@ -707,8 +645,8 @@ ChassisErrorCode chassis_process(void) {
                 float target_angle = s_chassis.kine.control.wheels[map->module].steer_angle;
                 float steer_speed = chassis_calc_steer_track_speed(map->module, target_angle);
 
-                (void)drive_motor.stop(map->dji_id);
-                (void)steer_motor.set_pos_vel(map->dm_id, target_angle, steer_speed);
+                (void)drive_motor.stop(map->drive_id);
+                (void)steer_motor.set_pos_vel(map->steer_id, target_angle, steer_speed);
             }
 
             if(chassis_brake_targets_reached()) {
@@ -720,8 +658,8 @@ ChassisErrorCode chassis_process(void) {
             for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
                 const ChassisModuleMap* map = &s_module_map[i];
 
-                (void)steer_motor.brake(map->dm_id);
-                (void)drive_motor.brake(map->dji_id);
+                (void)steer_motor.brake(map->steer_id);
+                (void)drive_motor.brake(map->drive_id);
             }
         }
 
@@ -753,8 +691,8 @@ ChassisErrorCode chassis_process(void) {
             float target_speed = chassis_wheel_omega_to_drive_omega(s_chassis.kine.control.wheels[map->module].wheel_omega);
             float steer_speed = chassis_calc_steer_track_speed(map->module, target_angle);
 
-            (void)steer_motor.set_pos_vel(map->dm_id, target_angle, steer_speed);
-            (void)drive_motor.set_spd(map->dji_id, drive_ready ? ((float)map->drive_sign * target_speed) : 0.0f);
+            (void)steer_motor.set_pos_vel(map->steer_id, target_angle, steer_speed);
+            (void)drive_motor.set_spd(map->drive_id, drive_ready ? ((float)map->drive_sign * target_speed) : 0.0f);
         }
 
         if(swheel.fk(&s_chassis.kine) != swheel.OK) {
@@ -788,8 +726,8 @@ ChassisErrorCode chassis_stop(void) {
     chassis_reset_steer_speed_profiles();
 
     for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
-        (void)steer_motor.brake(s_module_map[i].dm_id);
-        (void)drive_motor.stop(s_module_map[i].dji_id);
+        (void)steer_motor.brake(s_module_map[i].steer_id);
+        (void)drive_motor.stop(s_module_map[i].drive_id);
     }
 
     return ch.OK;
@@ -841,7 +779,7 @@ const SteerWheelControl* chassis_get_control(void) {
 }
 
 /**
- * @brief 检查底盘冷启动是否已经就绪
+ * @brief 检查底盘是否已经就绪
  *
  * 当前只检查转向电机反馈状态；
  * 遥控链路是否在线由上层额外判断
@@ -849,7 +787,9 @@ const SteerWheelControl* chassis_get_control(void) {
  * @return bool `true` 表示底盘就绪，`false` 表示仍在等待反馈
  */
 bool chassis_is_ready(void) {
-    return s_chassis.initialized != 0u && s_chassis.steer_ready != 0u;
+    return s_chassis.initialized != 0u
+        && s_chassis.steer_motor_ready != 0u
+        && s_chassis.drive_motor_ready != 0u;
 }
 
 /**
@@ -874,25 +814,15 @@ const char* chassis_error_code_to_str(ChassisErrorCode status) {
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
-static ChassisConfig chassis_default_config(void) {
-    ChassisConfig config = {
-        .dm_hcan = &hfdcan1,
-        .dji_hcan = &hfdcan2,
-        .model = {
-            .length = 0.26572986916f,
-            .width = 0.26572986916f,
-            .wheel_radius = 0.057965f,
-            .max_wheel_linear_speed = 2.0f
-        },
-        .wheel_drive_ratio = CHASSIS_DEFAULT_WHEEL_DRIVE_RATIO
-    };
-
-    return config;
-}
-
 static ChassisErrorCode chassis_check_config(const ChassisConfig* config) {
-    if(config == NULL || config->dm_hcan == NULL || config->dji_hcan == NULL) {
+    if(config == NULL) {
         return ch.INVALID_PARAM;
+    }
+    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL
+        || config->steer_ops == NULL || config->drive_ops == NULL
+        || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL
+        || config->steer_ops->send == NULL || config->drive_ops->send == NULL) {
+        return ch.DEPENDENCY_MISSING;
     }
     if(config->model.length <= 0.0f || config->model.width <= 0.0f
         || config->model.wheel_radius <= 0.0f || config->model.max_wheel_linear_speed < 0.0f
@@ -903,108 +833,110 @@ static ChassisErrorCode chassis_check_config(const ChassisConfig* config) {
     return ch.OK;
 }
 
-static bool chassis_dm_can_send(uint32_t id, const uint8_t* data, uint8_t len) {
-    if(s_dm_can == NULL) {
-        return false;
-    }
-
-    return can_send(s_dm_can, id, data, len) == STM32_HAL_CAN_OK;
-}
-
-static bool chassis_dji_can_send(uint32_t id, const uint8_t* data, uint8_t len) {
-    if(s_dji_can == NULL) {
-        return false;
-    }
-
-    return can_send(s_dji_can, id, data, len) == STM32_HAL_CAN_OK;
-}
-
-static ChassisErrorCode chassis_enable_steer_motors(void) {
+static ChassisErrorCode chassis_prepare_steer_motors(void) {
     bool all_ok = true;
     uint8_t i;
 
     for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
-        uint8_t dm_id = s_module_map[i].dm_id;
+        uint8_t steer_id = s_module_map[i].steer_id;
 
-        if(dm_motor_clear_error(dm_id) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u clear_error failed", dm_id);
-            all_ok = false;
-            continue;
-        }
-        delay_ms(100);
-        if(steer_motor.enable(dm_id) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u enable failed", dm_id);
-            all_ok = false;
-            continue;
-        }
-        delay_ms(100);
-        if(steer_motor.switch_mode(dm_id, DM_MOTOR_MODE_POS_VEL) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u switch pos_vel failed", dm_id);
-            all_ok = false;
-            continue;
-        }
-        if(steer_motor.set_spd(dm_id, CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u set_spd failed", dm_id);
-            all_ok = false;
-            continue;
-        }
-        if(steer_motor.set_tor(dm_id, 0.0f) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u set_tor failed", dm_id);
-            all_ok = false;
-            continue;
-        }
-        if(steer_motor.brake(dm_id) != MOTOR_STATUS_OK) {
-            log_warn("CHASSIS steer dm_id=%u brake failed", dm_id);
+        if(s_chassis.config.prepare_steer_motor(steer_id) != MOTOR_STATUS_OK) {
+            log_warn("CHASSIS steer_id=%u prepare failed", steer_id);
             all_ok = false;
             continue;
         }
 
-        log_info("CHASSIS steer dm_id=%u enable sequence ok", dm_id);
+        log_info("CHASSIS steer_id=%u prepare ok", steer_id);
     }
 
-    if(all_ok) {
-        log_info("CHASSIS steer enable sequence all ok");
+    return all_ok ? ch.OK : ch.STEER_PREPARE_FAILED;
+}
+
+static ChassisErrorCode chassis_prepare_drive_motors(void) {
+    bool all_ok = true;
+    uint8_t i;
+
+    for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
+        uint8_t drive_id = s_module_map[i].drive_id;
+
+        if(s_chassis.config.prepare_drive_motor(drive_id) != MOTOR_STATUS_OK) {
+            log_warn("CHASSIS drive_id=%u prepare failed", drive_id);
+            all_ok = false;
+            continue;
+        }
+
+        log_info("CHASSIS drive_id=%u prepare ok", drive_id);
     }
 
-    return all_ok ? ch.OK : ch.INVALID_PARAM;
+    return all_ok ? ch.OK : ch.DRIVE_PREPARE_FAILED;
 }
 
 static void chassis_stop_all_drive_motors(void) {
     uint8_t i;
 
     for(i = 0u; i < CHASSIS_MODULE_COUNT; ++i) {
-        (void)drive_motor.stop(s_module_map[i].dji_id);
+        (void)drive_motor.stop(s_module_map[i].drive_id);
     }
 }
 
-static bool chassis_retry_enable_steer_motors(bool steer_feedback_ready, uint8_t missing_mask) {
-    if(steer_feedback_ready) {
-        if(s_chassis.steer_ready == 0u) {
-            log_info("CHASSIS steer feedback ready");
+static bool chassis_maintain_motor_startup(
+    bool steer_feedback_observed,
+    uint8_t steer_missing_mask,
+    bool drive_feedback_observed,
+    uint8_t drive_missing_mask) {
+    if(steer_feedback_observed) {
+        if(s_chassis.steer_motor_ready == 0u) {
+            log_info("CHASSIS steer motor ready");
         }
-        s_steer_enable_retry_countdown = 0u;
-        s_chassis.steer_ready = 1u;
+        s_steer_prepare_retry_countdown = 0u;
+        s_chassis.steer_motor_ready = 1u;
         s_last_steer_missing_mask = 0u;
-        return true;
+    }
+    else {
+        s_chassis.steer_motor_ready = 0u;
+
+        if(steer_missing_mask != s_last_steer_missing_mask) {
+            log_warn("CHASSIS steer feedback missing mask=0x%02X", steer_missing_mask);
+            s_last_steer_missing_mask = steer_missing_mask;
+        }
+
+        if(s_steer_prepare_retry_countdown > 0u) {
+            --s_steer_prepare_retry_countdown;
+        }
+        else {
+            log_warn("CHASSIS retry steer prepare, missing mask=0x%02X", steer_missing_mask);
+            (void)chassis_prepare_steer_motors();
+            s_steer_prepare_retry_countdown = CHASSIS_STEER_PREPARE_RETRY_CYCLES;
+        }
     }
 
-    s_chassis.steer_ready = 0u;
+    if(drive_feedback_observed) {
+        if(s_chassis.drive_motor_ready == 0u) {
+            log_info("CHASSIS drive motor ready");
+        }
+        s_drive_prepare_retry_countdown = 0u;
+        s_chassis.drive_motor_ready = 1u;
+        s_last_drive_missing_mask = 0u;
+    }
+    else {
+        s_chassis.drive_motor_ready = 0u;
 
-    if(missing_mask != s_last_steer_missing_mask) {
-        log_warn("CHASSIS steer feedback missing mask=0x%02X", missing_mask);
-        s_last_steer_missing_mask = missing_mask;
+        if(drive_missing_mask != s_last_drive_missing_mask) {
+            log_warn("CHASSIS drive feedback missing mask=0x%02X", drive_missing_mask);
+            s_last_drive_missing_mask = drive_missing_mask;
+        }
+
+        if(s_drive_prepare_retry_countdown > 0u) {
+            --s_drive_prepare_retry_countdown;
+        }
+        else {
+            log_warn("CHASSIS retry drive prepare, missing mask=0x%02X", drive_missing_mask);
+            (void)chassis_prepare_drive_motors();
+            s_drive_prepare_retry_countdown = CHASSIS_DRIVE_PREPARE_RETRY_CYCLES;
+        }
     }
 
-    if(s_steer_enable_retry_countdown > 0u) {
-        --s_steer_enable_retry_countdown;
-        return false;
-    }
-
-    log_warn("CHASSIS retry steer enable, missing mask=0x%02X", missing_mask);
-    (void)chassis_enable_steer_motors();
-    s_steer_enable_retry_countdown = CHASSIS_STEER_ENABLE_RETRY_CYCLES;
-
-    return false;
+    return s_chassis.steer_motor_ready != 0u && s_chassis.drive_motor_ready != 0u;
 }
 
 static float chassis_wheel_omega_to_drive_omega(float wheel_omega) {
@@ -1013,34 +945,6 @@ static float chassis_wheel_omega_to_drive_omega(float wheel_omega) {
 
 static float chassis_drive_omega_to_wheel_omega(float drive_omega) {
     return drive_omega / s_chassis.config.wheel_drive_ratio;
-}
-
-static void chassis_dm_can_rx_callback(FDCAN_HandleTypeDef* hcan,
-    const FDCAN_RxHeaderTypeDef* header,
-    const uint8_t data[8],
-    void* user) {
-    (void)hcan;
-    (void)user;
-
-    if(header == NULL) {
-        return;
-    }
-
-    (void)dm_motor_parse_feedback_frame(header->Identifier, data, NULL);
-}
-
-static void chassis_dji_can_rx_callback(FDCAN_HandleTypeDef* hcan,
-    const FDCAN_RxHeaderTypeDef* header,
-    const uint8_t data[8],
-    void* user) {
-    (void)hcan;
-    (void)user;
-
-    if(header == NULL) {
-        return;
-    }
-
-    (void)dji_motor_parse_feedback_frame(header->Identifier, data, NULL);
 }
 
 static void chassis_external_to_internal_twist(float vx_ext, float vy_ext, float wz_ext, float* vx_int, float* vy_int, float* wz_int) {

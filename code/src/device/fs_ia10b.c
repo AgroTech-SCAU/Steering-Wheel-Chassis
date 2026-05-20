@@ -56,14 +56,6 @@
 #define IBUS_RX_RESTART_INTERVAL_MS 200u
 
 /**
- * @brief UART5 完整重新初始化的最小间隔
- *
- * 如果单纯重启 DMA 仍无法恢复接收；
- * 会按该间隔重新配置 UART5 反相接收
- */
-#define IBUS_UART_REINIT_INTERVAL_MS 1000u
-
-/**
  * @brief UART5 i.BUS 字节流的 DMA 接收缓存
  *
  * 缓存按 32 字节对齐；
@@ -96,12 +88,9 @@ static uint8_t s_frame_index = 0u;
 static uint32_t s_last_restart_ms = 0u;
 
 /**
- * @brief 上一次完整重初始化 UART5 的系统时间戳
- *
- * 单位为 HAL_GetTick() 的毫秒计数；
- * 用于避免频繁 DeInit/Init UART 外设
+ * @brief UART5 ReceiveToIdle DMA 是否已经启动并在等待数据
  */
-static uint32_t s_last_uart_reinit_ms = 0u;
+static volatile bool s_rx_active = false;
 
 /**
  * @brief 当前在线周期是否已经记录过日志
@@ -127,6 +116,19 @@ static volatile FsIa10bData s_data;
  */
 static volatile FsIa10bDebug s_debug;
 
+/**
+ * @brief 是否有待处理的接收错误需要重启 DMA
+ *
+ * 该标志在 UART 错误回调中置位；
+ * 主循环看到后会执行重启流程
+ */
+static volatile bool s_ibus_restart_pending = false;
+
+/**
+ * @brief 下一次重启接收前是否需要先 abort HAL 当前接收状态
+ */
+static volatile bool s_abort_before_restart = false;
+
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 /**
@@ -143,7 +145,7 @@ static void ibus_rx_event_callback(uint16_t size);
  * @brief 处理 UART5 错误回调
  *
  * 出错后会清空当前帧同步状态；
- * 然后重新启动 DMA 接收以等待下一帧
+ * 然后标记主循环重新启动 DMA 接收以等待下一帧
  */
 static void ibus_error_callback(void);
 
@@ -167,17 +169,6 @@ static bool ibus_restart_receive(void);
  * @param size 需要失效的接收字节数
  */
 static void ibus_invalidate_dma_buffer(uint16_t size);
-
-/**
- * @brief 使用 i.BUS 所需的反相接收配置重初始化 UART5
- *
- * 冷启动时接收机可能比主控慢稳定；
- * 重新初始化可以从 UART 错误或半帧状态中恢复
- *
- * @return true UART5 配置成功并已启动接收
- * @return false UART5 配置或接收启动失败
- */
-static bool ibus_uart_init_inverted(void);
 
 /**
  * @brief 向 i.BUS 帧解析器输入一个字节
@@ -226,7 +217,6 @@ static void ibus_parse_frame(const uint8_t frame[FS_IA10B_IBUS_FRAME_LEN]);
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 void ibus_init(void) {
-    log_info("IBUS init begin");
     memset((void*)&s_data, 0, sizeof(s_data));
     memset((void*)&s_debug, 0, sizeof(s_debug));
     memset(s_frame, 0, sizeof(s_frame));
@@ -234,16 +224,13 @@ void ibus_init(void) {
 
     s_frame_index = 0u;
     s_last_restart_ms = 0u;
-    s_last_uart_reinit_ms = 0u;
+    s_rx_active = false;
+    s_online_logged = false;
+    s_ibus_restart_pending = true;
+    s_abort_before_restart = false;
 
     uart_register_rx_event_callback(&huart5, ibus_rx_event_callback);
     uart_register_error_callback(&huart5, ibus_error_callback);
-    if(ibus_uart_init_inverted()) {
-        log_info("IBUS init done");
-    }
-    else {
-        log_error("IBUS init failed");
-    }
 }
 
 void ibus_maintain(void) {
@@ -254,26 +241,28 @@ void ibus_maintain(void) {
             log_info("IBUS online frame_count=%lu", (unsigned long)s_data.frame_count);
             s_online_logged = true;
         }
-        return;
     }
-
-    if(s_online_logged) {
+    else if(s_online_logged) {
         s_online_logged = false;
     }
 
-    if((now - s_last_restart_ms) < IBUS_RX_RESTART_INTERVAL_MS) {
+    if(s_rx_active && !s_ibus_restart_pending) {
         return;
     }
 
-    s_frame_index = 0u;
-
-    if((now - s_last_uart_reinit_ms) >= IBUS_UART_REINIT_INTERVAL_MS) {
-        s_last_uart_reinit_ms = now;
-        (void)ibus_uart_init_inverted();
+    if(!s_ibus_restart_pending && (now - s_last_restart_ms) < IBUS_RX_RESTART_INTERVAL_MS) {
+        return;
     }
-    else {
+
+    s_ibus_restart_pending = false;
+    s_frame_index = 0u;
+    if(s_abort_before_restart) {
+        s_abort_before_restart = false;
         (void)uart_abort_receive_dma(&huart5);
-        (void)ibus_restart_receive();
+    }
+
+    if(!ibus_restart_receive()) {
+        s_ibus_restart_pending = false;
     }
 }
 
@@ -345,6 +334,8 @@ uint16_t ibus_get_channel(uint8_t index) {
 static void ibus_rx_event_callback(uint16_t size) {
     uint16_t i;
 
+    s_rx_active = false;
+
     if(size > IBUS_DMA_RX_BUF_LEN) {
         size = IBUS_DMA_RX_BUF_LEN;
     }
@@ -355,22 +346,23 @@ static void ibus_rx_event_callback(uint16_t size) {
         ibus_feed_byte(s_dma_rx_buf[i]);
     }
 
-    ibus_restart_receive();
+    s_ibus_restart_pending = true;
 }
 
 static void ibus_error_callback(void) {
+    s_rx_active = false;
     s_frame_index = 0u;
     s_data.error_count++;
-
-    (void)uart_abort_receive_dma(&huart5);
-    ibus_restart_receive();
+    s_abort_before_restart = true;
+    s_ibus_restart_pending = true;
 }
 
 static bool ibus_restart_receive(void) {
     memset(s_dma_rx_buf, 0, sizeof(s_dma_rx_buf));
     ibus_invalidate_dma_buffer(IBUS_DMA_RX_BUF_LEN);
     s_last_restart_ms = HAL_GetTick();
-    return uart_receive_to_idle_dma(&huart5, s_dma_rx_buf, IBUS_DMA_RX_BUF_LEN);
+    s_rx_active = uart_receive_to_idle_dma(&huart5, s_dma_rx_buf, IBUS_DMA_RX_BUF_LEN);
+    return s_rx_active;
 }
 
 static void ibus_invalidate_dma_buffer(uint16_t size) {
@@ -382,50 +374,6 @@ static void ibus_invalidate_dma_buffer(uint16_t size) {
     }
 
     SCB_InvalidateDCache_by_Addr((uint32_t*)start, (int32_t)(end - start));
-}
-
-static bool ibus_uart_init_inverted(void) {
-    (void)uart_abort_receive_dma(&huart5);
-    (void)HAL_UART_DeInit(&huart5);
-
-    /*
-     * 当前硬件接线需要开启 UART RX 反相；
-     * 这样 FS-iA10B 的 i.BUS 帧才能按 115200 8N1 正常解析
-     */
-    huart5.Init.BaudRate = 115200;
-    huart5.Init.WordLength = UART_WORDLENGTH_8B;
-    huart5.Init.StopBits = UART_STOPBITS_1;
-    huart5.Init.Parity = UART_PARITY_NONE;
-    huart5.Init.Mode = UART_MODE_TX_RX;
-    huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart5.Init.OverSampling = UART_OVERSAMPLING_16;
-    huart5.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-    huart5.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-    huart5.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_RXINVERT_INIT;
-    huart5.AdvancedInit.RxPinLevelInvert = UART_ADVFEATURE_RXINV_ENABLE;
-
-    if(HAL_UART_Init(&huart5) != HAL_OK) {
-        return false;
-    }
-
-    if(HAL_UARTEx_SetTxFifoThreshold(&huart5, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK) {
-        return false;
-    }
-
-    if(HAL_UARTEx_SetRxFifoThreshold(&huart5, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK) {
-        return false;
-    }
-
-    if(HAL_UARTEx_DisableFifoMode(&huart5) != HAL_OK) {
-        return false;
-    }
-
-    memset(s_frame, 0, sizeof(s_frame));
-    memset(s_dma_rx_buf, 0, sizeof(s_dma_rx_buf));
-    memset((void*)&s_debug, 0, sizeof(s_debug));
-    s_frame_index = 0u;
-    ibus_restart_receive();
-    return true;
 }
 
 static void ibus_feed_byte(uint8_t byte) {

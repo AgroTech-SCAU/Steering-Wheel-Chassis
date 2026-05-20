@@ -1,6 +1,7 @@
 #include "pid.h"
 
 #include <stdbool.h>
+#include <assert.h>
 
 // ! ========================= 变 量 声 明 ========================= ! //
 

@@ -55,8 +55,8 @@ typedef struct {
 /**
  * @brief 初始化 FS-iA10B i.BUS 接收驱动
  *
- * 函数会配置 UART5 反相接收；
- * 并启动空闲行 DMA 接收
+ * UART5 的波特率、反相等硬件参数由 CubeMX/.ioc 配置；
+ * 本函数只注册回调；空闲行 DMA 接收由 ibus_maintain() 在主循环中启动
  */
 void ibus_init(void);
 
@@ -64,7 +64,7 @@ void ibus_init(void);
  * @brief 维护 i.BUS 接收状态
  *
  * 遥控离线或冷启动未收到有效帧时；
- * 函数会按限频策略重启 DMA 或重初始化 UART5
+ * 函数会按限频策略重启 DMA 接收，不会重新初始化 UART5
  */
 void ibus_maintain(void);
 

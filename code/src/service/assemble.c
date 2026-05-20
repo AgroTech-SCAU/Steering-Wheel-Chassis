@@ -8,6 +8,8 @@
 #include "remote.h"
 
 // ! device ! //
+#include "bus_motor/dji_motor.h"
+#include "bus_motor/dm_motor.h"
 #include "rgb_led/rgb_led.h"
 #include "rgb_led/ws2812_rgb_led.h"
 #include "imu/imu.h"
@@ -29,12 +31,21 @@
 // ! ========================= 变 量 声 明 ========================= ! //
 
 /**
- * @brief 冷启动上电稳定等待时间
+ * @brief 启动上电稳定等待时间
  *
  * 接收机、电机和电源轨在刚上电时需要先稳定一段时间；
  * 该延时集中放在装配初始化入口，避免各模块里散落过多等待
  */
-#define ASSEMBLE_BOOT_SETTLE_DELAY_MS 2500u
+#define ASSEMBLE_BOOT_SETTLE_DELAY_MS 2000u
+
+/**
+ * @brief 底盘转向电机 can_send 接口的绑定函数
+ */
+static bool chassis_steer_can_send(uint32_t id, const uint8_t* data, uint8_t len);
+/**
+ * @brief 底盘驱动电机 can_send 接口的绑定函数
+ */
+static bool chassis_drive_can_send(uint32_t id, const uint8_t* data, uint8_t len);
 
 /**
  * @brief WS2812 RGB 灯的颜色缓存
@@ -71,6 +82,28 @@ static const RgbLedPortOps rgb_ops = {
 static const LogPortOps log_ops = {
     .write = uart1_write,
 };
+/**
+ * @brief 底盘转向电机使用的总线端口操作表
+ *
+ * 组装层将抽象 send 端口绑定到 FDCAN1；
+ * chassis 通过注册接口拿到该端口
+ */
+static const BusMotorPortOps chassis_steer_motor_ops = {
+    .send = chassis_steer_can_send,
+    .now_ms = HAL_GetTick,
+    .delay_ms = delay_ms,
+};
+/**
+ * @brief 底盘驱动电机使用的总线端口操作表
+ *
+ * 组装层将抽象 send 端口绑定到 FDCAN2；
+ * chassis 通过注册接口拿到该端口
+ */
+static const BusMotorPortOps chassis_drive_motor_ops = {
+    .send = chassis_drive_can_send,
+    .now_ms = HAL_GetTick,
+    .delay_ms = delay_ms,
+};
 
 /**
  * @brief 底盘控制周期事件标志
@@ -78,7 +111,7 @@ static const LogPortOps log_ops = {
  * TIM6 中断只置位该标志；
  * 主循环看到标志后再执行完整底盘控制流程
  */
-bool tim6_500hz_flag = false;
+volatile bool tim6_500hz_flag = false;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -99,9 +132,9 @@ static void assemble_log(void);
 static void assemble_imu(void);
 
 /**
- * @brief 初始化 RGB 灯并设置冷启动指示色
+ * @brief 初始化 RGB 灯并设置启动指示色
  *
- * 冷启动阶段先显示红灯；
+ * 启动阶段先显示红灯；
  * 后续由主循环根据底盘和遥控状态切换为绿灯
  */
 static void assemble_rgb_led(void);
@@ -122,7 +155,12 @@ static void assemble_chassis(void);
  */
 static void assemble_remote(void);
 
-
+/**
+ * @brief 初始化 TIM6 定时器并注册控制周期回调
+ *
+ * TIM6 定时器以 500Hz 频率触发中断；
+ * 回调函数内只设置事件标志，具体控制计算留给主循环执行
+ */
 static void assemble_tim6_500hz(void);
 
 /**
@@ -143,6 +181,51 @@ static void rgb_led_write_complete_callback(SPI_HandleTypeDef* hspi);
  */
 static void tim6_callback(void);
 
+/**
+ * @brief 执行单个转向电机的上电准备序列
+ *
+ * 序列包含清错、使能、切到位置速度模式、写默认限速和刹车；
+ * chassis 在初始化和重试阶段都会通过注册回调调用该函数
+ *
+ * @param id 转向电机 ID
+ * @return BusMotorStatus 组装序列执行结果
+ */
+static BusMotorStatus chassis_prepare_steer_motor(uint16_t id);
+/**
+ * @brief 执行单个驱动电机的上电准备序列
+ *
+ * 序列包含清错、使能、切到速度模式、写默认限速和刹车；
+ * chassis 在初始化和重试阶段都会通过注册回调调用该函数
+ *
+ * @param id 驱动电机 ID
+ * @return BusMotorStatus 组装序列执行结果
+ */
+static BusMotorStatus chassis_prepare_drive_motor(uint16_t id);
+/**
+ * @brief 分发转向电机 CAN 反馈帧
+ *
+ * 平台 CAN 层收到 FDCAN1 回包后会进入该回调；
+ * 回调只负责把帧转交给转向电机解析器
+ *
+ * @param hcan 收到帧的 FDCAN 句柄
+ * @param header FDCAN 接收帧头
+ * @param data 8 字节 CAN 数据
+ * @param user 注册回调时传入的用户上下文
+ */
+static void chassis_steer_can_rx_callback(FDCAN_HandleTypeDef* hcan, const FDCAN_RxHeaderTypeDef* header, const uint8_t data[8], void* user);
+/**
+ * @brief 分发驱动电机 CAN 反馈帧
+ *
+ * 平台 CAN 层收到 FDCAN2 回包后会进入该回调；
+ * 回调只负责把帧转交给驱动电机解析器
+ *
+ * @param hcan 收到帧的 FDCAN 句柄
+ * @param header FDCAN 接收帧头
+ * @param data 8 字节 CAN 数据
+ * @param user 注册回调时传入的用户上下文
+ */
+static void chassis_drive_can_rx_callback(FDCAN_HandleTypeDef* hcan, const FDCAN_RxHeaderTypeDef* header, const uint8_t data[8], void* user);
+
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 void assemble_init(void) {
@@ -151,16 +234,28 @@ void assemble_init(void) {
 
     assemble_log();
     log_info("BOOT log ready");
+    delay_ms(100);
+
     assemble_rgb_led();
     log_info("BOOT rgb init step done");
+    delay_ms(100);
+
     assemble_imu();
     log_info("BOOT imu init step done");
+    delay_ms(100);
+
     assemble_chassis();
     log_info("BOOT chassis init step done");
+    delay_ms(100);
+
     assemble_remote();
     log_info("BOOT remote init step done");
+    delay_ms(100);
+
     assemble_tim6_500hz();
     log_info("BOOT tim6 500hz init step done");
+    delay_ms(100);
+
 }
 
 static void assemble_log(void) {
@@ -215,6 +310,22 @@ static void assemble_rgb_led(void) {
 }
 
 static void assemble_chassis(void) {
+    ChassisConfig chassis_config = {
+        .steer_motor_interface = &dm_motor_instance,
+        .drive_motor_interface = &dji_motor_instance,
+        .steer_ops = &chassis_steer_motor_ops,
+        .drive_ops = &chassis_drive_motor_ops,
+        .prepare_steer_motor = chassis_prepare_steer_motor,
+        .prepare_drive_motor = chassis_prepare_drive_motor,
+        .model = {
+            .length = 0.26572986916f,
+            .width = 0.26572986916f,
+            .wheel_radius = 0.057965f,
+            .max_wheel_linear_speed = 2.0f
+        },
+        .wheel_drive_ratio = 1.0f
+    };
+
     log_info("CHASSIS assemble begin");
     assert(can_filter_init() == STM32_HAL_CAN_OK);
     log_info("CHASSIS CAN filter ok");
@@ -223,9 +334,12 @@ static void assemble_chassis(void) {
     assert(can_start(&hfdcan2) == STM32_HAL_CAN_OK);
     log_info("CHASSIS FDCAN2 start ok");
 
+    assert(can_register_rx_callback(&hfdcan1, chassis_steer_can_rx_callback, NULL) == STM32_HAL_CAN_OK);
+    assert(can_register_rx_callback(&hfdcan2, chassis_drive_can_rx_callback, NULL) == STM32_HAL_CAN_OK);
+
     delay_ms(100);
 
-    assert(chassis_init() == chassis.OK);
+    assert(chassis_init(&chassis_config) == chassis.OK);
     log_info("CHASSIS service init ok");
 }
 
@@ -249,4 +363,80 @@ static void rgb_led_write_complete_callback(SPI_HandleTypeDef* hspi) {
 
 static void tim6_callback(void) {
     tim6_500hz_flag = true;
+}
+
+static bool chassis_steer_can_send(uint32_t id, const uint8_t* data, uint8_t len) {
+    return can_send(&hfdcan1, id, data, len) == STM32_HAL_CAN_OK;
+}
+
+static bool chassis_drive_can_send(uint32_t id, const uint8_t* data, uint8_t len) {
+    return can_send(&hfdcan2, id, data, len) == STM32_HAL_CAN_OK;
+}
+
+static BusMotorStatus chassis_prepare_steer_motor(uint16_t id) {
+    if(dm_motor_clear_error(id) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    delay_ms(100);
+    if(steer_motor.enable(id) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    delay_ms(100);
+    if(steer_motor.switch_mode(id, DM_MOTOR_MODE_POS_VEL) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    if(steer_motor.set_spd(id, 0.0f) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    if(steer_motor.set_tor(id, 0.0f) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    if(steer_motor.brake(id) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+
+    delay_ms(100);
+    return MOTOR_STATUS_OK;
+}
+
+static BusMotorStatus chassis_prepare_drive_motor(uint16_t id) {
+    if(drive_motor.enable(id) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    if(drive_motor.switch_mode(id, DJI_MOTOR_MODE_SPEED) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+    if(drive_motor.stop(id) != MOTOR_STATUS_OK) {
+        return MOTOR_STATUS_ERROR;
+    }
+
+    return MOTOR_STATUS_OK;
+}
+
+static void chassis_steer_can_rx_callback(FDCAN_HandleTypeDef* hcan,
+    const FDCAN_RxHeaderTypeDef* header,
+    const uint8_t data[8],
+    void* user) {
+    (void)hcan;
+    (void)user;
+
+    if(header == NULL) {
+        return;
+    }
+
+    (void)dm_motor_parse_feedback_frame(header->Identifier, data, NULL);
+}
+
+static void chassis_drive_can_rx_callback(FDCAN_HandleTypeDef* hcan,
+    const FDCAN_RxHeaderTypeDef* header,
+    const uint8_t data[8],
+    void* user) {
+    (void)hcan;
+    (void)user;
+
+    if(header == NULL) {
+        return;
+    }
+
+    (void)dji_motor_parse_feedback_frame(header->Identifier, data, NULL);
 }

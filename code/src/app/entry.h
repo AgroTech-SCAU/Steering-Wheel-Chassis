@@ -34,11 +34,12 @@
 // ! ========================= 接 口 变 量 / Typedef 声 明 ========================= ! //
 
 static ms_t log_task = 0;
+static ms_t heartbeat_task = 0;
 static ImuAcc accel = { 0.0f, 0.0f, 0.0f };
 static ImuGyro gyro = { 0.0f, 0.0f, 0.0f };
 static ImuAngle angle = { 0.0f, 0.0f, 0.0f };
 static uint8_t remote = 0;
-static uint8_t chassis_ready_led_state = 0u;
+static uint8_t led_state = 0u;
 
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
@@ -51,10 +52,8 @@ static uint8_t chassis_ready_led_state = 0u;
 static inline void entry_init(void) {
     assemble_init();
 
-    delay_ms(500);
     log_info("System initialized successfully");
-
-    chassis.set_velocity(0.0f, 0.0f, 0.0f);
+    delay_ms(500);
 }
 
 /**
@@ -67,6 +66,7 @@ static inline void entry_loop(void) {
     // ! 事件驱动任务 ! //
     if(tim6_500hz_flag) {
         tim6_500hz_flag = false;
+
         chassis.process();
 
         if(remote++ % 5 == 0) {
@@ -79,20 +79,28 @@ static inline void entry_loop(void) {
                 angle = imu.get_angle();
             }
         }
-
-        RemoteCommand command;
-        const bool ready = chassis.is_ready() && remote_get_command(&command);
-        const uint8_t target_state = ready ? 2u : 1u;
-
-        if(chassis_ready_led_state == target_state) return;
-        if(ready) rgb_led.fill(0U, 255U, 0U);
-        else rgb_led.fill(255U, 0U, 0U);
-        if(rgb_led.show() == RGB_LED_STATUS_OK) chassis_ready_led_state = target_state;
     }
 
     // ! 周期性任务 ! //
-    if(delay_nb_ms(&log_task, 1000)) {
+    if(delay_nb_ms(&heartbeat_task, 1000)) {
+        RemoteCommand remote_command;
+        const bool chassis_ready = chassis.is_ready();
+        const bool remote_online = remote_get_command(&remote_command);
 
+        uint8_t target_state = chassis_ready ? 1u : 0u;
+        if(target_state == 1u && remote_online) target_state = 2u;
+
+        if(led_state != target_state) {
+            if(target_state == 2u) rgb_led.fill(0U, 0U, 255U);
+            else if(target_state == 1u) rgb_led.fill(0U, 255U, 0U);
+            else rgb_led.fill(255U, 0U, 0U);
+            if(rgb_led.show() == RGB_LED_STATUS_OK) led_state = target_state;
+            log_info("Chassis %s, Remote %s", chassis_ready ? "Ready" : "Not Ready", remote_online ? "Online" : "Offline");
+        }
+    }
+
+    if(delay_nb_ms(&log_task, 2000)) {
+        log_info("Heartbeat");
     }
 }
 

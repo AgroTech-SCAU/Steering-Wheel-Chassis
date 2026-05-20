@@ -57,6 +57,7 @@ static DmMotorSlot* dm_motor_get_slot(uint16_t id);
 static const DmMotorSlot* dm_motor_get_slot_const(uint16_t id);
 static void dm_motor_reset_slot(DmMotorSlot* slot, uint16_t id);
 static BusMotorStatus dm_motor_send(uint32_t id, const uint8_t* data, uint8_t len);
+static BusMotorStatus dm_motor_send_delayed(uint32_t id, const uint8_t* data, uint8_t len);
 static void dm_motor_write_mode(uint16_t id, DmMotorMode mode);
 static BusMotorStatus dm_motor_apply_command(uint16_t id);
 static BusMotorStatus dm_motor_send_pos_vel(uint16_t id, const DmMotorSlot* slot);
@@ -145,7 +146,7 @@ static BusMotorStatus dm_motor_enable(uint16_t id) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
 
-    return dm_motor_send(id, data, DM_MOTOR_CMD_LEN);
+    return dm_motor_send_delayed(id, data, DM_MOTOR_CMD_LEN);
 }
 
 /**
@@ -158,7 +159,7 @@ static BusMotorStatus dm_motor_disable(uint16_t id) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
 
-    return dm_motor_send(id, data, DM_MOTOR_CMD_LEN);
+    return dm_motor_send_delayed(id, data, DM_MOTOR_CMD_LEN);
 }
 
 /**
@@ -406,7 +407,7 @@ BusMotorStatus dm_motor_clear_error(uint16_t id) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
 
-    return dm_motor_send(id, data, DM_MOTOR_CMD_LEN);
+    return dm_motor_send_delayed(id, data, DM_MOTOR_CMD_LEN);
 }
 
 /**
@@ -419,7 +420,7 @@ BusMotorStatus dm_motor_save_zero(uint16_t id) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
 
-    return dm_motor_send(id, data, DM_MOTOR_CMD_LEN);
+    return dm_motor_send_delayed(id, data, DM_MOTOR_CMD_LEN);
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
@@ -462,11 +463,17 @@ static BusMotorStatus dm_motor_send(uint32_t id, const uint8_t* data, uint8_t le
     if(s_ops->send(id, data, len) == false) {
         return MOTOR_STATUS_PORT_ERROR;
     }
-    if(s_ops->delay_ms != 0) {
+    return MOTOR_STATUS_OK;
+}
+
+static BusMotorStatus dm_motor_send_delayed(uint32_t id, const uint8_t* data, uint8_t len) {
+    BusMotorStatus status = dm_motor_send(id, data, len);
+
+    if(status == MOTOR_STATUS_OK && s_ops != 0 && s_ops->delay_ms != 0) {
         s_ops->delay_ms(1u);
     }
 
-    return MOTOR_STATUS_OK;
+    return status;
 }
 
 static void dm_motor_write_mode(uint16_t id, DmMotorMode mode) {
@@ -481,7 +488,7 @@ static void dm_motor_write_mode(uint16_t id, DmMotorMode mode) {
     data[6] = 0u;
     data[7] = 0u;
 
-    (void)dm_motor_send(DM_MOTOR_REG_WRITE_FRAME_ID, data, DM_MOTOR_CMD_LEN);
+    (void)dm_motor_send_delayed(DM_MOTOR_REG_WRITE_FRAME_ID, data, DM_MOTOR_CMD_LEN);
 }
 
 static BusMotorStatus dm_motor_apply_command(uint16_t id) {

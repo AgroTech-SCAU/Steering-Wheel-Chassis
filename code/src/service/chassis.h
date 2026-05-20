@@ -1,7 +1,7 @@
 #ifndef _CHASSIS_H_
 #define _CHASSIS_H_
 
-#include "stm32_hal_can.h" // IWYU pragma: keep
+#include "bus_motor/agv_motor.h" // IWYU pragma: keep
 #include "steer_wheel_kine.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,7 +18,8 @@
  * @param OK 操作成功
  * @param INVALID_PARAM 输入参数无效
  * @param INVALID_MODEL 底盘模型参数无效
- * @param CAN_REGISTER_FAILED CAN 回调注册失败
+ * @param DEPENDENCY_MISSING 底盘依赖尚未完成组装
+ * @param STEER_PREPARE_FAILED 转向电机上电准备序列执行失败
  * @param KINEMATICS_FAILED 舵轮运动学求解失败
  * @param NOT_INITIALIZED 底盘尚未初始化
  */
@@ -26,7 +27,9 @@
     X(OK, "OK") \
     X(INVALID_PARAM, "Invalid Parameter") \
     X(INVALID_MODEL, "Invalid Model") \
-    X(CAN_REGISTER_FAILED, "CAN RX Callback Register Failed") \
+    X(DEPENDENCY_MISSING, "Chassis Dependency Missing") \
+    X(STEER_PREPARE_FAILED, "Steer Motor Prepare Failed") \
+    X(DRIVE_PREPARE_FAILED, "Drive Motor Prepare Failed") \
     X(KINEMATICS_FAILED, "Steer Wheel Kinematics Failed") \
     X(NOT_INITIALIZED, "Chassis Not Initialized")
 
@@ -57,7 +60,7 @@ typedef enum {
 /**
  * @brief 底盘舵轮模块枚举
  */
-#define X(name, index, dm_id, dji_index) CHASSIS_MODULE_##name = (index),
+#define X(name, index, steer_id, drive_id) CHASSIS_MODULE_##name = (index),
 typedef enum {
     CHASSIS_MODULE_TABLE
     CHASSIS_MODULE_COUNT = 4
@@ -66,14 +69,21 @@ typedef enum {
 
 /**
  * @brief 底盘服务初始化配置
- * @param dm_hcan 转向电机所在 CAN 总线
- * @param dji_hcan 驱动电机所在 CAN 总线
+ * @param steer_motor_interface 转向电机抽象接口实例
+ * @param drive_motor_interface 驱动电机抽象接口实例
+ * @param steer_ops 转向电机总线端口操作表
+ * @param drive_ops 驱动电机总线端口操作表
+ * @param prepare_steer_motor 转向电机上电准备回调函数
  * @param model 舵轮底盘几何模型参数
  * @param wheel_drive_ratio 轮速到驱动电机速度的传动比
  */
 typedef struct {
-    FDCAN_HandleTypeDef* dm_hcan;
-    FDCAN_HandleTypeDef* dji_hcan;
+    const BusMotorInterface* steer_motor_interface;
+    const BusMotorInterface* drive_motor_interface;
+    const BusMotorPortOps* steer_ops;
+    const BusMotorPortOps* drive_ops;
+    BusMotorStatus(*prepare_steer_motor)(uint16_t id);
+    BusMotorStatus(*prepare_drive_motor)(uint16_t id);
     SteerWheelModel model;
     float wheel_drive_ratio;
 } ChassisConfig;
@@ -84,6 +94,8 @@ typedef struct {
  * @param config 当前底盘配置
  * @param brake_requested 是否已请求进入驻车刹车流程
  * @param brake_latched 驻车目标角是否已到位并进入抱死状态
+ * @param steer_then_drive_enabled 是否启用先转向到位再驱动模式
+ * @param steer_ready 转向电机反馈就绪标志
  * @param initialized 是否已经完成初始化
  */
 typedef struct {
@@ -91,20 +103,9 @@ typedef struct {
     ChassisConfig config;
     uint8_t brake_requested;
     uint8_t brake_latched;
-    /**
-     * @brief 是否等待转向到位后再输出驱动速度
-     *
-     * 置位时保留原有“先转向再驱动”保护逻辑；
-     * 清零时转向与驱动命令会同步下发。
-     */
     uint8_t steer_then_drive_enabled;
-    /**
-     * @brief 转向电机反馈就绪标志
-     *
-     * 四个转向电机均收到有效反馈后置位；
-     * 主循环可据此判断冷启动是否完成
-     */
-    uint8_t steer_ready;
+    uint8_t steer_motor_ready;
+    uint8_t drive_motor_ready;
     uint8_t initialized;
 } Chassis;
 
@@ -117,16 +118,11 @@ extern const struct ChassisInterface {
         CHASSIS_STATUS_TABLE
     };
     /**
-     * @brief 使用默认配置初始化底盘
-     * @return ChassisErrorCode 状态码
-     */
-    ChassisErrorCode(*init)(void);
-    /**
-     * @brief 使用指定配置初始化底盘
+     * @brief 使用配置初始化底盘
      * @param config 底盘配置
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*init_with_config)(const ChassisConfig* config);
+    ChassisErrorCode(*init)(const ChassisConfig* config);
     /**
      * @brief 设置底盘目标速度
      * @param vx 底盘 x 方向目标线速度，单位 m/s
@@ -166,7 +162,7 @@ extern const struct ChassisInterface {
      */
     ChassisErrorCode(*brake)(void);
     /**
-     * @brief 判断底盘冷启动是否已经就绪
+     * @brief 判断底盘是否已经就绪
      *
      * 该状态只表示转向电机反馈已经正常；
      * 上层若要整机可遥控，还需要同时检查遥控链路
@@ -202,17 +198,11 @@ extern const struct ChassisInterface {
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
 /**
- * @brief 使用默认配置初始化底盘
- * @return ChassisErrorCode 状态码
- */
-ChassisErrorCode chassis_init(void);
-
-/**
- * @brief 使用指定配置初始化底盘
+ * @brief 使用配置初始化底盘
  * @param config 底盘配置
  * @return ChassisErrorCode 状态码
  */
-ChassisErrorCode chassis_init_with_config(const ChassisConfig* config);
+ChassisErrorCode chassis_init(const ChassisConfig* config);
 
 /**
  * @brief 设置底盘目标速度
@@ -249,7 +239,7 @@ ChassisErrorCode chassis_stop(void);
 ChassisErrorCode chassis_brake(void);
 
 /**
- * @brief 判断底盘冷启动是否已经就绪
+ * @brief 判断底盘是否已经就绪
  *
  * 该函数用于 RGB 指示和上层状态判断；
  * 不会触发新的控制动作

@@ -1,8 +1,6 @@
 #ifndef _pid_h_
 #define _pid_h_
 
-
-#include <assert.h>
 #include <stddef.h>
 
 // ! ========================= 接 口 变 量 / Typedef 声 明 ========================= ! //
