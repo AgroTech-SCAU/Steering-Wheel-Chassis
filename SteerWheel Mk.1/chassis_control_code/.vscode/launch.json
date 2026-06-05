@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "cwd": "${workspaceRoot}",
+            "type": "cortex-debug",
+            "request": "launch",
+            "name": "Debug: OpenOCD",
+            "servertype": "openocd",
+            "executable": "build/Debug/robot.elf",
+            "runToEntryPoint": "main",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32h7x.cfg"
+            ],
+            "toolchainPrefix": "arm-none-eabi"
+        }
+    ]
+}
