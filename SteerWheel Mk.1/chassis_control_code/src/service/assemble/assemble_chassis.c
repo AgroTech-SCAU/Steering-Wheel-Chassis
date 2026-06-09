@@ -43,7 +43,7 @@ SystemStatus assemble_chassis(void) {
         .model = {
             .length = 0.26572986916f,
             .width = 0.26572986916f,
-            .wheel_radius = 0.057965f,
+            .wheel_radius = 0.035276f,
             .max_wheel_linear_speed = 2.0f
         },
         .wheel_drive_ratio = 1.0f,
@@ -57,14 +57,19 @@ SystemStatus assemble_chassis(void) {
     };
 
     log_info("CHASSIS assemble begin");
-    if(can_register_rx_callback(&hfdcan1, chassis_steer_can_rx_callback, NULL) != STM32_HAL_CAN_OK) return SYSTEM_STATUS_ERROR;
-    if(can_register_rx_callback(&hfdcan2, chassis_drive_can_rx_callback, NULL) != STM32_HAL_CAN_OK) return SYSTEM_STATUS_ERROR;
+    if(can_register_rx_callback(&hfdcan1, chassis_steer_can_rx_callback, NULL) != STM32_HAL_CAN_OK)
+        return SYSTEM_STATUS_ERROR;
+    if(can_register_rx_callback(&hfdcan2, chassis_drive_can_rx_callback, NULL) != STM32_HAL_CAN_OK)
+        return SYSTEM_STATUS_ERROR;
 
-    if(can_filter_init() != STM32_HAL_CAN_OK) return SYSTEM_STATUS_ERROR;
+    if(can_filter_init() != STM32_HAL_CAN_OK)
+        return SYSTEM_STATUS_ERROR;
     log_info("CHASSIS CAN filter ok");
-    if(can_start(&hfdcan1) != STM32_HAL_CAN_OK) return SYSTEM_STATUS_ERROR;
+    if(can_start(&hfdcan1) != STM32_HAL_CAN_OK)
+        return SYSTEM_STATUS_ERROR;
     log_info("CHASSIS FDCAN1 start ok");
-    if(can_start(&hfdcan2) != STM32_HAL_CAN_OK) return SYSTEM_STATUS_ERROR;
+    if(can_start(&hfdcan2) != STM32_HAL_CAN_OK)
+        return SYSTEM_STATUS_ERROR;
     log_info("CHASSIS FDCAN2 start ok");
 
     delay_ms(100);
@@ -128,9 +133,9 @@ static BusMotorStatus chassis_prepare_drive_motor(uint16_t id) {
 }
 
 static void chassis_steer_can_rx_callback(FDCAN_HandleTypeDef* hcan,
-    const FDCAN_RxHeaderTypeDef* header,
-    const uint8_t data[8],
-    void* user) {
+                                          const FDCAN_RxHeaderTypeDef* header,
+                                          const uint8_t data[8],
+                                          void* user) {
     (void)hcan;
     (void)user;
 
@@ -142,9 +147,9 @@ static void chassis_steer_can_rx_callback(FDCAN_HandleTypeDef* hcan,
 }
 
 static void chassis_drive_can_rx_callback(FDCAN_HandleTypeDef* hcan,
-    const FDCAN_RxHeaderTypeDef* header,
-    const uint8_t data[8],
-    void* user) {
+                                          const FDCAN_RxHeaderTypeDef* header,
+                                          const uint8_t data[8],
+                                          void* user) {
     (void)hcan;
     (void)user;
 
