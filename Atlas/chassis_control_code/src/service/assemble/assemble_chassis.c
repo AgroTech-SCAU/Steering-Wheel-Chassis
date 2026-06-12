@@ -49,9 +49,8 @@ SystemStatus assemble_chassis(void) {
         .steer_target_mode = CHASSIS_STEER_TARGET_ABS_NEAREST,
         .yaw_bias = {
             .enabled = true,
-            // .k_vx = -0.049f,
-            .k_vx = 0.0f,
-            .k_vy = 0.042f,
+            .k_vx = -0.049f,
+            .k_vy = 0.055f,
             .v_deadband = 0.01f,
         }
     };
