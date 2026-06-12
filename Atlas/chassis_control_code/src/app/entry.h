@@ -144,7 +144,7 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        log_info("Heartbeat");
+        log_vofa(angle.yaw);
     }
 }
 
