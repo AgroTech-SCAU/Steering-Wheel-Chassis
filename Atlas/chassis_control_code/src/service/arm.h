@@ -30,14 +30,14 @@
 /**
  * @brief 机械臂服务层状态码表
  */
-#define ARM_STATUS_TABLE \
-    X(OK, "OK") \
-    X(INVALID_PARAM, "Invalid Parameter") \
+#define ARM_STATUS_TABLE                            \
+    X(OK, "OK")                                     \
+    X(INVALID_PARAM, "Invalid Parameter")           \
     X(DEPENDENCY_MISSING, "Arm Dependency Missing") \
-    X(NOT_INITIALIZED, "Arm Not Initialized") \
-    X(KINEMATICS_FAILED, "Arm Kinematics Failed") \
-    X(SERVO_FAILED, "Arm Servo Command Failed") \
-    X(OUT_OF_LIMIT, "Arm Joint Out Of Limit") \
+    X(NOT_INITIALIZED, "Arm Not Initialized")       \
+    X(KINEMATICS_FAILED, "Arm Kinematics Failed")   \
+    X(SERVO_FAILED, "Arm Servo Command Failed")     \
+    X(OUT_OF_LIMIT, "Arm Joint Out Of Limit")       \
     X(NO_SOLUTION, "Arm IK No Solution")
 
 /**
@@ -57,7 +57,7 @@ typedef struct {
     uint8_t servo_id;
 } ArmJointServoMap;
 
-typedef BusServoStatus(*ArmServoStopFn)(uint8_t id);
+typedef BusServoStatus (*ArmServoStopFn)(uint8_t id);
 
 /**
  * @brief 机械臂服务初始化配置
@@ -104,20 +104,20 @@ extern const struct ArmInterface {
      * @brief 获取默认初始化配置
      * @return ArmConfig 默认配置
      */
-    ArmConfig(*default_config)(void);
+    ArmConfig (*default_config)(void);
     /**
      * @brief 初始化机械臂服务
      * @param config 初始化配置
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*init)(const ArmConfig* config);
+    ArmStatus (*init)(const ArmConfig* config);
     /**
      * @brief 按关节数组下发整机目标
      * @param joints 目标关节角，单位 rad
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_joints)(const FiveDofArmJointArray* joints, float speed_rad_s);
+    ArmStatus (*move_joints)(const FiveDofArmJointArray* joints, float speed_rad_s);
     /**
      * @brief 控制单个关节运动
      * @param joint_index 关节索引
@@ -125,26 +125,26 @@ extern const struct ArmInterface {
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_joint)(uint8_t joint_index, float target_rad, float speed_rad_s);
+    ArmStatus (*move_joint)(uint8_t joint_index, float target_rad, float speed_rad_s);
     /**
      * @brief 运动到实物机械臂默认零位
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_servo_zero)(float speed_rad_s);
+    ArmStatus (*move_servo_zero)(float speed_rad_s);
     /**
      * @brief 运动到数学 MDH 零位
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_mdh_zero)(float speed_rad_s);
+    ArmStatus (*move_mdh_zero)(float speed_rad_s);
     /**
      * @brief 按目标位姿求逆解并执行运动
      * @param target 目标位姿
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_pose)(const FiveDofArmPose* target, float speed_rad_s);
+    ArmStatus (*move_pose)(const FiveDofArmPose* target, float speed_rad_s);
     /**
      * @brief 仅修改末端目标位置并保持当前姿态
      * @param x 目标 x，单位 m
@@ -153,7 +153,7 @@ extern const struct ArmInterface {
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_position)(float x, float y, float z, float speed_rad_s);
+    ArmStatus (*move_position)(float x, float y, float z, float speed_rad_s);
     /**
      * @brief 运动到目标末端姿态，保持当前末端位置
      * @param roll 目标 roll，单位 rad
@@ -162,19 +162,19 @@ extern const struct ArmInterface {
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*move_orientation)(float roll, float pitch, float yaw, float speed_rad_s);
+    ArmStatus (*move_orientation)(float roll, float pitch, float yaw, float speed_rad_s);
     /**
      * @brief 停止全部舵机
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*stop)(void);
+    ArmStatus (*stop)(void);
     /**
      * @brief 计算正运动学
      * @param joints 输入关节数组，单位 rad
      * @param pose 输出位姿
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*fk)(const FiveDofArmJointArray* joints, FiveDofArmPose* pose);
+    ArmStatus (*fk)(const FiveDofArmJointArray* joints, FiveDofArmPose* pose);
     /**
      * @brief 计算逆运动学
      * @param target 目标位姿
@@ -182,7 +182,12 @@ extern const struct ArmInterface {
      * @param seed 逆解初值
      * @return ArmStatus 服务状态码
      */
-    ArmStatus(*ik)(const FiveDofArmPose* target, FiveDofArmJointArray* joints, const FiveDofArmJointArray* seed);
+    ArmStatus (*ik)(const FiveDofArmPose* target, FiveDofArmJointArray* joints, const FiveDofArmJointArray* seed);
+    /**
+     * @brief 刷新当前状态缓存
+     * @return ArmStatus 服务状态码
+     */
+    ArmStatus (*refresh_current_state)(void);
     /**
      * @brief 查询服务是否已经初始化完成
      * @return bool `true` 表示服务可用
@@ -309,6 +314,11 @@ bool arm_is_ready(void);
  * @return const Arm* 只读视图指针
  */
 const Arm* arm_get_arm(void);
+/**
+ * @brief 刷新当前状态缓存
+ * @return ArmStatus 服务状态码
+ */
+ArmStatus arm_refresh_current_state(void);
 /**
  * @brief 获取最近一次缓存的关节角
  * @return const FiveDofArmJointArray* 关节缓存指针

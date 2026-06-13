@@ -13,6 +13,7 @@
 #include "assemble/assemble.h"
 #include "chassis.h"
 #include "odom.h"
+#include "arm.h"
 
 // ! device ! //
 #include "rgb_led/rgb_led.h"
@@ -89,8 +90,6 @@ static inline void entry_init(void) {
 
 /**
  * @brief 程序主循环入口函数
- *
- * 在 while(1) 中持续调用；当前保留心跳灯和状态日志，事件驱动任务暂时按原样关闭。
  */
 static inline void entry_loop(void) {
     // ! 事件驱动任务 ! //
@@ -98,9 +97,10 @@ static inline void entry_loop(void) {
         tim6_500hz_flag = false;
 
         // chassis.process();
-        odom.process();
+        // odom.process();
 
         if(remote_tick++ % 5 == 0) {
+            arm.refresh_current_state();
             remote_process();
             remote_tick = 0;
         }
@@ -130,11 +130,7 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        Vector3 ag = { 0.0f, 0.0f, 0.0f };
-        Vector3 od = { 0.0f, 0.0f, 0.0f };
-        (void)odom.get_angle(&ag);
-        (void)odom.get_odom(&od);
-        log_vofa(od.x, od.y, od.z, ag.x, ag.y, ag.z);
+        // arm.move_position(0.1f, 0.0f, 0.2f, 6.28f);
     }
 }
 

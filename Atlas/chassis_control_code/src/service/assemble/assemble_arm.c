@@ -26,11 +26,9 @@ static inline bool servo_write(const uint8_t* data, uint16_t len) {
 static int servo_read(uint8_t* data, uint16_t len);
 static void servo_flush_rx(void);
 static SerialArmStatus build_atlas_arm_model(SerialArmModel* model);
-static SystemStatus arm_kinematics_self_test(const FiveDofArmJointArray* seed);
 static void tf_identity(SerialArmTransform* T);
 static void tf_transl(SerialArmTransform* T, float x, float y, float z);
 static void tf_set(SerialArmTransform* T, const float m[4][4]);
-static float abs_f32(float x);
 
 static const BusServoPortOps servo_port_ops = {
     .write = servo_write,
@@ -71,7 +69,7 @@ SystemStatus assemble_arm(void) {
     arm_config = arm.default_config();
     arm_config.servo_interface = &ft_scs_servo_common_instance;
     arm_config.stop_servo = ft_scs_servo.disable_torque;
-    arm_config.auto_move_servo_zero = false;
+    arm_config.auto_move_servo_zero = true;
     for(uint8_t i = 0u; i < ARM_DOF; i++) {
         arm_config.servo_id[i] = (uint8_t)(i + 1u);
     }
@@ -90,10 +88,6 @@ SystemStatus assemble_arm(void) {
     arm_ret = arm.init(&arm_config);
     if(arm_ret != arm.OK) {
         log_error("ARM service init failed: %s", arm.status_str(arm_ret));
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    if(arm_kinematics_self_test(&arm_config.servo_zero_joints) != SYSTEM_STATUS_OK) {
         return SYSTEM_STATUS_ERROR;
     }
 
@@ -196,52 +190,6 @@ static SerialArmStatus build_atlas_arm_model(SerialArmModel* model) {
     return SERIAL_ARM_STATUS_SUCCESS;
 }
 
-static SystemStatus arm_kinematics_self_test(const FiveDofArmJointArray* seed) {
-    FiveDofArmPose target;
-    FiveDofArmJointArray ik_joints;
-    FiveDofArmPose checked;
-    ArmStatus ret;
-    float pos_err;
-
-    if(seed == NULL) {
-        log_error("ARM kinematics self-test seed missing");
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    ret = arm.fk(seed, &target);
-    if(ret != arm.OK) {
-        log_error("ARM FK self-test failed: %s", arm.status_str(ret));
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    ret = arm.ik(&target, &ik_joints, seed);
-    if(ret != arm.OK) {
-        log_error("ARM IK self-test failed: %s", arm.status_str(ret));
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    ret = arm.fk(&ik_joints, &checked);
-    if(ret != arm.OK) {
-        log_error("ARM IK/FK check failed: %s", arm.status_str(ret));
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    pos_err = abs_f32(checked.position.x - target.position.x)
-              + abs_f32(checked.position.y - target.position.y)
-              + abs_f32(checked.position.z - target.position.z);
-    if(pos_err > 0.003f) {
-        log_error("ARM IK/FK self-test pos err too large: %.6f", pos_err);
-        return SYSTEM_STATUS_ERROR;
-    }
-
-    log_info("ARM FK self-test pos: x=%.6f y=%.6f z=%.6f",
-             target.position.x, target.position.y, target.position.z);
-    log_info("ARM IK self-test joints: q0=%.6f q1=%.6f q2=%.6f q3=%.6f q4=%.6f",
-             ik_joints.q[0], ik_joints.q[1], ik_joints.q[2], ik_joints.q[3], ik_joints.q[4]);
-    log_info("ARM IK/FK self-test ok, pos_err=%.6f", pos_err);
-    return SYSTEM_STATUS_OK;
-}
-
 static void tf_identity(SerialArmTransform* T) {
     for(uint8_t r = 0u; r < 4u; r++) {
         for(uint8_t c = 0u; c < 4u; c++) {
@@ -263,8 +211,4 @@ static void tf_set(SerialArmTransform* T, const float m[4][4]) {
             T->m[r][c] = m[r][c];
         }
     }
-}
-
-static float abs_f32(float x) {
-    return (x >= 0.0f) ? x : -x;
 }

@@ -38,6 +38,7 @@ const struct ArmInterface arm_interface = {
     .ik = arm_ik,
     .is_ready = arm_is_ready,
     .get_arm = arm_get_arm,
+    .refresh_current_state = arm_refresh_current_state,
     .get_current_joints = arm_get_current_joints,
     .get_current_pose = arm_get_current_pose,
     .status_str = arm_status_str,
@@ -94,11 +95,6 @@ static ArmStatus s_ik_with_task(const FiveDofArmPose* target, FiveDofArmJointArr
  * @return ArmStatus 服务状态码
  */
 static ArmStatus s_send_joints_to_servo(const FiveDofArmJointArray* joints, float speed_rad_s);
-/**
- * @brief 从舵机反馈回读当前真实关节，并据此刷新 FK 缓存
- * @return ArmStatus 服务状态码
- */
-static ArmStatus s_refresh_current_state_from_servo(void);
 /**
  * @brief 用最新关节和位姿结果刷新服务缓存
  * @param joints 最新关节数组
@@ -492,11 +488,39 @@ const Arm* arm_get_arm(void) {
 }
 
 /**
+ * @brief 刷新当前状态缓存
+ * @return ArmStatus 服务状态码
+ */
+ArmStatus arm_refresh_current_state(void) {
+    FiveDofArmJointArray joints = { 0 };
+    FiveDofArmPose pose;
+
+    if(s_arm.initialized == false)
+        return ARM_NOT_INITIALIZED;
+    if(s_arm.config.servo_interface == NULL || s_arm.config.servo_interface->update_feedback == NULL)
+        return ARM_DEPENDENCY_MISSING;
+
+    joints.dof = ARM_DOF;
+    for(uint8_t i = 0u; i < ARM_DOF; i++) {
+        BusServoFeedback feedback;
+        BusServoStatus ret = s_arm.config.servo_interface->update_feedback(s_arm.config.servo_id[i], &feedback);
+        if(ret != SERVO_STATUS_OK)
+            return ARM_SERVO_FAILED;
+        joints.q[i] = feedback.position;
+    }
+
+    if(five_dof_arm.fk(&joints, &pose) != SERIAL_ARM_STATUS_SUCCESS)
+        return ARM_KINEMATICS_FAILED;
+
+    return s_update_current_state(&joints, &pose);
+}
+
+/**
  * @brief 获取最近一次缓存的关节角
  * @return const FiveDofArmJointArray* 关节缓存指针
  */
 const FiveDofArmJointArray* arm_get_current_joints(void) {
-    return (s_refresh_current_state_from_servo() == ARM_OK) ? &s_arm.current_joints : NULL;
+    return s_arm.current_valid ? &s_arm.current_joints : NULL;
 }
 
 /**
@@ -504,7 +528,7 @@ const FiveDofArmJointArray* arm_get_current_joints(void) {
  * @return const FiveDofArmPose* 位姿缓存指针
  */
 const FiveDofArmPose* arm_get_current_pose(void) {
-    return (s_refresh_current_state_from_servo() == ARM_OK) ? &s_arm.current_pose : NULL;
+    return s_arm.current_valid ? &s_arm.current_pose : NULL;
 }
 
 /**
@@ -638,30 +662,6 @@ static ArmStatus s_send_joints_to_servo(const FiveDofArmJointArray* joints, floa
     }
 
     return ARM_OK;
-}
-
-static ArmStatus s_refresh_current_state_from_servo(void) {
-    FiveDofArmJointArray joints = { 0 };
-    FiveDofArmPose pose;
-
-    if(s_arm.initialized == false)
-        return ARM_NOT_INITIALIZED;
-    if(s_arm.config.servo_interface == NULL || s_arm.config.servo_interface->update_feedback == NULL)
-        return ARM_DEPENDENCY_MISSING;
-
-    joints.dof = ARM_DOF;
-    for(uint8_t i = 0u; i < ARM_DOF; i++) {
-        BusServoFeedback feedback;
-        BusServoStatus ret = s_arm.config.servo_interface->update_feedback(s_arm.config.servo_id[i], &feedback);
-        if(ret != SERVO_STATUS_OK)
-            return ARM_SERVO_FAILED;
-        joints.q[i] = feedback.position;
-    }
-
-    if(five_dof_arm.fk(&joints, &pose) != SERIAL_ARM_STATUS_SUCCESS)
-        return ARM_KINEMATICS_FAILED;
-
-    return s_update_current_state(&joints, &pose);
 }
 
 /**

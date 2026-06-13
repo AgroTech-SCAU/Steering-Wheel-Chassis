@@ -145,7 +145,6 @@
  * @brief 三挡开关高位原始值
  */
 #define REMOTE_SW_HIGH 1000u
-#define REMOTE_ARM_YAW_JOINT_INDEX 0u
 
 /**
  * @brief 遥控三挡速度上限配置
@@ -303,25 +302,25 @@ static RemoteArmSpeedLimit get_arm_speed_limit(uint16_t swb) {
     RemoteArmSpeedLimit limit;
 
     if(swb == REMOTE_SW_LOW) {
-        limit.yaw_rate_rad_s = 1.5f;
+        limit.yaw_rate_rad_s = 3.14f;
         limit.reach_speed_m_s = 0.18f;
         limit.z_speed_m_s = 0.18f;
         limit.pitch_rate_rad_s = 1.5f;
-        limit.servo_speed_rad_s = 3.0f;
+        limit.servo_speed_rad_s = 6.28f;
     }
     else if(swb == REMOTE_SW_HIGH) {
-        limit.yaw_rate_rad_s = 0.5f;
+        limit.yaw_rate_rad_s = 0.785f;
         limit.reach_speed_m_s = 0.06f;
         limit.z_speed_m_s = 0.06f;
         limit.pitch_rate_rad_s = 0.5f;
-        limit.servo_speed_rad_s = 1.0f;
+        limit.servo_speed_rad_s = 6.28f;
     }
     else {
-        limit.yaw_rate_rad_s = 1.0f;
+        limit.yaw_rate_rad_s = 1.57f;
         limit.reach_speed_m_s = 0.12f;
         limit.z_speed_m_s = 0.12f;
         limit.pitch_rate_rad_s = 1.0f;
-        limit.servo_speed_rad_s = 2.0f;
+        limit.servo_speed_rad_s = 6.28f;
     }
 
     return limit;
@@ -424,8 +423,8 @@ static void arm_control_task(FsIa10bData rc_data) {
     }
 
     if(yaw_input != 0.0f) {
-        const float target_yaw = current_joints->q[REMOTE_ARM_YAW_JOINT_INDEX] - yaw_input * speed_limit.yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        (void)arm.move_joint(REMOTE_ARM_YAW_JOINT_INDEX, target_yaw, speed_limit.servo_speed_rad_s);
+        const float target_yaw = current_joints->q[0] + yaw_input * speed_limit.yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        (void)arm.move_joint(0, target_yaw, speed_limit.servo_speed_rad_s);
     }
 
     if(reach_input != 0.0f || z_input != 0.0f) {
@@ -433,8 +432,8 @@ static void arm_control_task(FsIa10bData rc_data) {
         const FiveDofArmPose* updated_pose = arm.get_current_pose();
 
         if(updated_joints != NULL && updated_pose != NULL) {
-            const float base_yaw = updated_joints->q[REMOTE_ARM_YAW_JOINT_INDEX];
-            const float reach_delta = reach_input * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
+            const float base_yaw = updated_joints->q[0];
+            const float reach_delta = -reach_input * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
             const float target_x = updated_pose->position.x + cosf(base_yaw) * reach_delta;
             const float target_y = updated_pose->position.y + sinf(base_yaw) * reach_delta;
             const float target_z = updated_pose->position.z - z_input * speed_limit.z_speed_m_s * REMOTE_CONTROL_PERIOD_S;
