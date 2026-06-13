@@ -8,7 +8,7 @@
 #include "chassis.h"
 #include "chassis_yaw_hold.h"
 #include "fs_ia10b.h"
-#include "imu/imu.h"
+#include "odom.h"
 
 #include <math.h>
 #include <string.h>
@@ -353,12 +353,17 @@ static void chassis_control_task(FsIa10bData rc_data) {
         s_command.online = true;
 
         if(chassis_yaw_hold_is_active()) {
+            Vector3 angle = { 0.0f, 0.0f, 0.0f };
+            Vector3 gyro_corrected = { 0.0f, 0.0f, 0.0f };
+
+            (void)odom.get_angle(&angle);
+            (void)odom.get_gyro_corrected(&gyro_corrected);
             s_command.wz = chassis_yaw_hold_apply(
                 s_command.vx,
                 s_command.vy,
                 s_command.wz,
-                imu_get_angle().yaw,
-                imu_get_gyro_corrected().z,
+                angle.z,
+                gyro_corrected.z,
                 REMOTE_CONTROL_PERIOD_S);
         }
 

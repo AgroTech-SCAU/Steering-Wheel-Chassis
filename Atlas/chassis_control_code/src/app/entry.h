@@ -12,9 +12,9 @@
 // ! service ! //
 #include "assemble/assemble.h"
 #include "chassis.h"
+#include "odom.h"
 
 // ! device ! //
-#include "imu/imu.h"
 #include "rgb_led/rgb_led.h"
 
 // ! domain ! //
@@ -33,11 +33,6 @@
 
 static ms_t log_task = 0;
 static ms_t heartbeat_task = 0;
-static ImuAcc accel = { 0.0f, 0.0f, 0.0f };
-static ImuGyro gyro = { 0.0f, 0.0f, 0.0f };
-static ImuGyro gyro_bias = { 0.0f, 0.0f, 0.0f };
-static ImuGyro gyro_corrected = { 0.0f, 0.0f, 0.0f };
-static ImuAngle angle = { 0.0f, 0.0f, 0.0f };
 static uint8_t remote_tick = 0;
 static uint8_t led_state = 0u;
 
@@ -72,6 +67,11 @@ static inline void entry_init(void) {
     log_info("BOOT chassis init step done");
     delay_ms(100);
 
+    if(assemble_odom() != SYSTEM_STATUS_OK)
+        return;
+    log_info("BOOT odom init step done");
+    delay_ms(100);
+
     if(assemble_remote() != SYSTEM_STATUS_OK)
         return;
     log_info("BOOT remote init step done");
@@ -104,15 +104,8 @@ static inline void entry_loop(void) {
     if(tim6_500hz_flag) {
         tim6_500hz_flag = false;
 
-        if(imu.update() == IMU_STATUS_OK) {
-            accel = imu.get_acc();
-            gyro = imu.get_gyro();
-            gyro_bias = imu_get_gyro_bias();
-            gyro_corrected = imu_get_gyro_corrected();
-            angle = imu.get_angle();
-        }
-
         chassis.process();
+        odom.process();
 
         if(remote_tick++ % 5 == 0) {
             remote_process();
@@ -144,7 +137,9 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        log_vofa(angle.yaw);
+        Vector3 angle = { 0.0f, 0.0f, 0.0f };
+        (void)odom.get_angle(&angle);
+        log_vofa(angle.z);
     }
 }
 
