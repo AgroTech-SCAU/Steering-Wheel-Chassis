@@ -67,6 +67,10 @@ static float chassis_imu_odom_noise(float value, float fallback);
  */
 static ChassisImuOdomConfig chassis_imu_odom_default_config(void);
 /**
+ * @brief 判断底盘和 IMU 是否处于静止窗口
+ */
+static bool chassis_imu_odom_is_static(const ChassisImuOdom* odom, ChassisImuOdomChassis chassis, ChassisImuOdomImu imu);
+/**
  * @brief 由加速度重力方向估计 roll/pitch
  */
 static Vector3 chassis_imu_odom_acc_to_angle(Vector3 acc, float gravity, float tolerance, bool* trusted);
@@ -105,6 +109,9 @@ ChassisImuOdomErrorCode chassis_imu_odom_init(ChassisImuOdom* odom, const Chassi
     use_config.imu_gyro_noise = chassis_imu_odom_noise(use_config.imu_gyro_noise, 0.03f);
     use_config.gravity = chassis_imu_odom_noise(use_config.gravity, 9.80665f);
     use_config.acc_norm_tolerance = chassis_imu_odom_noise(use_config.acc_norm_tolerance, 2.0f);
+    use_config.chassis_linear_static_threshold = chassis_imu_odom_noise(use_config.chassis_linear_static_threshold, 0.003f);
+    use_config.chassis_angular_static_threshold = chassis_imu_odom_noise(use_config.chassis_angular_static_threshold, 0.02f);
+    use_config.imu_gyro_static_threshold = chassis_imu_odom_noise(use_config.imu_gyro_static_threshold, 0.01f);
 
     status = kalman.filter_init(&odom->filter, CHASSIS_IMU_ODOM_STATE_DIM, CHASSIS_IMU_ODOM_MEAS_DIM, 0u);
     if(status != kalman.OK) {
@@ -138,6 +145,7 @@ ChassisImuOdomErrorCode chassis_imu_odom_update(ChassisImuOdom* odom, ChassisImu
     float cos_yaw;
     float sin_yaw;
     uint8_t i;
+    bool static_window;
 
     if(odom == NULL) {
         return cio.INVALID_PARAM;
@@ -150,6 +158,17 @@ ChassisImuOdomErrorCode chassis_imu_odom_update(ChassisImuOdom* odom, ChassisImu
     }
 
     filter = &odom->filter;
+    static_window = chassis_imu_odom_is_static(odom, chassis, imu);
+    if(static_window) {
+        chassis.vx = 0.0f;
+        chassis.vy = 0.0f;
+        chassis.wz = 0.0f;
+        imu.gyro.z = 0.0f;
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_VX] = 0.0f;
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_VY] = 0.0f;
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_WZ] = 0.0f;
+    }
+
     yaw = filter->x_data[CHASSIS_IMU_ODOM_STATE_YAW];
     cos_yaw = cosf(yaw);
     sin_yaw = sinf(yaw);
@@ -221,6 +240,11 @@ ChassisImuOdomErrorCode chassis_imu_odom_update(ChassisImuOdom* odom, ChassisImu
     filter->x_data[CHASSIS_IMU_ODOM_STATE_ROLL] = chassis_imu_odom_wrap_pi(filter->x_data[CHASSIS_IMU_ODOM_STATE_ROLL]);
     filter->x_data[CHASSIS_IMU_ODOM_STATE_PITCH] = chassis_imu_odom_wrap_pi(filter->x_data[CHASSIS_IMU_ODOM_STATE_PITCH]);
     filter->x_data[CHASSIS_IMU_ODOM_STATE_YAW] = chassis_imu_odom_wrap_pi(filter->x_data[CHASSIS_IMU_ODOM_STATE_YAW]);
+    if(static_window) {
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_VX] = 0.0f;
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_VY] = 0.0f;
+        filter->x_data[CHASSIS_IMU_ODOM_STATE_WZ] = 0.0f;
+    }
     chassis_imu_odom_sync_output(odom);
 
     return cio.OK;
@@ -400,9 +424,31 @@ static ChassisImuOdomConfig chassis_imu_odom_default_config(void) {
         .imu_gyro_noise = 0.03f,
         .gravity = 9.80665f,
         .acc_norm_tolerance = 2.0f,
+        .chassis_linear_static_threshold = 0.003f,
+        .chassis_angular_static_threshold = 0.02f,
+        .imu_gyro_static_threshold = 0.01f,
     };
 
     return config;
+}
+
+/**
+ * @brief 判断底盘和 IMU 是否处于静止窗口
+ * @param odom 融合实例
+ * @param chassis 底盘速度输入
+ * @param imu IMU 六轴输入
+ * @return true 可以执行静止约束
+ * @return false 不执行静止约束
+ */
+static bool chassis_imu_odom_is_static(const ChassisImuOdom* odom, ChassisImuOdomChassis chassis, ChassisImuOdomImu imu) {
+    if(odom == NULL) {
+        return false;
+    }
+
+    return fabsf(chassis.vx) <= odom->config.chassis_linear_static_threshold
+        && fabsf(chassis.vy) <= odom->config.chassis_linear_static_threshold
+        && fabsf(chassis.wz) <= odom->config.chassis_angular_static_threshold
+        && fabsf(imu.gyro.z) <= odom->config.imu_gyro_static_threshold;
 }
 
 /**

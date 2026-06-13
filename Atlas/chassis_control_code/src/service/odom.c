@@ -90,6 +90,9 @@ OdomConfig odom_default_config(void) {
             .imu_gyro_noise = 0.03f,
             .gravity = 9.80665f,
             .acc_norm_tolerance = 2.0f,
+            .chassis_linear_static_threshold = 0.003f,
+            .chassis_angular_static_threshold = 0.02f,
+            .imu_gyro_static_threshold = 0.01f,
         },
         .process_period_s = ODOM_DEFAULT_PROCESS_PERIOD_S,
     };

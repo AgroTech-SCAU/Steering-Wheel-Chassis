@@ -96,6 +96,9 @@ typedef struct {
     float imu_gyro_noise;         /**< IMU z 轴角速度观测噪声 */
     float gravity;                /**< 静止重力加速度参考值，单位 m/s^2 */
     float acc_norm_tolerance;     /**< 加速度模长可信窗口，超出时不使用加速度修正姿态 */
+    float chassis_linear_static_threshold;  /**< 静止判定的底盘线速度阈值，单位 m/s */
+    float chassis_angular_static_threshold; /**< 静止判定的底盘角速度阈值，单位 rad/s */
+    float imu_gyro_static_threshold;        /**< 静止判定的 IMU z 轴角速度阈值，单位 rad/s */
 } ChassisImuOdomConfig;
 
 /**
