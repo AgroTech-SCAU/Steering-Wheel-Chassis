@@ -8,19 +8,37 @@
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
+/**
+ * @brief 里程计服务接口单例的文件内短别名
+ */
 #define od odom_interface
 
+/**
+ * @brief 默认里程计服务周期
+ *
+ * 当前由 TIM6 500Hz 任务调用，周期为 0.002s
+ */
 #define ODOM_DEFAULT_PROCESS_PERIOD_S 0.002f
 
+/**
+ * @brief 里程计服务对外状态缓存
+ */
 static Odom s_odom = { 0 };
+/**
+ * @brief 底盘 + IMU 融合算法实例
+ */
 static ChassisImuOdom s_fusion = { 0 };
+/**
+ * @brief 当前里程计服务配置
+ */
 static OdomConfig s_config = { 0 };
 
+/**
+ * @brief 里程计服务接口单例
+ */
 #define X(name, str) .name = ODOM_##name,
 const struct OdomInterface odom_interface = {
-    {
-        ODOM_STATUS_TABLE
-    },
+    { ODOM_STATUS_TABLE },
     .default_config = odom_default_config,
     .init = odom_init,
     .process = odom_process,
@@ -38,13 +56,29 @@ const struct OdomInterface odom_interface = {
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
+/**
+ * @brief 将 IMU 加速度结构转换为通用 Vector3
+ */
 static Vector3 odom_acc_to_vec3(ImuAcc acc);
+/**
+ * @brief 将 IMU 角速度结构转换为通用 Vector3
+ */
 static Vector3 odom_gyro_to_vec3(ImuGyro gyro);
+/**
+ * @brief 将 IMU 姿态角结构转换为通用 Vector3
+ */
 static Vector3 odom_angle_to_vec3(ImuAngle angle);
+/**
+ * @brief 检查数据是否可用并拷贝 Vector3 输出
+ */
 static OdomStatus odom_copy_vec3(bool ready, const Vector3* src, Vector3* out);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 获取默认里程计配置
+ * @return OdomConfig 默认配置
+ */
 OdomConfig odom_default_config(void) {
     OdomConfig config = {
         .fusion = {
@@ -63,6 +97,11 @@ OdomConfig odom_default_config(void) {
     return config;
 }
 
+/**
+ * @brief 初始化里程计服务
+ * @param config 配置指针；NULL 表示使用默认配置
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_init(const OdomConfig* config) {
     ChassisImuOdomErrorCode status;
 
@@ -82,6 +121,14 @@ OdomStatus odom_init(const OdomConfig* config) {
     return od.OK;
 }
 
+/**
+ * @brief 执行一次里程计服务流程
+ *
+ * 该函数统一刷新 IMU，读取底盘速度，并更新底盘 + IMU 融合里程；
+ * 上层任务不再直接调用 imu.update()
+ *
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_process(void) {
     ImuAcc acc;
     ImuGyro gyro;
@@ -135,49 +182,101 @@ OdomStatus odom_process(void) {
     return od.OK;
 }
 
+/**
+ * @brief 获取最近一次三轴加速度
+ * @param acc 输出加速度
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_acc(Vector3* acc) {
     return odom_copy_vec3(s_odom.imu_ready, &s_odom.acc, acc);
 }
 
+/**
+ * @brief 获取最近一次原始三轴角速度
+ * @param gyro 输出角速度
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_gyro(Vector3* gyro) {
     return odom_copy_vec3(s_odom.imu_ready, &s_odom.gyro, gyro);
 }
 
+/**
+ * @brief 获取最近一次陀螺零偏估计
+ * @param gyro_bias 输出零偏
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_gyro_bias(Vector3* gyro_bias) {
     return odom_copy_vec3(s_odom.imu_ready, &s_odom.gyro_bias, gyro_bias);
 }
 
+/**
+ * @brief 获取最近一次修正后三轴角速度
+ * @param gyro_corrected 输出修正角速度
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_gyro_corrected(Vector3* gyro_corrected) {
     return odom_copy_vec3(s_odom.imu_ready, &s_odom.gyro_corrected, gyro_corrected);
 }
 
+/**
+ * @brief 获取融合后的三轴姿态角
+ * @param angle 输出姿态角
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_angle(Vector3* angle) {
     return odom_copy_vec3(s_odom.fusion_ready, &s_odom.angle, angle);
 }
 
+/**
+ * @brief 获取融合后的三轴里程
+ * @param odom_out 输出里程
+ * @return OdomStatus 状态码
+ */
 OdomStatus odom_get_odom(Vector3* odom_out) {
     return odom_copy_vec3(s_odom.fusion_ready, &s_odom.odom, odom_out);
 }
 
+/**
+ * @brief 获取里程计服务只读状态快照
+ * @return const Odom* 状态快照指针
+ */
 const Odom* odom_get_state(void) {
     return &s_odom;
 }
 
+/**
+ * @brief 判断里程计服务是否已有可用数据
+ * @return true 数据可用
+ * @return false 数据尚未可用
+ */
 bool odom_is_ready(void) {
     return s_odom.initialized && s_odom.imu_ready && s_odom.fusion_ready;
 }
 
-#define X(name, str) case ODOM_##name: return str;
+/**
+ * @brief 将里程计服务状态码转换为静态字符串
+ * @param status 状态码
+ * @return const char* 状态码说明
+ */
+#define X(name, str)  \
+    case ODOM_##name: \
+        return str;
 const char* odom_status_str(OdomStatus status) {
     switch(status) {
         ODOM_STATUS_TABLE
-        default: return "UNKNOWN";
+        default:
+            return "UNKNOWN";
     }
 }
 #undef X
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 将 IMU 加速度结构转换为通用 Vector3
+ * @param acc IMU 加速度
+ * @return Vector3 通用三轴向量
+ */
 static Vector3 odom_acc_to_vec3(ImuAcc acc) {
     Vector3 out = {
         .x = acc.x,
@@ -188,6 +287,11 @@ static Vector3 odom_acc_to_vec3(ImuAcc acc) {
     return out;
 }
 
+/**
+ * @brief 将 IMU 角速度结构转换为通用 Vector3
+ * @param gyro IMU 角速度
+ * @return Vector3 通用三轴向量
+ */
 static Vector3 odom_gyro_to_vec3(ImuGyro gyro) {
     Vector3 out = {
         .x = gyro.x,
@@ -198,6 +302,11 @@ static Vector3 odom_gyro_to_vec3(ImuGyro gyro) {
     return out;
 }
 
+/**
+ * @brief 将 IMU 姿态角结构转换为通用 Vector3
+ * @param angle IMU 姿态角
+ * @return Vector3 x/y/z 分别为 roll/pitch/yaw
+ */
 static Vector3 odom_angle_to_vec3(ImuAngle angle) {
     Vector3 out = {
         .x = angle.roll,
@@ -208,6 +317,13 @@ static Vector3 odom_angle_to_vec3(ImuAngle angle) {
     return out;
 }
 
+/**
+ * @brief 检查数据是否可用并拷贝 Vector3 输出
+ * @param ready 对应数据是否已经更新成功
+ * @param src 数据源
+ * @param out 输出缓存
+ * @return OdomStatus 状态码
+ */
 static OdomStatus odom_copy_vec3(bool ready, const Vector3* src, Vector3* out) {
     if(src == NULL || out == NULL) {
         return od.INVALID_PARAM;

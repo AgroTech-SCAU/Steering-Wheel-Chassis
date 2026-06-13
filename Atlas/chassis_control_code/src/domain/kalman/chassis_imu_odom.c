@@ -6,13 +6,31 @@
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
+/**
+ * @brief 底盘 + IMU 里程融合接口单例的文件内短别名
+ */
 #define cio chassis_imu_odom_interface
 
+/**
+ * @brief 浮点计算零阈值
+ */
 #define CHASSIS_IMU_ODOM_EPS 1e-6f
+/**
+ * @brief 圆周率常量
+ */
 #define CHASSIS_IMU_ODOM_PI 3.14159265358979323846f
+/**
+ * @brief 角度完整周期
+ */
 #define CHASSIS_IMU_ODOM_2PI (2.0f * CHASSIS_IMU_ODOM_PI)
+/**
+ * @brief 融合模型观测维度：vx、vy、wz、roll、pitch、gyro_z
+ */
 #define CHASSIS_IMU_ODOM_MEAS_DIM 6u
 
+/**
+ * @brief 底盘 + IMU 里程融合接口单例
+ */
 #define X(name, str) .name = CHASSIS_IMU_ODOM_##name,
 const struct ChassisImuOdomInterface chassis_imu_odom_interface = {
     { CHASSIS_IMU_ODOM_STATUS_TABLE },
@@ -28,17 +46,47 @@ const struct ChassisImuOdomInterface chassis_imu_odom_interface = {
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
+/**
+ * @brief 将矩阵清零
+ */
 static void chassis_imu_odom_matrix_zero(Matrix* matrix);
+/**
+ * @brief 将矩阵置为单位阵；非方阵时只填充主对角线
+ */
 static void chassis_imu_odom_matrix_identity(Matrix* matrix);
+/**
+ * @brief 将角度归一化到 (-pi, pi]
+ */
 static float chassis_imu_odom_wrap_pi(float angle);
+/**
+ * @brief 获取有效噪声参数；输入无效时使用默认值
+ */
 static float chassis_imu_odom_noise(float value, float fallback);
+/**
+ * @brief 获取默认融合配置
+ */
 static ChassisImuOdomConfig chassis_imu_odom_default_config(void);
+/**
+ * @brief 由加速度重力方向估计 roll/pitch
+ */
 static Vector3 chassis_imu_odom_acc_to_angle(Vector3 acc, float gravity, float tolerance, bool* trusted);
+/**
+ * @brief 将底层卡尔曼状态码映射到融合状态码
+ */
 static ChassisImuOdomErrorCode chassis_imu_odom_from_kalman(KalmanErrorCode status);
+/**
+ * @brief 将滤波器状态同步到输出缓存
+ */
 static void chassis_imu_odom_sync_output(ChassisImuOdom* odom);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 初始化底盘 + IMU 里程融合实例
+ * @param odom 融合实例
+ * @param config 配置指针；NULL 表示使用默认配置
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_init(ChassisImuOdom* odom, const ChassisImuOdomConfig* config) {
     ChassisImuOdomConfig use_config;
     KalmanErrorCode status;
@@ -70,6 +118,17 @@ ChassisImuOdomErrorCode chassis_imu_odom_init(ChassisImuOdom* odom, const Chassi
     return cio.OK;
 }
 
+/**
+ * @brief 使用底盘速度和 IMU 六轴数据更新一次融合状态
+ *
+ * 当前预测模型只积分平面 x/y 和 yaw；z 状态没有高度输入，因此保持初始化或重置值
+ *
+ * @param odom 融合实例
+ * @param chassis 底盘速度输入
+ * @param imu IMU 六轴输入
+ * @param dt 更新周期，单位 s
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_update(ChassisImuOdom* odom, ChassisImuOdomChassis chassis, ChassisImuOdomImu imu, float dt) {
     KalmanFilter* filter;
     Vector3 acc_angle;
@@ -167,6 +226,12 @@ ChassisImuOdomErrorCode chassis_imu_odom_update(ChassisImuOdom* odom, ChassisImu
     return cio.OK;
 }
 
+/**
+ * @brief 获取当前三轴姿态角
+ * @param odom 融合实例
+ * @param angle 输出三轴角度
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_get_angle(const ChassisImuOdom* odom, Vector3* angle) {
     if(odom == NULL || angle == NULL) {
         return cio.INVALID_PARAM;
@@ -179,6 +244,12 @@ ChassisImuOdomErrorCode chassis_imu_odom_get_angle(const ChassisImuOdom* odom, V
     return cio.OK;
 }
 
+/**
+ * @brief 获取当前三轴里程
+ * @param odom 融合实例
+ * @param odom_out 输出三轴里程
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_get_odom(const ChassisImuOdom* odom, Vector3* odom_out) {
     if(odom == NULL || odom_out == NULL) {
         return cio.INVALID_PARAM;
@@ -191,6 +262,12 @@ ChassisImuOdomErrorCode chassis_imu_odom_get_odom(const ChassisImuOdom* odom, Ve
     return cio.OK;
 }
 
+/**
+ * @brief 获取完整融合输出
+ * @param odom 融合实例
+ * @param output 输出缓存
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_get_output(const ChassisImuOdom* odom, ChassisImuOdomOutput* output) {
     if(odom == NULL || output == NULL) {
         return cio.INVALID_PARAM;
@@ -203,6 +280,12 @@ ChassisImuOdomErrorCode chassis_imu_odom_get_output(const ChassisImuOdom* odom, 
     return cio.OK;
 }
 
+/**
+ * @brief 重置三轴里程状态
+ * @param odom 融合实例
+ * @param odom_value 新的里程值
+ * @return ChassisImuOdomErrorCode 状态码
+ */
 ChassisImuOdomErrorCode chassis_imu_odom_reset_odom(ChassisImuOdom* odom, Vector3 odom_value) {
     if(odom == NULL) {
         return cio.INVALID_PARAM;
@@ -219,6 +302,11 @@ ChassisImuOdomErrorCode chassis_imu_odom_reset_odom(ChassisImuOdom* odom, Vector
     return cio.OK;
 }
 
+/**
+ * @brief 将融合状态码转换为静态字符串
+ * @param status 状态码
+ * @return const char* 状态码说明
+ */
 #define X(name, str)              \
     case CHASSIS_IMU_ODOM_##name: \
         return str;
@@ -233,6 +321,9 @@ const char* chassis_imu_odom_error_code_to_str(ChassisImuOdomErrorCode status) {
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 将矩阵清零
+ */
 static void chassis_imu_odom_matrix_zero(Matrix* matrix) {
     unsigned int i;
 
@@ -245,6 +336,9 @@ static void chassis_imu_odom_matrix_zero(Matrix* matrix) {
     }
 }
 
+/**
+ * @brief 将矩阵置为单位阵；非方阵时只填充主对角线
+ */
 static void chassis_imu_odom_matrix_identity(Matrix* matrix) {
     unsigned int i;
     unsigned int j;
@@ -261,6 +355,11 @@ static void chassis_imu_odom_matrix_identity(Matrix* matrix) {
     }
 }
 
+/**
+ * @brief 将角度归一化到 (-pi, pi]
+ * @param angle 输入角度，单位 rad
+ * @return float 归一化后的角度，单位 rad
+ */
 static float chassis_imu_odom_wrap_pi(float angle) {
     if(!isfinite(angle)) {
         return 0.0f;
@@ -277,10 +376,20 @@ static float chassis_imu_odom_wrap_pi(float angle) {
     return angle;
 }
 
+/**
+ * @brief 获取有效噪声参数；输入无效时使用默认值
+ * @param value 输入配置值
+ * @param fallback 默认值
+ * @return float 最终使用的配置值
+ */
 static float chassis_imu_odom_noise(float value, float fallback) {
     return (value > CHASSIS_IMU_ODOM_EPS && isfinite(value)) ? value : fallback;
 }
 
+/**
+ * @brief 获取默认融合配置
+ * @return ChassisImuOdomConfig 默认配置
+ */
 static ChassisImuOdomConfig chassis_imu_odom_default_config(void) {
     ChassisImuOdomConfig config = {
         .pos_process_noise = 0.01f,
@@ -296,6 +405,14 @@ static ChassisImuOdomConfig chassis_imu_odom_default_config(void) {
     return config;
 }
 
+/**
+ * @brief 由加速度重力方向估计 roll/pitch
+ * @param acc 三轴加速度
+ * @param gravity 重力模长参考值
+ * @param tolerance 可信模长窗口
+ * @param trusted 输出加速度是否可信
+ * @return Vector3 x/y 为 roll/pitch，z 固定为 0
+ */
 static Vector3 chassis_imu_odom_acc_to_angle(Vector3 acc, float gravity, float tolerance, bool* trusted) {
     Vector3 angle = { 0.0f, 0.0f, 0.0f };
     float norm = sqrtf(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
@@ -317,6 +434,11 @@ static Vector3 chassis_imu_odom_acc_to_angle(Vector3 acc, float gravity, float t
     return angle;
 }
 
+/**
+ * @brief 将底层卡尔曼状态码映射到融合状态码
+ * @param status 卡尔曼状态码
+ * @return ChassisImuOdomErrorCode 融合状态码
+ */
 static ChassisImuOdomErrorCode chassis_imu_odom_from_kalman(KalmanErrorCode status) {
     if(status == kalman.OK) {
         return cio.OK;
@@ -331,6 +453,10 @@ static ChassisImuOdomErrorCode chassis_imu_odom_from_kalman(KalmanErrorCode stat
     return cio.KALMAN_FAILED;
 }
 
+/**
+ * @brief 将滤波器状态同步到输出缓存
+ * @param odom 融合实例
+ */
 static void chassis_imu_odom_sync_output(ChassisImuOdom* odom) {
     KalmanFilter* filter;
 

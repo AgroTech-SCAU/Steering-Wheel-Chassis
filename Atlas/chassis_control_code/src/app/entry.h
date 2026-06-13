@@ -137,9 +137,11 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        Vector3 angle = { 0.0f, 0.0f, 0.0f };
-        (void)odom.get_angle(&angle);
-        log_vofa(angle.z);
+        Vector3 ag = { 0.0f, 0.0f, 0.0f };
+        Vector3 od = { 0.0f, 0.0f, 0.0f };
+        (void)odom.get_angle(&ag);
+        (void)odom.get_odom(&od);
+        log_vofa(od.x, od.y, od.z, ag.x, ag.y, ag.z);
     }
 }
 

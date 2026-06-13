@@ -5,8 +5,14 @@
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
+/**
+ * @brief 通用卡尔曼接口单例的文件内短别名
+ */
 #define kf kalman_interface
 
+/**
+ * @brief 通用卡尔曼滤波接口单例
+ */
 #define X(name, str) .name = KALMAN_##name,
 const struct KalmanInterface kalman_interface = {
     { KALMAN_STATUS_TABLE },
@@ -19,12 +25,29 @@ const struct KalmanInterface kalman_interface = {
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
+/**
+ * @brief 检查滤波维度是否在固定缓存范围内
+ */
 static bool kalman_dim_valid(uint8_t state_dim, uint8_t meas_dim, uint8_t ctrl_dim);
+/**
+ * @brief 将矩阵清零
+ */
 static void kalman_matrix_zero(Matrix* matrix);
+/**
+ * @brief 将矩阵置为单位阵；非方阵时只填充主对角线
+ */
 static void kalman_matrix_identity(Matrix* matrix);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 初始化通用线性卡尔曼滤波器
+ * @param filter 滤波器实例
+ * @param state_dim 状态维度
+ * @param meas_dim 观测维度
+ * @param ctrl_dim 控制输入维度；0 表示不使用控制输入
+ * @return KalmanErrorCode 状态码
+ */
 KalmanErrorCode kalman_filter_init(KalmanFilter* filter, uint8_t state_dim, uint8_t meas_dim, uint8_t ctrl_dim) {
     if(filter == NULL) {
         return kf.INVALID_PARAM;
@@ -53,6 +76,11 @@ KalmanErrorCode kalman_filter_init(KalmanFilter* filter, uint8_t state_dim, uint
     return kf.OK;
 }
 
+/**
+ * @brief 执行一次预测步骤
+ * @param filter 滤波器实例；调用前需由上层填好 F、Q，以及可选的 B、u
+ * @return KalmanErrorCode 状态码
+ */
 KalmanErrorCode kalman_filter_predict(KalmanFilter* filter) {
     float x_pred_data[KALMAN_MAX_STATE_DIM];
     float Bu_data[KALMAN_MAX_STATE_DIM];
@@ -98,6 +126,11 @@ KalmanErrorCode kalman_filter_predict(KalmanFilter* filter) {
     return kf.OK;
 }
 
+/**
+ * @brief 执行一次观测更新步骤
+ * @param filter 滤波器实例；调用前需由上层填好 z、H、R
+ * @return KalmanErrorCode 状态码
+ */
 KalmanErrorCode kalman_filter_update(KalmanFilter* filter) {
     float Hx_data[KALMAN_MAX_MEAS_DIM];
     float y_data[KALMAN_MAX_MEAS_DIM];
@@ -156,6 +189,11 @@ KalmanErrorCode kalman_filter_update(KalmanFilter* filter) {
     return kf.OK;
 }
 
+/**
+ * @brief 将卡尔曼状态码转换为静态字符串
+ * @param status 状态码
+ * @return const char* 状态码说明
+ */
 #define X(name, str)    \
     case KALMAN_##name: \
         return str;
@@ -170,10 +208,16 @@ const char* kalman_error_code_to_str(KalmanErrorCode status) {
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 检查滤波维度是否在固定缓存范围内
+ */
 static bool kalman_dim_valid(uint8_t state_dim, uint8_t meas_dim, uint8_t ctrl_dim) {
     return state_dim > 0u && state_dim <= KALMAN_MAX_STATE_DIM && meas_dim > 0u && meas_dim <= KALMAN_MAX_MEAS_DIM && ctrl_dim <= KALMAN_MAX_CTRL_DIM;
 }
 
+/**
+ * @brief 将矩阵清零
+ */
 static void kalman_matrix_zero(Matrix* matrix) {
     unsigned int i;
 
@@ -186,6 +230,9 @@ static void kalman_matrix_zero(Matrix* matrix) {
     }
 }
 
+/**
+ * @brief 将矩阵置为单位阵；非方阵时只填充主对角线
+ */
 static void kalman_matrix_identity(Matrix* matrix) {
     unsigned int i;
     unsigned int j;
