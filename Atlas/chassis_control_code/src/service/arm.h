@@ -11,7 +11,6 @@
  */
 
 #include "bus_servo/bus_servo.h"
-#include "bus_servo/zhong_ling_servo.h"
 #include "serial_arm/five_dof_arm_kine.h"
 
 #include <stdbool.h>
@@ -58,14 +57,19 @@ typedef struct {
     uint8_t servo_id;
 } ArmJointServoMap;
 
+typedef BusServoStatus(*ArmServoStopFn)(uint8_t id);
+
 /**
  * @brief 机械臂服务初始化配置
  */
 typedef struct {
-    /** 通用总线舵机接口，通常传入 `&zhong_ling_servo_common_instance` */
+    /** 通用总线舵机接口，由组合层传入具体驱动实例 */
     const BusServoInterface* servo_interface;
-    /** 众灵扩展接口，可选；存在时优先走批量下发与 `stop_all()` */
-    const ZhongLingServoInterface* zhong_ling_interface;
+    /** 可选的单舵机停止/卸力函数，由具体驱动适配 */
+    ArmServoStopFn stop_servo;
+    /** 由组合层装配好的运动学模型 */
+    SerialArmModel kinematic_model;
+    bool has_kinematic_model;
     /** 关节序号到舵机 ID 的映射，默认 `{0,1,2,3,4}` */
     uint8_t servo_id[ARM_DOF];
     /** 实物机械臂默认零位关节角，单位 rad */

@@ -27,7 +27,7 @@
 /**
  * @brief 从 PRESENT_POSITION_L 到 PRESENT_LOAD_H 的反馈读取长度
  */
-#define FT_SCS_FEEDBACK_LEN ((uint8_t)(FT_SCS_SERVO_PRESENT_CURRENT_H - FT_SCS_SERVO_PRESENT_POSITION_L + 1u))
+#define FT_SCS_FEEDBACK_LEN ((uint8_t)(FT_SCS_SERVO_PRESENT_LOAD_H - FT_SCS_SERVO_PRESENT_POSITION_L + 1u))
 
 /**
  * @brief 默认应答超时时间, 单位 ms

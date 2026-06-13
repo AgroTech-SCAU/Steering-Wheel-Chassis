@@ -17,6 +17,7 @@
 // ! device ! //
 #include "rgb_led/rgb_led.h"
 
+
 // ! domain ! //
 
 
@@ -25,24 +26,17 @@
 #include "log.h"
 #include "delay.h"
 
-// ! platform ! //
-
-
-
-// ! ========================= 接 口 变 量 / Typedef 声 明 ========================= ! //
+// ! ========================= 变 量 声 明 ========================= ! //
 
 static ms_t log_task = 0;
 static ms_t heartbeat_task = 0;
 static uint8_t remote_tick = 0;
 static uint8_t led_state = 0u;
 
-// ! ========================= 接 口 函 数 声 明 ========================= ! //
+// ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 /**
  * @brief 程序初始化入口函数
- *
- * 该函数由 main 初始化完成后调用；
- * 负责装配各服务并清零底盘速度命令
  */
 static inline void entry_init(void) {
     if(assemble_delay() != SYSTEM_STATUS_OK)
@@ -96,15 +90,14 @@ static inline void entry_init(void) {
 /**
  * @brief 程序主循环入口函数
  *
- * 该函数在 while(1) 中持续调用；
- * 根据定时器事件执行底盘、遥控、IMU 和日志任务
+ * 在 while(1) 中持续调用；当前保留心跳灯和状态日志，事件驱动任务暂时按原样关闭。
  */
 static inline void entry_loop(void) {
     // ! 事件驱动任务 ! //
     if(tim6_500hz_flag) {
         tim6_500hz_flag = false;
 
-        chassis.process();
+        // chassis.process();
         odom.process();
 
         if(remote_tick++ % 5 == 0) {
