@@ -33,6 +33,7 @@ static ms_t log_task = 0;
 static ms_t heartbeat_task = 0;
 static uint8_t remote_tick = 0;
 static uint8_t arm_tick = 0;
+static uint8_t odom_tick = 0;
 static uint8_t led_state = 0u;
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -100,15 +101,19 @@ static inline void entry_loop(void) {
         tim6_500hz_flag = false;
 
         chassis.process();
-        odom.process();
 
-        if(remote_tick++ % 5 == 0) {
+        if(++odom_tick % 2 == 0) {
+            odom.process();
+            odom_tick = 0;
+        }
+
+        if(++remote_tick % 5 == 0) {
             remote_process();
             remote_tick = 0;
         }
 
-        if(arm_tick++ % 10 == 0) {
-            arm.refresh_current_state();
+        if(++arm_tick % 10 == 0) {
+            // arm.refresh_current_state();
             arm_tick = 0;
         }
     }
