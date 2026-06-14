@@ -81,25 +81,25 @@ typedef struct {
      * @param out_id 可选的应答 ID 输出指针, 可为 NULL
      * @return 状态码
      */
-    BusServoStatus(*ping)(uint8_t id, uint8_t* out_id);
+    BusServoStatus (*ping)(uint8_t id, uint8_t* out_id);
     /**
      * @brief 打开舵机扭矩输出
      * @param id 舵机 ID
      * @return 状态码
      */
-    BusServoStatus(*enable_torque)(uint8_t id);
+    BusServoStatus (*enable_torque)(uint8_t id);
     /**
      * @brief 关闭舵机扭矩输出
      * @param id 舵机 ID
      * @return 状态码
      */
-    BusServoStatus(*disable_torque)(uint8_t id);
+    BusServoStatus (*disable_torque)(uint8_t id);
     /**
      * @brief 触发已经预写的 REG_WRITE 命令
      * @param id 舵机 ID 或 FT_SCS_SERVO_BROADCAST_ID
      * @return 状态码
      */
-    BusServoStatus(*action)(uint8_t id);
+    BusServoStatus (*action)(uint8_t id);
     /**
      * @brief 向控制表写入 1 字节
      * @param id 舵机 ID
@@ -107,7 +107,7 @@ typedef struct {
      * @param value 写入值
      * @return 状态码
      */
-    BusServoStatus(*write_u8)(uint8_t id, uint8_t addr, uint8_t value);
+    BusServoStatus (*write_u8)(uint8_t id, uint8_t addr, uint8_t value);
     /**
      * @brief 向控制表写入 2 字节
      * @param id 舵机 ID
@@ -115,7 +115,7 @@ typedef struct {
      * @param value 写入值
      * @return 状态码
      */
-    BusServoStatus(*write_u16)(uint8_t id, uint8_t addr, uint16_t value);
+    BusServoStatus (*write_u16)(uint8_t id, uint8_t addr, uint16_t value);
     /**
      * @brief 从控制表读取 1 字节
      * @param id 舵机 ID
@@ -123,7 +123,7 @@ typedef struct {
      * @param value 读取值输出指针
      * @return 状态码
      */
-    BusServoStatus(*read_u8)(uint8_t id, uint8_t addr, uint8_t* value);
+    BusServoStatus (*read_u8)(uint8_t id, uint8_t addr, uint8_t* value);
     /**
      * @brief 从控制表读取 2 字节
      * @param id 舵机 ID
@@ -131,7 +131,7 @@ typedef struct {
      * @param value 读取值输出指针
      * @return 状态码
      */
-    BusServoStatus(*read_u16)(uint8_t id, uint8_t addr, uint16_t* value);
+    BusServoStatus (*read_u16)(uint8_t id, uint8_t addr, uint16_t* value);
     /**
      * @brief 发送原始 SCS 指令帧
      * @param id 舵机 ID
@@ -141,7 +141,7 @@ typedef struct {
      * @param need_ack 为真表示非广播 ID 时等待状态帧
      * @return 状态码
      */
-    BusServoStatus(*write_packet)(uint8_t id, uint8_t instruction, const uint8_t* params, uint8_t params_len, bool need_ack);
+    BusServoStatus (*write_packet)(uint8_t id, uint8_t instruction, const uint8_t* params, uint8_t params_len, bool need_ack);
 } FtScsBusServoInterface;
 
 /**
@@ -170,5 +170,31 @@ int16_t ft_scs_servo_raw_to_signed(uint16_t value, uint8_t sign_bit);
  * @return 原始寄存器值
  */
 uint16_t ft_scs_servo_signed_to_raw(int16_t value);
+
+/**
+ * @brief 同步读取多个舵机的反馈
+ * @param ids 舵机 ID 数组
+ * @param count ID 数量
+ * @param feedbacks 反馈输出数组
+ * @param feedback_cap 反馈输出数组容量
+ * @return 状态码
+ */
+BusServoStatus ft_scs_sync_read_feedback(const uint8_t* ids,
+                                         uint8_t count,
+                                         BusServoFeedback* feedbacks,
+                                         uint8_t feedback_cap);
+
+/**
+ * @brief 同步写入多个舵机的位置和速度
+ * @param ids 舵机 ID 数组
+ * @param positions 目标位置数组, 单位度
+ * @param count ID 数量
+ * @param velocity 目标速度, 单位度/秒
+ * @return 状态码
+ */
+BusServoStatus ft_scs_sync_write_pos_spd(const uint8_t* ids,
+                                         const float* positions,
+                                         uint8_t count,
+                                         float velocity);
 
 #endif

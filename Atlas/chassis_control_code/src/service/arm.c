@@ -18,6 +18,21 @@ static Arm s_arm = { 0 };
 static Arm s_arm_view = { 0 };
 
 /**
+ * @brief 机械臂服务状态刷新失败的循环保护
+ *
+ * 如果连续多次刷新失败, 则会暂时停止刷新尝试;
+ * 直到下一次成功刷新后才会恢复正常刷新
+ */
+static uint8_t s_refresh_fallback_index = 0u;
+
+/**
+ * @brief 机械臂服务状态刷新失败的循环保护阈值
+ *
+ * 如果连续刷新失败次数超过该阈值, 则会触发循环保护机制
+ */
+static bool s_refresh_fallback_seen[ARM_DOF] = { false };
+
+/**
  * @brief 机械臂服务统一接口实例
  */
 const struct ArmInterface arm_interface = {
@@ -150,6 +165,8 @@ ArmStatus arm_init(const ArmConfig* config) {
     }
 
     memset(&s_arm, 0, sizeof(s_arm));
+    memset(s_refresh_fallback_seen, 0, sizeof(s_refresh_fallback_seen));
+    s_refresh_fallback_index = 0u;
     s_arm.config = *config;
     if(s_arm.config.default_speed_rad_s <= 0.0f) {
         s_arm.config.default_speed_rad_s = 3.14f;
@@ -493,6 +510,7 @@ const Arm* arm_get_arm(void) {
 ArmStatus arm_refresh_current_state(void) {
     FiveDofArmJointArray joints = { 0 };
     FiveDofArmPose pose;
+    BusServoFeedback feedbacks[ARM_DOF];
 
     if(s_arm.initialized == false)
         return ARM_NOT_INITIALIZED;
@@ -500,12 +518,36 @@ ArmStatus arm_refresh_current_state(void) {
         return ARM_DEPENDENCY_MISSING;
 
     joints.dof = ARM_DOF;
-    for(uint8_t i = 0u; i < ARM_DOF; i++) {
-        BusServoFeedback feedback;
-        BusServoStatus ret = s_arm.config.servo_interface->update_feedback(s_arm.config.servo_id[i], &feedback);
+    if(s_arm.config.batch_update_feedback != NULL) {
+        BusServoStatus ret = s_arm.config.batch_update_feedback(s_arm.config.servo_id, ARM_DOF, feedbacks, ARM_DOF);
         if(ret != SERVO_STATUS_OK)
             return ARM_SERVO_FAILED;
-        joints.q[i] = feedback.position;
+        for(uint8_t i = 0u; i < ARM_DOF; i++) {
+            joints.q[i] = feedbacks[i].position;
+            s_refresh_fallback_seen[i] = true;
+        }
+    }
+    else {
+        BusServoFeedback feedback;
+        uint8_t index = s_refresh_fallback_index;
+        BusServoStatus ret = s_arm.config.servo_interface->update_feedback(s_arm.config.servo_id[index], &feedback);
+        if(ret != SERVO_STATUS_OK)
+            return ARM_SERVO_FAILED;
+
+        s_refresh_fallback_seen[index] = true;
+        s_refresh_fallback_index = (uint8_t)((index + 1u) % ARM_DOF);
+
+        /*
+         * Fallback drivers may still use blocking single-servo reads. Refresh
+         * only one servo per call so the 500Hz loop is never held by five
+         * serial waits; update FK after every servo has a valid cached value.
+         */
+        for(uint8_t i = 0u; i < ARM_DOF; i++) {
+            if(s_refresh_fallback_seen[i] == false) {
+                return ARM_OK;
+            }
+            joints.q[i] = s_arm.config.servo_interface->get_position(s_arm.config.servo_id[i]);
+        }
     }
 
     if(five_dof_arm.fk(&joints, &pose) != SERIAL_ARM_STATUS_SUCCESS)
@@ -560,6 +602,8 @@ static bool s_config_is_valid(const ArmConfig* config) {
     if(config->servo_interface == NULL)
         return false;
     if(config->servo_interface->set_pos_spd == NULL)
+        return false;
+    if(config->servo_interface->get_position == NULL)
         return false;
     if(config->has_kinematic_model == false || config->kinematic_model.dof != ARM_DOF)
         return false;
@@ -653,6 +697,11 @@ static ArmStatus s_ik_with_task(const FiveDofArmPose* target, FiveDofArmJointArr
  * @return ArmStatus 服务状态码
  */
 static ArmStatus s_send_joints_to_servo(const FiveDofArmJointArray* joints, float speed_rad_s) {
+    if(s_arm.config.batch_set_pos_spd != NULL) {
+        BusServoStatus ret = s_arm.config.batch_set_pos_spd(s_arm.config.servo_id, joints->q, ARM_DOF, speed_rad_s);
+        return (ret == SERVO_STATUS_OK) ? ARM_OK : ARM_SERVO_FAILED;
+    }
+
     for(uint8_t i = 0u; i < ARM_DOF; i++) {
         BusServoStatus ret = s_arm.config.servo_interface->set_pos_spd(
             s_arm.config.servo_id[i], joints->q[i], speed_rad_s);

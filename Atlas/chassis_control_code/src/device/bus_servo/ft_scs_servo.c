@@ -15,6 +15,11 @@
 #define FT_SCS_FRAME_MAX 128u
 
 /**
+ * @brief SCS 广播 ID
+ */
+#define FT_SCS_MAX_SERVO_ID 254u
+
+/**
  * @brief 从 ACC 到 GOAL_SPEED_H 的控制数据长度
  */
 #define FT_SCS_POS_PACKET_LEN 7u
@@ -73,8 +78,8 @@ typedef struct {
     BusServoEndian endian;
     bool initialized;
     uint8_t last_error_code;
-    BusServoFeedback feedback;
-    bool has_feedback;
+    BusServoFeedback feedback[FT_SCS_MAX_SERVO_ID + 1u];
+    bool has_feedback[FT_SCS_MAX_SERVO_ID + 1u];
     uint8_t last_tx_id;
     uint8_t last_tx_instruction;
     uint8_t last_tx_params[FT_SCS_FRAME_MAX];
@@ -249,7 +254,7 @@ static BusServoStatus validate_initialized(void);
  * @param len 期望字节数
  * @return 状态码
  */
-static BusServoStatus read_exact(uint8_t* data, uint16_t len);
+static BusServoStatus read_exact_until(uint8_t* data, uint16_t len, uint32_t start);
 
 /**
  * @brief 读取并解析状态帧
@@ -282,6 +287,22 @@ static BusServoStatus read_data(uint8_t id, uint8_t addr, uint8_t* data, uint8_t
  * @return 状态码
  */
 static BusServoStatus write_data(uint8_t id, uint8_t addr, const uint8_t* data, uint8_t len, uint8_t instruction, bool need_ack);
+
+/**
+ * @brief 处理反馈数据并更新缓存
+ * @param feedback 反馈数据
+ */
+static void cache_feedback(const BusServoFeedback* feedback);
+
+/**
+ * @brief 解析反馈数据并转换为反馈结构
+ * @param id 舵机 ID
+ * @param data 反馈数据缓冲区
+ * @param len 反馈数据长度
+ * @param feedback 反馈输出指针
+ * @return 状态码
+ */
+static BusServoStatus parse_feedback(uint8_t id, const uint8_t* data, uint8_t len, BusServoFeedback* feedback);
 
 /**
  * @brief 构造加速度, 位置, 时间和速度控制数据
@@ -435,6 +456,139 @@ uint16_t ft_scs_servo_signed_to_raw(int16_t value) {
     return raw;
 }
 
+/**
+ * @brief 同步读取多个舵机的反馈
+ * @param ids 舵机 ID 数组
+ * @param count 舵机数量
+ * @param feedbacks 可选的反馈输出数组, 长度至少为 count
+ * @param feedback_cap feedbacks 数组容量
+ * @return 状态码
+ */
+BusServoStatus ft_scs_sync_read_feedback(const uint8_t* ids,
+                                         uint8_t count,
+                                         BusServoFeedback* feedbacks,
+                                         uint8_t feedback_cap) {
+    uint8_t params[2u + FT_SCS_MAX_SERVO_ID];
+    uint8_t data[FT_SCS_FEEDBACK_LEN];
+    BusServoStatus status;
+
+    if(ids == 0 || count == 0u || count > FT_SCS_MAX_SERVO_ID) {
+        return SERVO_STATUS_INVALID_PARAM;
+    }
+    if(feedbacks != 0 && feedback_cap < count) {
+        return SERVO_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    params[0] = FT_SCS_SERVO_PRESENT_POSITION_L;
+    params[1] = FT_SCS_FEEDBACK_LEN;
+    memcpy(&params[2], ids, count);
+
+    /*
+     * SYNC READ queries the shared feedback block for every arm servo in one
+     * bus transaction, avoiding five independent waits inside the main loop.
+     */
+    status = ft_scs_write_packet(FT_SCS_SERVO_BROADCAST_ID, FT_SCS_SERVO_INST_SYNC_READ,
+                                 params, (uint8_t)(count + 2u), false);
+    if(status != SERVO_STATUS_OK) {
+        return status;
+    }
+
+    for(uint8_t i = 0u; i < count; i++) {
+        uint8_t rx_len = 0u;
+        uint8_t error = 0u;
+        BusServoFeedback parsed;
+
+        status = read_status_packet(ids[i], data, sizeof(data), &rx_len, &error);
+        if(status != SERVO_STATUS_OK) {
+            return status;
+        }
+        if(error != 0u) {
+            return SERVO_STATUS_ERROR;
+        }
+        if(rx_len != FT_SCS_FEEDBACK_LEN) {
+            return SERVO_STATUS_BUFFER_TOO_SMALL;
+        }
+
+        status = parse_feedback(ids[i], data, sizeof(data), &parsed);
+        if(status != SERVO_STATUS_OK) {
+            return status;
+        }
+        cache_feedback(&parsed);
+        if(feedbacks != 0) {
+            feedbacks[i] = parsed;
+        }
+    }
+
+    return SERVO_STATUS_OK;
+}
+
+/**
+ * @brief 同步写入多个舵机的位置和速度
+ * @param ids 舵机 ID 数组
+ * @param positions 目标位置数组, 单位 rad
+ * @param count 舵机数量
+ * @param velocity 目标速度, 单位 rad/s
+ * @return 状态码
+ */
+BusServoStatus ft_scs_sync_write_pos_spd(const uint8_t* ids,
+                                         const float* positions,
+                                         uint8_t count,
+                                         float velocity) {
+    uint8_t params[FT_SCS_FRAME_MAX];
+    uint8_t frame[FT_SCS_FRAME_MAX];
+    uint16_t params_len;
+    uint16_t frame_len;
+    uint16_t offset;
+    uint16_t speed_raw;
+    BusServoStatus status;
+
+    if(ids == 0 || positions == 0 || count == 0u || count > FT_SCS_MAX_SERVO_ID) {
+        return SERVO_STATUS_INVALID_PARAM;
+    }
+    if(velocity < 0.0f) {
+        velocity = -velocity;
+    }
+
+    params_len = (uint16_t)(2u + ((uint16_t)count * (uint16_t)(1u + FT_SCS_POS_PACKET_LEN)));
+    frame_len = (uint16_t)(params_len + 6u);
+    if(frame_len > sizeof(frame)) {
+        return SERVO_STATUS_BUFFER_TOO_SMALL;
+    }
+
+    params[0] = FT_SCS_SERVO_ACC;
+    params[1] = FT_SCS_POS_PACKET_LEN;
+    speed_raw = (uint16_t)speed_rad_s_to_raw(velocity);
+    offset = 2u;
+    for(uint8_t i = 0u; i < count; i++) {
+        params[offset++] = ids[i];
+        build_position_data(&params[offset], position_rad_to_raw(positions[i]), speed_raw, FT_SCS_DEFAULT_ACC);
+        offset = (uint16_t)(offset + FT_SCS_POS_PACKET_LEN);
+    }
+
+    status = validate_initialized();
+    if(status != SERVO_STATUS_OK) {
+        return status;
+    }
+
+    frame[0] = FT_SCS_HEADER;
+    frame[1] = FT_SCS_HEADER;
+    frame[2] = FT_SCS_SERVO_BROADCAST_ID;
+    frame[3] = (uint8_t)(params_len + 2u);
+    frame[4] = FT_SCS_SERVO_INST_SYNC_WRITE;
+    memcpy(&frame[5], params, params_len);
+    frame[5u + params_len] = checksum(frame + 2u, (uint16_t)(3u + params_len));
+
+    if(s_ctx.ops->flush_rx != 0) {
+        s_ctx.ops->flush_rx();
+    }
+
+    /*
+     * Broadcast SYNC WRITE does not return status packets. Sending all arm
+     * goals at once prevents repeated ACK waits in time-critical code.
+     */
+    return s_ctx.ops->write(frame, frame_len) ? SERVO_STATUS_OK : SERVO_STATUS_PORT_ERROR;
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 /**
@@ -444,7 +598,7 @@ static BusServoStatus ft_scs_common_init(const void* config) {
     const FtScsServoConfig* scs_config = (const FtScsServoConfig*)config;
 
     if(scs_config == 0 || scs_config->ops == 0 || scs_config->ops->write == 0 ||
-        scs_config->ops->read == 0 || scs_config->ops->now_ms == 0) {
+       scs_config->ops->read == 0 || scs_config->ops->now_ms == 0) {
         return SERVO_STATUS_INVALID_PARAM;
     }
 
@@ -454,10 +608,10 @@ static BusServoStatus ft_scs_common_init(const void* config) {
     s_ctx.endian = scs_config->endian;
     s_ctx.initialized = true;
     s_ctx.last_error_code = 0u;
-    s_ctx.has_feedback = false;
     s_ctx.has_last_tx = false;
     s_ctx.last_tx_params_len = 0u;
-    memset(&s_ctx.feedback, 0, sizeof(s_ctx.feedback));
+    memset(s_ctx.feedback, 0, sizeof(s_ctx.feedback));
+    memset(s_ctx.has_feedback, 0, sizeof(s_ctx.has_feedback));
     memset(s_ctx.last_tx_params, 0, sizeof(s_ctx.last_tx_params));
 
     return SERVO_STATUS_OK;
@@ -468,10 +622,13 @@ static BusServoStatus ft_scs_common_init(const void* config) {
  */
 static const char* ft_scs_common_status_str(BusServoStatus status) {
     switch(status) {
-#define X(name, value) case SERVO_STATUS_##name: return #name;
+#define X(name, value)        \
+    case SERVO_STATUS_##name: \
+        return #name;
         SERVO_STATUS_TABLE
 #undef X
-        default: return "UNKNOWN";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -505,27 +662,14 @@ static BusServoStatus ft_scs_common_set_speed(uint8_t id, float speed) {
  */
 static BusServoStatus ft_scs_common_set_pos_spd(uint8_t id, float position, float velocity) {
     uint8_t data[FT_SCS_POS_PACKET_LEN];
-    uint8_t mode = 0u;
-    uint8_t torque_enable = 1u;
-    BusServoStatus status;
     int16_t speed_raw;
-
-    status = write_data(id, FT_SCS_SERVO_TORQUE_ENABLE, &torque_enable, 1u, FT_SCS_SERVO_INST_WRITE, true);
-    if(status != SERVO_STATUS_OK) {
-        return status;
-    }
-
-    status = write_data(id, FT_SCS_SERVO_MODE, &mode, 1u, FT_SCS_SERVO_INST_WRITE, true);
-    if(status != SERVO_STATUS_OK) {
-        return status;
-    }
 
     if(velocity < 0.0f) {
         velocity = -velocity;
     }
     speed_raw = speed_rad_s_to_raw(velocity);
     build_position_data(data, position_rad_to_raw(position), (uint16_t)speed_raw, FT_SCS_DEFAULT_ACC);
-    return write_data(id, FT_SCS_SERVO_ACC, data, sizeof(data), FT_SCS_SERVO_INST_WRITE, true);
+    return write_data(id, FT_SCS_SERVO_ACC, data, sizeof(data), FT_SCS_SERVO_INST_WRITE, false);
 }
 
 /**
@@ -548,33 +692,33 @@ static BusServoStatus ft_scs_common_set_pos_spd_tor(uint8_t id, float position, 
  * @brief 获取缓存的位置
  */
 static float ft_scs_common_get_position(uint8_t id) {
-    if(s_ctx.has_feedback == false || s_ctx.feedback.id != id) {
+    if(id > FT_SCS_MAX_SERVO_ID || s_ctx.has_feedback[id] == false) {
         return 0.0f;
     }
 
-    return s_ctx.feedback.position;
+    return s_ctx.feedback[id].position;
 }
 
 /**
  * @brief 获取缓存的速度
  */
 static float ft_scs_common_get_speed(uint8_t id) {
-    if(s_ctx.has_feedback == false || s_ctx.feedback.id != id) {
+    if(id > FT_SCS_MAX_SERVO_ID || s_ctx.has_feedback[id] == false) {
         return 0.0f;
     }
 
-    return s_ctx.feedback.speed;
+    return s_ctx.feedback[id].speed;
 }
 
 /**
  * @brief 获取缓存的扭矩
  */
 static float ft_scs_common_get_torque(uint8_t id) {
-    if(s_ctx.has_feedback == false || s_ctx.feedback.id != id) {
+    if(id > FT_SCS_MAX_SERVO_ID || s_ctx.has_feedback[id] == false) {
         return 0.0f;
     }
 
-    return s_ctx.feedback.torque;
+    return s_ctx.feedback[id].torque;
 }
 
 /**
@@ -590,14 +734,11 @@ static BusServoStatus ft_scs_common_update_feedback(uint8_t id, BusServoFeedback
         return status;
     }
 
-    parsed.id = id;
-    parsed.error_code = s_ctx.last_error_code;
-    parsed.position = raw_to_position_rad(make_u16(data[0], data[1]));
-    parsed.speed = raw_to_speed_rad_s(ft_scs_servo_raw_to_signed(make_u16(data[2], data[3]), 15u));
-    parsed.torque = raw_to_torque(ft_scs_servo_raw_to_signed(make_u16(data[4], data[5]), 10u));
-
-    s_ctx.feedback = parsed;
-    s_ctx.has_feedback = true;
+    status = parse_feedback(id, data, sizeof(data), &parsed);
+    if(status != SERVO_STATUS_OK) {
+        return status;
+    }
+    cache_feedback(&parsed);
 
     if(feedback != 0) {
         *feedback = parsed;
@@ -779,15 +920,13 @@ static BusServoStatus validate_initialized(void) {
 /**
  * @brief 在超时前读取指定数量的字节
  */
-static BusServoStatus read_exact(uint8_t* data, uint16_t len) {
+static BusServoStatus read_exact_until(uint8_t* data, uint16_t len, uint32_t start) {
     uint16_t offset = 0u;
-    uint32_t start;
 
     if(data == 0 && len != 0u) {
         return SERVO_STATUS_INVALID_PARAM;
     }
 
-    start = s_ctx.ops->now_ms();
     while(offset < len) {
         int got = s_ctx.ops->read(data + offset, (uint16_t)(len - offset));
 
@@ -818,7 +957,6 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
     uint8_t rx_checksum;
     uint8_t sum;
     uint8_t i;
-    uint8_t skipped;
     uint32_t start;
     BusServoStatus status;
 
@@ -831,7 +969,6 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
 
     while((s_ctx.ops->now_ms() - start) < s_ctx.timeout_ms) {
         last = 0u;
-        skipped = 0u;
 
         while((s_ctx.ops->now_ms() - start) < s_ctx.timeout_ms) {
             int got = s_ctx.ops->read(&b, 1u);
@@ -840,10 +977,6 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
                     break;
                 }
                 last = b;
-                skipped++;
-                if(skipped > 10u) {
-                    return SERVO_STATUS_TIMEOUT;
-                }
             }
         }
 
@@ -851,21 +984,21 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
             return SERVO_STATUS_TIMEOUT;
         }
 
-        status = read_exact(&id, 1u);
+        status = read_exact_until(&id, 1u, start);
         if(status != SERVO_STATUS_OK) {
             return status;
         }
-        status = read_exact(&len, 1u);
+        status = read_exact_until(&len, 1u, start);
         if(status != SERVO_STATUS_OK) {
             return status;
         }
-        status = read_exact(&err, 1u);
+        status = read_exact_until(&err, 1u, start);
         if(status != SERVO_STATUS_OK) {
             return status;
         }
 
         if(len < 2u) {
-            return SERVO_STATUS_BUFFER_TOO_SMALL;
+            continue;
         }
 
         param_len = (uint8_t)(len - 2u);
@@ -874,13 +1007,13 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
         }
 
         if(param_len > 0u) {
-            status = read_exact(packet_params, param_len);
+            status = read_exact_until(packet_params, param_len, start);
             if(status != SERVO_STATUS_OK) {
                 return status;
             }
         }
 
-        status = read_exact(&rx_checksum, 1u);
+        status = read_exact_until(&rx_checksum, 1u, start);
         if(status != SERVO_STATUS_OK) {
             return status;
         }
@@ -891,20 +1024,20 @@ static BusServoStatus read_status_packet(uint8_t expected_id, uint8_t* params, u
         }
         sum = (uint8_t)(~sum);
         if(sum != rx_checksum) {
-            return SERVO_STATUS_CHECKSUM_ERROR;
+            continue;
         }
 
         if(s_ctx.has_last_tx &&
-            id == s_ctx.last_tx_id &&
-            err == s_ctx.last_tx_instruction &&
-            param_len == s_ctx.last_tx_params_len &&
-            is_echo_instruction(err, packet_params, param_len) &&
-            (param_len == 0u || memcmp(packet_params, s_ctx.last_tx_params, param_len) == 0)) {
+           id == s_ctx.last_tx_id &&
+           err == s_ctx.last_tx_instruction &&
+           param_len == s_ctx.last_tx_params_len &&
+           is_echo_instruction(err, packet_params, param_len) &&
+           (param_len == 0u || memcmp(packet_params, s_ctx.last_tx_params, param_len) == 0)) {
             continue;
         }
 
         if(expected_id != FT_SCS_SERVO_BROADCAST_ID && id != expected_id) {
-            return SERVO_STATUS_ID_MISMATCH;
+            continue;
         }
         if(param_len > params_cap) {
             return SERVO_STATUS_BUFFER_TOO_SMALL;
@@ -980,6 +1113,28 @@ static BusServoStatus write_data(uint8_t id, uint8_t addr, const uint8_t* data, 
     memcpy(&params[1], data, len);
 
     return ft_scs_write_packet(id, instruction, params, (uint8_t)(len + 1u), need_ack);
+}
+
+static void cache_feedback(const BusServoFeedback* feedback) {
+    if(feedback == 0 || feedback->id > FT_SCS_MAX_SERVO_ID) {
+        return;
+    }
+
+    s_ctx.feedback[feedback->id] = *feedback;
+    s_ctx.has_feedback[feedback->id] = true;
+}
+
+static BusServoStatus parse_feedback(uint8_t id, const uint8_t* data, uint8_t len, BusServoFeedback* feedback) {
+    if(data == 0 || feedback == 0 || len < FT_SCS_FEEDBACK_LEN) {
+        return SERVO_STATUS_INVALID_PARAM;
+    }
+
+    feedback->id = id;
+    feedback->error_code = s_ctx.last_error_code;
+    feedback->position = raw_to_position_rad(make_u16(data[0], data[1]));
+    feedback->speed = raw_to_speed_rad_s(ft_scs_servo_raw_to_signed(make_u16(data[2], data[3]), 15u));
+    feedback->torque = raw_to_torque(ft_scs_servo_raw_to_signed(make_u16(data[4], data[5]), 10u));
+    return SERVO_STATUS_OK;
 }
 
 /**

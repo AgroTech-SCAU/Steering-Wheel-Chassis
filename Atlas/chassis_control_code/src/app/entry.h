@@ -113,7 +113,7 @@ static inline void entry_loop(void) {
         }
 
         if(++arm_tick % 10 == 0) {
-            // arm.refresh_current_state();
+            arm.refresh_current_state();
             arm_tick = 0;
         }
     }

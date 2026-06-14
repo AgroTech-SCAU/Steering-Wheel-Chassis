@@ -59,6 +59,15 @@ typedef struct {
 
 typedef BusServoStatus (*ArmServoStopFn)(uint8_t id);
 
+typedef BusServoStatus (*ArmServoBatchSetPosSpdFn)(const uint8_t* ids,
+                                                   const float* positions,
+                                                   uint8_t count,
+                                                   float velocity);
+typedef BusServoStatus (*ArmServoBatchUpdateFeedbackFn)(const uint8_t* ids,
+                                                        uint8_t count,
+                                                        BusServoFeedback* feedbacks,
+                                                        uint8_t feedback_cap);
+
 /**
  * @brief 机械臂服务初始化配置
  */
@@ -67,6 +76,10 @@ typedef struct {
     const BusServoInterface* servo_interface;
     /** 可选的单舵机停止/卸力函数，由具体驱动适配 */
     ArmServoStopFn stop_servo;
+    /** 可选的批量写入位置和速度函数，由具体驱动适配 */
+    ArmServoBatchSetPosSpdFn batch_set_pos_spd;
+    /** 可选的批量更新反馈函数，由具体驱动适配 */
+    ArmServoBatchUpdateFeedbackFn batch_update_feedback;
     /** 由组合层装配好的运动学模型 */
     SerialArmModel kinematic_model;
     bool has_kinematic_model;

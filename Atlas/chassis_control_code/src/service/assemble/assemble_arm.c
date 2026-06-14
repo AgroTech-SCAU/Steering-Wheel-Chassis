@@ -40,8 +40,8 @@ static const BusServoPortOps servo_port_ops = {
 
 static const FtScsServoConfig servo_config = {
     .ops = &servo_port_ops,
-    .timeout_ms = 100,
-    .retry_count = 3,
+    .timeout_ms = 10,
+    .retry_count = 0,
     .endian = SERVO_ENDIAN_LITTLE,
 };
 
@@ -69,6 +69,8 @@ SystemStatus assemble_arm(void) {
     arm_config = arm.default_config();
     arm_config.servo_interface = &ft_scs_servo_common_instance;
     arm_config.stop_servo = ft_scs_servo.disable_torque;
+    arm_config.batch_set_pos_spd = ft_scs_sync_write_pos_spd;
+    arm_config.batch_update_feedback = ft_scs_sync_read_feedback;
     arm_config.auto_move_servo_zero = true;
     for(uint8_t i = 0u; i < ARM_DOF; i++) {
         arm_config.servo_id[i] = (uint8_t)(i + 1u);
@@ -84,6 +86,19 @@ SystemStatus assemble_arm(void) {
     arm_config.servo_zero_joints.q[2] = DEG_TO_RAD(360.0f);
     arm_config.servo_zero_joints.q[3] = DEG_TO_RAD(180.0f);
     arm_config.servo_zero_joints.q[4] = DEG_TO_RAD(180.0f);
+
+    for(uint8_t i = 0u; i < ARM_DOF; i++) {
+        servo_ret = ft_scs_servo.write_u8(arm_config.servo_id[i], FT_SCS_SERVO_MODE, 0u);
+        if(servo_ret != SERVO_STATUS_OK) {
+            log_error("ARM servo mode config failed: %s", bus_servo.status_str(servo_ret));
+            return SYSTEM_STATUS_ERROR;
+        }
+        servo_ret = ft_scs_servo.enable_torque(arm_config.servo_id[i]);
+        if(servo_ret != SERVO_STATUS_OK) {
+            log_error("ARM servo torque enable failed: %s", bus_servo.status_str(servo_ret));
+            return SYSTEM_STATUS_ERROR;
+        }
+    }
 
     arm_ret = arm.init(&arm_config);
     if(arm_ret != arm.OK) {
@@ -102,7 +117,7 @@ static int servo_read(uint8_t* data, uint16_t len) {
         return 0;
     }
 
-    return (HAL_UART_Receive(&huart7, data, len, 2u) == HAL_OK) ? (int)len : 0;
+    return (HAL_UART_Receive(&huart7, data, len, 1u) == HAL_OK) ? (int)len : 0;
 }
 
 static void servo_flush_rx(void) {
