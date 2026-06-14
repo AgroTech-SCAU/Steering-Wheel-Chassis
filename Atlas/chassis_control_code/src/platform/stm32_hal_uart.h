@@ -21,8 +21,14 @@ extern UART_HandleTypeDef huart1;
  * @brief 遥控器 i.BUS 接收所用 UART5 句柄
  */
 extern UART_HandleTypeDef huart5;
-
+/**
+ * @brief ARM 串口接收所用 UART7 句柄
+ */
 extern UART_HandleTypeDef huart7;
+/**
+ * @brief 双机通信所用 UART10 句柄
+ */
+extern UART_HandleTypeDef huart10;
 
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
@@ -42,7 +48,21 @@ bool uart1_write(const char* data, uint32_t len);
  */
 bool uart1_write_blocking(const char* data, uint32_t len);
 
+/**
+ * @brief 通过 UART7 阻塞发送一段字符串数据
+ * @param data 数据缓冲区
+ * @param len 数据长度，单位 byte
+ * @return bool `true` 表示发送完成
+ */
 bool uart7_write_blocking(const char* data, uint32_t len);
+
+/**
+ * @brief 通过 UART10 阻塞发送一段字符串数据
+ * @param data 数据缓冲区
+ * @param len 数据长度，单位 byte
+ * @return bool `true` 表示发送完成
+ */
+bool uart10_write_blocking(const char* data, uint32_t len);
 
 /**
  * @brief 启动 UART 中断接收
