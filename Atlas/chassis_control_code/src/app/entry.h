@@ -96,8 +96,8 @@ static inline void entry_loop(void) {
     if(tim6_500hz_flag) {
         tim6_500hz_flag = false;
 
-        // chassis.process();
-        // odom.process();
+        chassis.process();
+        odom.process();
 
         if(remote_tick++ % 5 == 0) {
             arm.refresh_current_state();
@@ -130,7 +130,7 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        // arm.move_position(0.1f, 0.0f, 0.2f, 6.28f);
+        log_info("Heartbeat");
     }
 }
 

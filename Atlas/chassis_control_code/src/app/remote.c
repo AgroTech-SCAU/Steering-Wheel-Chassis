@@ -139,6 +139,10 @@
  * @brief 三挡开关低位原始值
  */
 #define REMOTE_SW_LOW 2000u
+
+/**
+ * @brief 三挡开关中位原始值
+ */
 #define REMOTE_SW_CENTER 1500u
 
 /**
@@ -156,10 +160,11 @@ typedef struct {
 } RemoteSpeedLimit;
 
 typedef struct {
-    float yaw_rate_rad_s;
+    float base_end_yaw_rate_rad_s;
     float reach_speed_m_s;
     float z_speed_m_s;
-    float pitch_rate_rad_s;
+    float end_pitch_rate_rad_s;
+    float end_yaw_rate_rad_s;
     float servo_speed_rad_s;
 } RemoteArmSpeedLimit;
 
@@ -167,6 +172,10 @@ typedef struct {
  * @brief 最近一次对外输出的遥控命令快照
  */
 static RemoteCommand s_command = { 0 };
+
+/**
+ * @brief 最近一次 SWC 挡位，用于检测挡位切换
+ */
 static uint16_t s_last_arm_swc = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
@@ -216,9 +225,12 @@ void remote_process(void) {
     FsIa10bData rc_data;
     ibus_maintain();
 
-    if(!ibus_get_data(&rc_data) || !ibus_is_online(REMOTE_TIMEOUT_MS) || rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_HIGH)
+    if(!ibus_get_data(&rc_data) || !ibus_is_online(REMOTE_TIMEOUT_MS) || rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_HIGH) {
+        s_command.online = false;
         return;
+    }
 
+    s_command.online = true;
     if(rc_data.channel[REMOTE_CH_SWA] == REMOTE_SW_HIGH)
         chassis_control_task(rc_data);
     else if(rc_data.channel[REMOTE_CH_SWA] == REMOTE_SW_LOW)
@@ -298,34 +310,46 @@ static RemoteSpeedLimit get_speed_limit(uint16_t swb) {
     return limit;
 }
 
+/**
+ * @brief 获取机械臂三挡速度限制
+ * @param swb ch_swb 当前档位
+ * @return 当前档位对应的速度限制
+ */
 static RemoteArmSpeedLimit get_arm_speed_limit(uint16_t swb) {
     RemoteArmSpeedLimit limit;
 
     if(swb == REMOTE_SW_LOW) {
-        limit.yaw_rate_rad_s = 3.14f;
-        limit.reach_speed_m_s = 0.18f;
-        limit.z_speed_m_s = 0.18f;
-        limit.pitch_rate_rad_s = 1.5f;
-        limit.servo_speed_rad_s = 6.28f;
+        limit.base_end_yaw_rate_rad_s = 50.24f;
+        limit.reach_speed_m_s = 1.5f;
+        limit.z_speed_m_s = 3.0f;
+        limit.end_pitch_rate_rad_s = 21.0f;
+        limit.end_yaw_rate_rad_s = 21.0f;
+        limit.servo_speed_rad_s = 50.24f;
     }
     else if(swb == REMOTE_SW_HIGH) {
-        limit.yaw_rate_rad_s = 0.785f;
-        limit.reach_speed_m_s = 0.06f;
-        limit.z_speed_m_s = 0.06f;
-        limit.pitch_rate_rad_s = 0.5f;
-        limit.servo_speed_rad_s = 6.28f;
+        limit.base_end_yaw_rate_rad_s = 12.56f;
+        limit.reach_speed_m_s = 0.5f;
+        limit.z_speed_m_s = 1.0f;
+        limit.end_pitch_rate_rad_s = 7.0f;
+        limit.end_yaw_rate_rad_s = 7.0f;
+        limit.servo_speed_rad_s = 12.56f;
     }
     else {
-        limit.yaw_rate_rad_s = 1.57f;
-        limit.reach_speed_m_s = 0.12f;
-        limit.z_speed_m_s = 0.12f;
-        limit.pitch_rate_rad_s = 1.0f;
-        limit.servo_speed_rad_s = 6.28f;
+        limit.base_end_yaw_rate_rad_s = 25.12f;
+        limit.reach_speed_m_s = 1.0f;
+        limit.z_speed_m_s = 2.0f;
+        limit.end_pitch_rate_rad_s = 14.0f;
+        limit.end_yaw_rate_rad_s = 14.0f;
+        limit.servo_speed_rad_s = 25.12f;
     }
 
     return limit;
 }
 
+/**
+ * @brief 机械底盘控制任务
+ * @param rc_data 当前遥控数据
+ */
 static void chassis_control_task(FsIa10bData rc_data) {
     if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_SW_LOW) {
         (void)chassis.set_steer_then_drive_enabled(false);
@@ -338,7 +362,6 @@ static void chassis_control_task(FsIa10bData rc_data) {
         s_command.vx = 0.0f;
         s_command.vy = 0.0f;
         s_command.wz = 0.0f;
-        s_command.online = true;
         chassis_yaw_hold_reset();
         (void)chassis.brake();
         return;
@@ -349,7 +372,6 @@ static void chassis_control_task(FsIa10bData rc_data) {
         s_command.vx = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND) * speed_limit.max_vx;
         s_command.vy = -channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND) * speed_limit.max_vy;
         s_command.wz = -channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND) * speed_limit.max_wz;
-        s_command.online = true;
 
         if(chassis_yaw_hold_is_active()) {
             Vector3 angle = { 0.0f, 0.0f, 0.0f };
@@ -369,7 +391,6 @@ static void chassis_control_task(FsIa10bData rc_data) {
         (void)chassis.set_velocity(s_command.vx, s_command.vy, s_command.wz);
     }
     else {
-        s_command.online = true;
         s_command.vx = 0.0f;
         s_command.vy = 0.0f;
         s_command.wz = 0.0f;
@@ -378,15 +399,18 @@ static void chassis_control_task(FsIa10bData rc_data) {
     }
 }
 
+/**
+ * @brief 机械臂控制任务
+ * @param rc_data 当前遥控数据
+ */
 static void arm_control_task(FsIa10bData rc_data) {
     const RemoteArmSpeedLimit speed_limit = get_arm_speed_limit(rc_data.channel[REMOTE_CH_SWB]);
     const uint16_t swc = rc_data.channel[REMOTE_CH_SWC];
-    const float yaw_input = channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND);
-    const float reach_input = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND);
-    const float z_input = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND);
+    const float ch_left_x = channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND);
+    const float ch_right_y = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND);
+    const float ch_right_x = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND);
     const FiveDofArmJointArray* current_joints;
     const FiveDofArmPose* current_pose;
-    SerialArmRPY rpy;
 
     if(!arm.is_ready()) {
         s_last_arm_swc = swc;
@@ -414,29 +438,33 @@ static void arm_control_task(FsIa10bData rc_data) {
     }
 
     if(swc == REMOTE_SW_LOW) {
-        if(serial_arm.quat_to_rpy(current_pose->orientation, &rpy) == SERIAL_ARM_STATUS_SUCCESS) {
-            const float target_yaw = rpy.yaw - 0.1 * reach_input * speed_limit.yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-            (void)arm.move_orientation(rpy.roll, rpy.pitch, target_yaw, speed_limit.servo_speed_rad_s);
-        }
+        static FiveDofArmJointArray target_joints;
+        if(s_last_arm_swc != swc)
+            target_joints = *current_joints;
+
+        target_joints.q[3] = current_joints->q[3] + ch_right_y * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        target_joints.q[4] = current_joints->q[4] + ch_right_x * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s);
+
         s_last_arm_swc = swc;
         return;
     }
 
-    if(yaw_input != 0.0f) {
-        const float target_yaw = current_joints->q[0] + yaw_input * speed_limit.yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        (void)arm.move_joint(0, target_yaw, speed_limit.servo_speed_rad_s);
+    if(ch_left_x != 0.0f) {
+        const float target_base_yaw = current_joints->q[0] + ch_left_x * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        (void)arm.move_joint(0, target_base_yaw, speed_limit.servo_speed_rad_s);
     }
 
-    if(reach_input != 0.0f || z_input != 0.0f) {
+    if(ch_right_y != 0.0f || ch_right_x != 0.0f) {
         const FiveDofArmJointArray* updated_joints = arm.get_current_joints();
         const FiveDofArmPose* updated_pose = arm.get_current_pose();
 
         if(updated_joints != NULL && updated_pose != NULL) {
             const float base_yaw = updated_joints->q[0];
-            const float reach_delta = -reach_input * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
+            const float reach_delta = -ch_right_y * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
             const float target_x = updated_pose->position.x + cosf(base_yaw) * reach_delta;
             const float target_y = updated_pose->position.y + sinf(base_yaw) * reach_delta;
-            const float target_z = updated_pose->position.z - z_input * speed_limit.z_speed_m_s * REMOTE_CONTROL_PERIOD_S;
+            const float target_z = updated_pose->position.z - ch_right_x * speed_limit.z_speed_m_s * REMOTE_CONTROL_PERIOD_S;
 
             (void)arm.move_position(target_x, target_y, target_z, speed_limit.servo_speed_rad_s);
         }

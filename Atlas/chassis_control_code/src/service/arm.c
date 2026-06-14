@@ -363,7 +363,6 @@ ArmStatus arm_move_orientation(float roll, float pitch, float yaw, float speed_r
     FiveDofArmPose target;
     FiveDofArmJointArray seed;
     FiveDofArmJointArray joints;
-    // 仅约束 yaw
     SerialArmTaskInfo task = {
         .task_dim = 3u,
         .row = { 3u, 4u, 5u },
