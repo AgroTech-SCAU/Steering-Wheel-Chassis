@@ -15,17 +15,17 @@
  * @brief 舵机通用状态码表
  */
 #define SERVO_STATUS_TABLE \
-    X(OK, 0) \
-    X(ERROR, 1) \
-    X(INVALID_PARAM, 2) \
-    X(PORT_ERROR, 3) \
-    X(TIMEOUT, 4) \
-    X(ID_MISMATCH, 5) \
-    X(CHECKSUM_ERROR, 6) \
-    X(NO_INSTANCE, 7) \
-    X(NOT_INITIALIZE, 8) \
+    X(OK, 0)               \
+    X(ERROR, 1)            \
+    X(INVALID_PARAM, 2)    \
+    X(PORT_ERROR, 3)       \
+    X(TIMEOUT, 4)          \
+    X(ID_MISMATCH, 5)      \
+    X(CHECKSUM_ERROR, 6)   \
+    X(NO_INSTANCE, 7)      \
+    X(NOT_INITIALIZE, 8)   \
     X(BUFFER_TOO_SMALL, 9) \
-    X(UNSUPPORTED, 10) \
+    X(UNSUPPORTED, 10)     \
     X(NO_FEEDBACK, 11)
 
 #define X(name, value) SERVO_STATUS_##name = value,
@@ -66,7 +66,7 @@ typedef struct {
 typedef struct {
     bool (*write)(const uint8_t* data, uint16_t len);
     int (*read)(uint8_t* data, uint16_t len);
-    uint32_t(*now_ms)(void);
+    uint32_t (*now_ms)(void);
     void (*delay_ms)(uint32_t ms);
     void (*flush_rx)(void);
 } BusServoPortOps;
@@ -78,15 +78,15 @@ typedef struct {
  * 具体型号、协议和初始化配置均由实例自行定义
  */
 typedef struct {
-    BusServoStatus(*init)(const void* config);
+    BusServoStatus (*init)(const void* config);
     const char* (*status_str)(BusServoStatus status);
-    BusServoStatus(*set_speed)(uint8_t id, float speed);
-    BusServoStatus(*set_pos_spd)(uint8_t id, float position, float velocity);
-    BusServoStatus(*set_pos_spd_tor)(uint8_t id, float position, float velocity, float torque);
+    BusServoStatus (*set_speed)(uint8_t id, float speed);
+    BusServoStatus (*set_pos_spd)(uint8_t id, float position, float velocity);
+    BusServoStatus (*set_pos_spd_tor)(uint8_t id, float position, float velocity, float torque);
     float (*get_position)(uint8_t id);
     float (*get_speed)(uint8_t id);
     float (*get_torque)(uint8_t id);
-    BusServoStatus(*update_feedback)(uint8_t id, BusServoFeedback* feedback);
+    BusServoStatus (*update_feedback)(uint8_t id, BusServoFeedback* feedback);
 } BusServoInterface;
 
 /**

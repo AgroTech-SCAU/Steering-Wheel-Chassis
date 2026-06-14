@@ -483,10 +483,6 @@ BusServoStatus ft_scs_sync_read_feedback(const uint8_t* ids,
     params[1] = FT_SCS_FEEDBACK_LEN;
     memcpy(&params[2], ids, count);
 
-    /*
-     * SYNC READ queries the shared feedback block for every arm servo in one
-     * bus transaction, avoiding five independent waits inside the main loop.
-     */
     status = ft_scs_write_packet(FT_SCS_SERVO_BROADCAST_ID, FT_SCS_SERVO_INST_SYNC_READ,
                                  params, (uint8_t)(count + 2u), false);
     if(status != SERVO_STATUS_OK) {
@@ -582,10 +578,6 @@ BusServoStatus ft_scs_sync_write_pos_spd(const uint8_t* ids,
         s_ctx.ops->flush_rx();
     }
 
-    /*
-     * Broadcast SYNC WRITE does not return status packets. Sending all arm
-     * goals at once prevents repeated ACK waits in time-critical code.
-     */
     return s_ctx.ops->write(frame, frame_len) ? SERVO_STATUS_OK : SERVO_STATUS_PORT_ERROR;
 }
 
