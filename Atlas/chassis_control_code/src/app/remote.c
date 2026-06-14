@@ -223,17 +223,19 @@ void remote_init(void) {
  */
 void remote_process(void) {
     FsIa10bData rc_data;
-    ibus_maintain();
 
+    ibus_maintain();
     if(!ibus_get_data(&rc_data) || !ibus_is_online(REMOTE_TIMEOUT_MS) || rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_HIGH) {
         s_command.online = false;
         return;
     }
 
     s_command.online = true;
-    if(rc_data.channel[REMOTE_CH_SWA] == REMOTE_SW_HIGH)
+    const uint16_t swa = rc_data.channel[REMOTE_CH_SWA];
+
+    if(swa == REMOTE_SW_HIGH)
         chassis_control_task(rc_data);
-    else if(rc_data.channel[REMOTE_CH_SWA] == REMOTE_SW_LOW)
+    else if(swa == REMOTE_SW_LOW)
         arm_control_task(rc_data);
 }
 
@@ -351,14 +353,24 @@ static RemoteArmSpeedLimit get_arm_speed_limit(uint16_t swb) {
  * @param rc_data 当前遥控数据
  */
 static void chassis_control_task(FsIa10bData rc_data) {
-    if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_SW_LOW) {
+    const uint16_t swb = rc_data.channel[REMOTE_CH_SWB];
+    const uint16_t swc = rc_data.channel[REMOTE_CH_SWC];
+    const uint16_t vra = rc_data.channel[REMOTE_CH_VRA];
+    const uint16_t vrb = rc_data.channel[REMOTE_CH_VRB];
+    const float ch_right_y = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND);
+    const float ch_right_x = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND);
+    const float ch_left_x = channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND);
+
+    /* SWC: 底盘模式选择 */
+    if(swc == REMOTE_SW_LOW) {
         (void)chassis.set_steer_then_drive_enabled(false);
     }
-    else if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_CENTER) {
+    else if(swc == REMOTE_CENTER) {
         (void)chassis.set_steer_then_drive_enabled(true);
     }
 
-    if(rc_data.channel[REMOTE_CH_SWC] == REMOTE_SW_HIGH || rc_data.channel[REMOTE_CH_VRA] <= REMOTE_VR_LOW_THRESHOLD) {
+    /* SWC 高位或 VRA 关闭时，直接刹车退出 */
+    if(swc == REMOTE_SW_HIGH || vra <= REMOTE_VR_LOW_THRESHOLD) {
         s_command.vx = 0.0f;
         s_command.vy = 0.0f;
         s_command.wz = 0.0f;
@@ -367,36 +379,41 @@ static void chassis_control_task(FsIa10bData rc_data) {
         return;
     }
 
-    if(rc_data.channel[REMOTE_CH_VRB] <= REMOTE_VR_LOW_THRESHOLD) {
-        RemoteSpeedLimit speed_limit = get_speed_limit(rc_data.channel[REMOTE_CH_SWB]);
-        s_command.vx = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND) * speed_limit.max_vx;
-        s_command.vy = -channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND) * speed_limit.max_vy;
-        s_command.wz = -channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND) * speed_limit.max_wz;
-
-        if(chassis_yaw_hold_is_active()) {
-            Vector3 angle = { 0.0f, 0.0f, 0.0f };
-            Vector3 gyro_corrected = { 0.0f, 0.0f, 0.0f };
-
-            (void)odom.get_angle(&angle);
-            (void)odom.get_gyro_corrected(&gyro_corrected);
-            s_command.wz = chassis_yaw_hold_apply(
-                s_command.vx,
-                s_command.vy,
-                s_command.wz,
-                angle.z,
-                gyro_corrected.z,
-                REMOTE_CONTROL_PERIOD_S);
-        }
-
-        (void)chassis.set_velocity(s_command.vx, s_command.vy, s_command.wz);
-    }
-    else {
+    /* VRB 高位时不允许底盘运动 */
+    if(vrb > REMOTE_VR_LOW_THRESHOLD) {
         s_command.vx = 0.0f;
         s_command.vy = 0.0f;
         s_command.wz = 0.0f;
         chassis_yaw_hold_reset();
         (void)chassis.set_velocity(0.0f, 0.0f, 0.0f);
+        return;
     }
+
+    /* 摇杆映射到底盘速度 */
+    {
+        const RemoteSpeedLimit speed_limit = get_speed_limit(swb);
+
+        s_command.vx = ch_right_y * speed_limit.max_vx;
+        s_command.vy = -ch_right_x * speed_limit.max_vy;
+        s_command.wz = -ch_left_x * speed_limit.max_wz;
+    }
+
+    if(chassis_yaw_hold_is_active()) {
+        Vector3 angle = { 0.0f, 0.0f, 0.0f };
+        Vector3 gyro_corrected = { 0.0f, 0.0f, 0.0f };
+
+        (void)odom.get_angle(&angle);
+        (void)odom.get_gyro_corrected(&gyro_corrected);
+        s_command.wz = chassis_yaw_hold_apply(
+            s_command.vx,
+            s_command.vy,
+            s_command.wz,
+            angle.z,
+            gyro_corrected.z,
+            REMOTE_CONTROL_PERIOD_S);
+    }
+
+    (void)chassis.set_velocity(s_command.vx, s_command.vy, s_command.wz);
 }
 
 /**
@@ -404,8 +421,10 @@ static void chassis_control_task(FsIa10bData rc_data) {
  * @param rc_data 当前遥控数据
  */
 static void arm_control_task(FsIa10bData rc_data) {
-    const RemoteArmSpeedLimit speed_limit = get_arm_speed_limit(rc_data.channel[REMOTE_CH_SWB]);
+    const uint16_t swb = rc_data.channel[REMOTE_CH_SWB];
     const uint16_t swc = rc_data.channel[REMOTE_CH_SWC];
+    const uint16_t vrb = rc_data.channel[REMOTE_CH_VRB];
+    const RemoteArmSpeedLimit speed_limit = get_arm_speed_limit(swb);
     const float ch_left_x = channel_to_norm(rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND);
     const float ch_right_y = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND);
     const float ch_right_x = channel_to_norm(rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND);
@@ -417,11 +436,13 @@ static void arm_control_task(FsIa10bData rc_data) {
         return;
     }
 
-    if(rc_data.channel[REMOTE_CH_VRB] > REMOTE_VR_LOW_THRESHOLD) {
+    /* VRB 高位时不处理机械臂动作 */
+    if(vrb > REMOTE_VR_LOW_THRESHOLD) {
         s_last_arm_swc = swc;
         return;
     }
 
+    /* SWC 高位: 回机械臂零位 */
     if(swc == REMOTE_SW_HIGH) {
         if(s_last_arm_swc != REMOTE_SW_HIGH) {
             (void)arm.move_servo_zero(speed_limit.servo_speed_rad_s);
@@ -437,24 +458,28 @@ static void arm_control_task(FsIa10bData rc_data) {
         return;
     }
 
+    /* SWC 低位: 末端关节模式，右杆直接控制腕部 pitch/yaw */
     if(swc == REMOTE_SW_LOW) {
         static FiveDofArmJointArray target_joints;
+
         if(s_last_arm_swc != swc)
             target_joints = *current_joints;
 
         target_joints.q[3] = current_joints->q[3] + ch_right_y * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         target_joints.q[4] = current_joints->q[4] + ch_right_x * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s);
+        (void)arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s);
 
         s_last_arm_swc = swc;
         return;
     }
 
+    /* SWC 中位: 左杆 X 控底座偏航 */
     if(ch_left_x != 0.0f) {
         const float target_base_yaw = current_joints->q[0] + ch_left_x * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         (void)arm.move_joint(0, target_base_yaw, speed_limit.servo_speed_rad_s);
     }
 
+    /* SWC 中位: 右杆控制工作空间中的前伸和升降 */
     if(ch_right_y != 0.0f || ch_right_x != 0.0f) {
         const FiveDofArmJointArray* updated_joints = arm.get_current_joints();
         const FiveDofArmPose* updated_pose = arm.get_current_pose();
