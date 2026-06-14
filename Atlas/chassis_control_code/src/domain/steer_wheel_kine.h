@@ -2,7 +2,6 @@
 #define _steer_wheel_kine_h_
 
 #include <stdbool.h>
-#include <stdint.h>
 
 // ! ========================= 接 口 变 量 / Typedef 声 明 ========================= ! //
 
@@ -18,10 +17,10 @@
  * @param INVALID_MODEL 车型模型参数无效
  * @param NOT_INITIALIZE 舵轮运动学实例未初始化
  */
-#define STEER_WHEEL_STATUS_TABLE \
-    X(OK, "OK") \
+#define STEER_WHEEL_STATUS_TABLE          \
+    X(OK, "OK")                           \
     X(INVALID_PARAM, "Invalid Parameter") \
-    X(INVALID_MODEL, "Invalid Model") \
+    X(INVALID_MODEL, "Invalid Model")     \
     X(NOT_INITIALIZE, "Not Initialize")
 
 /**
@@ -113,19 +112,19 @@ extern const struct SteerWheelInterface {
      * @param model 底盘模型参数
      * @return SteelWheelErrorCode 错误码
      */
-    SteelWheelErrorCode(*init)(SteerWheel* steer_wheel, SteerWheelModel model);
+    SteelWheelErrorCode (*init)(SteerWheel* steer_wheel, SteerWheelModel model);
     /**
      * @brief 正运动学解算，由四个轮模块反馈解算底盘速度
      * @param steer_wheel 舵轮运动学实例指针
      * @return SteelWheelErrorCode 错误码
      */
-    SteelWheelErrorCode(*fk)(SteerWheel* steer_wheel);
+    SteelWheelErrorCode (*fk)(SteerWheel* steer_wheel);
     /**
      * @brief 逆运动学解算，由底盘速度指令解算四个轮模块目标
      * @param steer_wheel 舵轮运动学实例指针
      * @return SteelWheelErrorCode 错误码
      */
-    SteelWheelErrorCode(*ik)(SteerWheel* steer_wheel);
+    SteelWheelErrorCode (*ik)(SteerWheel* steer_wheel);
     /**
      * @brief 舵轮运动学错误码转字符串
      * @param status 错误码

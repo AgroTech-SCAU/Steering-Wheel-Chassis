@@ -32,6 +32,7 @@
 static ms_t log_task = 0;
 static ms_t heartbeat_task = 0;
 static uint8_t remote_tick = 0;
+static uint8_t arm_tick = 0;
 static uint8_t led_state = 0u;
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -42,6 +43,7 @@ static uint8_t led_state = 0u;
 static inline void entry_init(void) {
     if(assemble_delay() != SYSTEM_STATUS_OK)
         return;
+
     if(assemble_log() != SYSTEM_STATUS_OK)
         return;
     log_info("BOOT log ready");
@@ -57,14 +59,19 @@ static inline void entry_init(void) {
     log_info("BOOT imu init step done");
     delay_ms(100);
 
+    if(assemble_odom() != SYSTEM_STATUS_OK)
+        return;
+    log_info("BOOT odom init step done");
+    delay_ms(100);
+
     if(assemble_chassis() != SYSTEM_STATUS_OK)
         return;
     log_info("BOOT chassis init step done");
     delay_ms(100);
 
-    if(assemble_odom() != SYSTEM_STATUS_OK)
+    if(assemble_arm() != SYSTEM_STATUS_OK)
         return;
-    log_info("BOOT odom init step done");
+    log_info("BOOT arm init step done");
     delay_ms(100);
 
     if(assemble_remote() != SYSTEM_STATUS_OK)
@@ -73,15 +80,11 @@ static inline void entry_init(void) {
     delay_ms(100);
 
     remote_init();
+    delay_ms(100);
 
     if(assemble_tim6_500hz() != SYSTEM_STATUS_OK)
         return;
     log_info("BOOT tim6 500hz init step done");
-    delay_ms(100);
-
-    if(assemble_arm() != SYSTEM_STATUS_OK)
-        return;
-    log_info("BOOT arm init step done");
     delay_ms(100);
 
     log_info("System initialized successfully");
@@ -100,9 +103,13 @@ static inline void entry_loop(void) {
         odom.process();
 
         if(remote_tick++ % 5 == 0) {
-            arm.refresh_current_state();
             remote_process();
             remote_tick = 0;
+        }
+
+        if(arm_tick++ % 10 == 0) {
+            arm.refresh_current_state();
+            arm_tick = 0;
         }
     }
 
@@ -130,7 +137,12 @@ static inline void entry_loop(void) {
     }
 
     if(delay_nb_ms(&log_task, 1000)) {
-        log_info("Heartbeat");
+        Vector3 od = { 0 };
+        Vector3 ag = { 0 };
+
+        odom.get_odom(&od);
+        odom.get_angle(&ag);
+        log_vofa(od.x, od.y, od.z, ag.x, ag.y, ag.z);
     }
 }
 

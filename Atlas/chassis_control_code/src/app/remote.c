@@ -436,17 +436,17 @@ static void arm_control_task(FsIa10bData rc_data) {
         return;
     }
 
-    /* VRB 高位时不处理机械臂动作 */
-    if(vrb > REMOTE_VR_LOW_THRESHOLD) {
-        s_last_arm_swc = swc;
-        return;
-    }
-
     /* SWC 高位: 回机械臂零位 */
     if(swc == REMOTE_SW_HIGH) {
         if(s_last_arm_swc != REMOTE_SW_HIGH) {
             (void)arm.move_servo_zero(speed_limit.servo_speed_rad_s);
         }
+        s_last_arm_swc = swc;
+        return;
+    }
+
+    /* VRB 高位时不处理机械臂动作 */
+    if(vrb > REMOTE_VR_LOW_THRESHOLD) {
         s_last_arm_swc = swc;
         return;
     }
