@@ -69,6 +69,7 @@ SystemStatus assemble_arm(void) {
     arm_config = arm.default_config();
     arm_config.servo_interface = &ft_scs_servo_common_instance;
     arm_config.stop_servo = ft_scs_servo.disable_torque;
+    arm_config.enable_servo = ft_scs_servo.enable_torque;
     arm_config.batch_set_pos_spd = ft_scs_sync_write_pos_spd;
     arm_config.batch_update_feedback = ft_scs_sync_read_feedback;
     arm_config.auto_move_servo_zero = true;

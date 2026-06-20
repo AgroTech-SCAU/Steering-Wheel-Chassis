@@ -15,12 +15,12 @@
  * @brief HFSM 状态码表，使用 X-Macro 定义，方便维护和扩展
  */
 #define HFSM_STATUS_TABLE \
-    SX(OK) \
-    SX(INVALID_ARG) \
-    SX(NOT_INITIALIZE) \
-    SX(NO_INITIAL_STATE) \
-    SX(STARTED) \
-    SX(NOT_STARTED) \
+    SX(OK)                \
+    SX(INVALID_ARG)       \
+    SX(NOT_INITIALIZE)    \
+    SX(NO_INITIAL_STATE)  \
+    SX(STARTED)           \
+    SX(NOT_STARTED)       \
     SX(NO_SPACE)
 
 /**
@@ -72,21 +72,21 @@ extern const struct HfsmApi {
      * @param context 用户上下文指针，状态机事件处理函数中可通过 hfsm.context() 获取
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*init)(Hfsm* fsm, void* context);
+    HfsmStatus (*init)(Hfsm* fsm, void* context);
     /**
      * @brief 设置状态机上下文，必须在状态机启动前调用
      * @param fsm 状态机指针
      * @param context 用户上下文指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*set_context)(Hfsm* fsm, void* context);
+    HfsmStatus (*set_context)(Hfsm* fsm, void* context);
     /**
      * @brief 设置状态机初始状态，必须在状态机启动前调用
      * @param fsm 状态机指针
      * @param initial_state 初始状态指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*set_initial)(Hfsm* fsm, const HfsmState* initial_state);
+    HfsmStatus (*set_initial)(Hfsm* fsm, const HfsmState* initial_state);
     /**
      * @brief 添加状态
      * @param fsm 状态机指针
@@ -149,25 +149,25 @@ extern const struct HfsmApi {
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*start)(Hfsm* fsm);
+    HfsmStatus (*start)(Hfsm* fsm);
     /**
      * @brief 暂停状态机，停止处理事件，但保持当前状态不变
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*pause)(Hfsm* fsm);
+    HfsmStatus (*pause)(Hfsm* fsm);
     /**
      * @brief 继续状态机，恢复处理事件
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*go_on)(Hfsm* fsm);
+    HfsmStatus (*go_on)(Hfsm* fsm);
     /**
      * @brief 重置状态机，回到初始状态并执行入口函数
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*reset)(Hfsm* fsm);
+    HfsmStatus (*reset)(Hfsm* fsm);
     /**
      * @brief 发送事件到状态机，事件将被加入待处理事件队列
      * @param fsm 状态机指针
@@ -175,44 +175,55 @@ extern const struct HfsmApi {
      * @param data 事件数据指针，用户自定义数据结构，状态机事件处理函数中可通过 data 参数获取
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*post)(Hfsm* fsm, HfsmEventId event_id, const void* data);
+    HfsmStatus (*post)(Hfsm* fsm, HfsmEventId event_id, const void* data);
     /**
      * @brief 清空状态机待处理事件队列
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*clear)(Hfsm* fsm);
+    HfsmStatus (*clear)(Hfsm* fsm);
     /**
      * @brief 处理一个待处理事件，执行状态转换和动作函数
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*process)(Hfsm* fsm);
+    HfsmStatus (*process)(Hfsm* fsm);
     /**
      * @brief 处理所有待处理事件，直到队列为空
      * @param fsm 状态机指针
      * @return HfsmStatus 枚举类型，表示操作结果
      */
-    HfsmStatus(*process_all)(Hfsm* fsm);
+    HfsmStatus (*process_all)(Hfsm* fsm);
 
     struct {
         /**
          * @brief 事件被忽略，状态机不做任何处理
          * @return HfsmResult 结果类型，表示事件被忽略
          */
-        HfsmResult(*ignore)(void);
+        HfsmResult (*ignore)(void);
         /**
          * @brief 事件被处理，状态机不进行状态转换
          * @return HfsmResult 结果类型，表示事件被处理
          */
-        HfsmResult(*handled)(void);
+        HfsmResult (*handled)(void);
         /**
          * @brief 状态转换，状态机切换到指定的下一个状态
          * @param next_state 下一个状态指针
          * @return HfsmResult 结果类型，表示状态转换，并包含下一个状态指针
          */
-        HfsmResult(*transition)(const HfsmState* next_state);
+        HfsmResult (*transition)(const HfsmState* next_state);
     } res;
+
+    /**
+     * @brief 面向 HfsmMachine* 回调参数的辅助接口，业务层无需直接依赖 hfsm_core
+     */
+    struct {
+        void* (*context)(HfsmMachine* m);                                     /**< 获取可写上下文 */
+        const void* (*const_context)(const HfsmMachine* m);                   /**< 获取只读上下文 */
+        bool (*post)(HfsmMachine* m, HfsmEventId event_id, const void* data); /**< 投递事件 */
+        void (*clear)(HfsmMachine* m);                                        /**< 清空事件队列 */
+        const HfsmState* (*state)(const HfsmMachine* m);                      /**< 获取当前状态 */
+    } machine;
 
     /**
      * @brief 获取当前状态指针
@@ -275,5 +286,10 @@ const HfsmState* hfsm_state(const Hfsm* fsm);
 const HfsmState* hfsm_dispatching(const Hfsm* fsm);
 void* hfsm_context(Hfsm* fsm);
 const void* hfsm_const_context(const Hfsm* fsm);
+void* hfsm_machine_context(HfsmMachine* m);
+const void* hfsm_machine_const_context(const HfsmMachine* m);
+bool hfsm_machine_post(HfsmMachine* m, HfsmEventId event_id, const void* data);
+void hfsm_machine_clear(HfsmMachine* m);
+const HfsmState* hfsm_machine_state(const HfsmMachine* m);
 
 #endif

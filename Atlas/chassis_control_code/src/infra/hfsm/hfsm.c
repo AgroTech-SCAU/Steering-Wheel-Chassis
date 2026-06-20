@@ -16,9 +16,7 @@
  */
 #define SX(name) .name = HFSM_STATUS_##name,
 const struct HfsmApi hfsm_api_instance = {
-    {
-        HFSM_STATUS_TABLE
-    },
+    { HFSM_STATUS_TABLE },
     .init = hfsm_init,
     .set_context = hfsm_set_context,
     .set_initial = hfsm_set_initial,
@@ -41,8 +39,8 @@ const struct HfsmApi hfsm_api_instance = {
     .res = {
         .ignore = hfsm_ignore,
         .handled = hfsm_handled,
-        .transition = hfsm_transition
-    },
+        .transition = hfsm_transition },
+    .machine = { .context = hfsm_machine_context, .const_context = hfsm_machine_const_context, .post = hfsm_machine_post, .clear = hfsm_machine_clear, .state = hfsm_machine_state },
     .state = hfsm_state,
     .dispatching = hfsm_dispatching,
     .context = hfsm_context,
@@ -63,7 +61,8 @@ const struct HfsmApi hfsm_api_instance = {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_init(Hfsm* fsm, void* context) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
 
     memset(fsm, 0, sizeof(Hfsm));
     fsm->machine.context = context;
@@ -80,9 +79,12 @@ HfsmStatus hfsm_init(Hfsm* fsm, void* context) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_set_context(Hfsm* fsm, void* context) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started) return hfsm.STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started)
+        return hfsm.STARTED;
 
     fsm->machine.context = context;
 
@@ -96,10 +98,14 @@ HfsmStatus hfsm_set_context(Hfsm* fsm, void* context) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_set_initial(Hfsm* fsm, const HfsmState* initial_state) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(initial_state == NULL) return hfsm.INVALID_ARG;
-    if(fsm->started) return hfsm.STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(initial_state == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->started)
+        return hfsm.STARTED;
 
     fsm->initial_state = initial_state;
 
@@ -113,10 +119,14 @@ HfsmStatus hfsm_set_initial(Hfsm* fsm, const HfsmState* initial_state) {
  * @return HfsmState* 指向新添加状态的指针，失败返回 NULL
  */
 HfsmState* hfsm_add_state(Hfsm* fsm, const char* name) {
-    if(fsm == NULL || name == NULL) return NULL;
-    if(fsm->initialized == false) return NULL;
-    if(fsm->state_count >= HFSM_MAX_STATES) return NULL;
-    if(fsm->started) return NULL;
+    if(fsm == NULL || name == NULL)
+        return NULL;
+    if(fsm->initialized == false)
+        return NULL;
+    if(fsm->state_count >= HFSM_MAX_STATES)
+        return NULL;
+    if(fsm->started)
+        return NULL;
 
     HfsmState* s = &fsm->states[fsm->state_count++];
     memset(s, 0, sizeof(HfsmState));
@@ -133,10 +143,12 @@ HfsmState* hfsm_add_state(Hfsm* fsm, const char* name) {
  * @return HfsmState* 指向新添加状态的指针，失败返回 NULL
  */
 HfsmState* hfsm_add_substate(Hfsm* fsm, HfsmState* parent, const char* name) {
-    if(parent == NULL) return NULL;
+    if(parent == NULL)
+        return NULL;
 
     HfsmState* s = hfsm_add_state(fsm, name);
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
 
     s->parent = parent;
 
@@ -150,7 +162,8 @@ HfsmState* hfsm_add_substate(Hfsm* fsm, HfsmState* parent, const char* name) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_parent(HfsmState* s, const HfsmState* parent) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->parent = parent;
 
     return s;
@@ -163,7 +176,8 @@ HfsmState* hfsm_set_parent(HfsmState* s, const HfsmState* parent) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_handle(HfsmState* s, HfsmHandleFn handle) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->handle = handle;
 
     return s;
@@ -176,7 +190,8 @@ HfsmState* hfsm_set_handle(HfsmState* s, HfsmHandleFn handle) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_entry(HfsmState* s, HfsmHookFn entry) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->entry = entry;
 
     return s;
@@ -189,7 +204,8 @@ HfsmState* hfsm_set_entry(HfsmState* s, HfsmHookFn entry) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_exit(HfsmState* s, HfsmHookFn exit) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->exit = exit;
 
     return s;
@@ -202,7 +218,8 @@ HfsmState* hfsm_set_exit(HfsmState* s, HfsmHookFn exit) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_action(HfsmState* s, HfsmHookFn action) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->action = action;
 
     return s;
@@ -215,7 +232,8 @@ HfsmState* hfsm_set_action(HfsmState* s, HfsmHookFn action) {
  * @return HfsmState* 指向状态 s 的指针，失败返回 NULL
  */
 HfsmState* hfsm_set_user_data(HfsmState* s, void* user_data) {
-    if(s == NULL) return NULL;
+    if(s == NULL)
+        return NULL;
     s->user_data = user_data;
 
     return s;
@@ -227,10 +245,14 @@ HfsmState* hfsm_set_user_data(HfsmState* s, void* user_data) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_start(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->initial_state == NULL) return hfsm.NO_INITIAL_STATE;
-    if(fsm->started) return hfsm.STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->initial_state == NULL)
+        return hfsm.NO_INITIAL_STATE;
+    if(fsm->started)
+        return hfsm.STARTED;
 
     hfsm_core.init(&fsm->machine, fsm->initial_state, fsm->machine.context);
     fsm->started = true;
@@ -244,9 +266,12 @@ HfsmStatus hfsm_start(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_pause(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started == false) return hfsm.NOT_STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started == false)
+        return hfsm.NOT_STARTED;
 
     fsm->started = false;
 
@@ -259,9 +284,12 @@ HfsmStatus hfsm_pause(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_go_on(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started) return hfsm.STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started)
+        return hfsm.STARTED;
 
     fsm->started = true;
 
@@ -274,8 +302,10 @@ HfsmStatus hfsm_go_on(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_reset(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
 
     void* context = fsm->machine.context;
     hfsm_core.init(&fsm->machine, fsm->initial_state, context);
@@ -292,10 +322,14 @@ HfsmStatus hfsm_reset(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_post(Hfsm* fsm, HfsmEventId event_id, const void* data) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started == false) return hfsm.NOT_STARTED;
-    if(event_id == HFSM_EVENT_NONE) return hfsm.INVALID_ARG;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started == false)
+        return hfsm.NOT_STARTED;
+    if(event_id == HFSM_EVENT_NONE)
+        return hfsm.INVALID_ARG;
 
     return hfsm_core.post(&fsm->machine, event_id, data) ? hfsm.OK : hfsm.NO_SPACE;
 }
@@ -306,9 +340,12 @@ HfsmStatus hfsm_post(Hfsm* fsm, HfsmEventId event_id, const void* data) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_clear(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started == false) return hfsm.NOT_STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started == false)
+        return hfsm.NOT_STARTED;
 
     hfsm_core.clear(&fsm->machine);
 
@@ -321,9 +358,12 @@ HfsmStatus hfsm_clear(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_process(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started == false) return hfsm.NOT_STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started == false)
+        return hfsm.NOT_STARTED;
 
     hfsm_core.process(&fsm->machine);
 
@@ -336,9 +376,12 @@ HfsmStatus hfsm_process(Hfsm* fsm) {
  * @return HfsmStatus 枚举类型，表示操作结果
  */
 HfsmStatus hfsm_process_all(Hfsm* fsm) {
-    if(fsm == NULL) return hfsm.INVALID_ARG;
-    if(fsm->initialized == false) return hfsm.NOT_INITIALIZE;
-    if(fsm->started == false) return hfsm.NOT_STARTED;
+    if(fsm == NULL)
+        return hfsm.INVALID_ARG;
+    if(fsm->initialized == false)
+        return hfsm.NOT_INITIALIZE;
+    if(fsm->started == false)
+        return hfsm.NOT_STARTED;
 
     hfsm_core.process_all(&fsm->machine);
 
@@ -391,7 +434,8 @@ HfsmResult hfsm_transition(const HfsmState* next_state) {
  * @return const HfsmState* 当前状态指针，未启动返回 NULL
  */
 const HfsmState* hfsm_state(const Hfsm* fsm) {
-    if(fsm == NULL) return NULL;
+    if(fsm == NULL)
+        return NULL;
     return hfsm_core.state(&fsm->machine);
 }
 
@@ -401,7 +445,8 @@ const HfsmState* hfsm_state(const Hfsm* fsm) {
  * @return const HfsmState* 正在处理事件的状态指针，未启动或未处理事件返回 NULL
  */
 const HfsmState* hfsm_dispatching(const Hfsm* fsm) {
-    if(fsm == NULL) return NULL;
+    if(fsm == NULL)
+        return NULL;
     return hfsm_core.dispatching(&fsm->machine);
 }
 
@@ -411,7 +456,8 @@ const HfsmState* hfsm_dispatching(const Hfsm* fsm) {
  * @return void* 上下文指针，未初始化返回 NULL
  */
 void* hfsm_context(Hfsm* fsm) {
-    if(fsm == NULL) return NULL;
+    if(fsm == NULL)
+        return NULL;
     return hfsm_core.context(&fsm->machine);
 }
 
@@ -421,10 +467,55 @@ void* hfsm_context(Hfsm* fsm) {
  * @return const void* 上下文指针，未初始化返回 NULL
  */
 const void* hfsm_const_context(const Hfsm* fsm) {
-    if(fsm == NULL) return NULL;
+    if(fsm == NULL)
+        return NULL;
     return hfsm_core.const_context(&fsm->machine);
 }
 
+/**
+ * @brief 获取状态回调参数中的用户上下文
+ * @param m 状态机内核实例指针，通常来自状态回调参数
+ * @return void* 用户上下文指针，参数无效时返回 NULL
+ */
+void* hfsm_machine_context(HfsmMachine* m) {
+    return hfsm_core.context(m);
+}
+
+/**
+ * @brief 获取状态回调参数中的只读用户上下文
+ * @param m 状态机内核实例指针
+ * @return const void* 用户上下文指针，参数无效时返回 NULL
+ */
+const void* hfsm_machine_const_context(const HfsmMachine* m) {
+    return hfsm_core.const_context(m);
+}
+
+/**
+ * @brief 向状态回调参数对应的状态机投递事件
+ * @param m 状态机内核实例指针
+ * @param event_id 事件 ID
+ * @param data 事件数据指针，可为 NULL
+ * @return bool `true` 表示事件进入队列成功
+ */
+bool hfsm_machine_post(HfsmMachine* m, HfsmEventId event_id, const void* data) {
+    return hfsm_core.post(m, event_id, data);
+}
+
+/**
+ * @brief 清空状态回调参数对应的状态机事件队列
+ * @param m 状态机内核实例指针
+ */
+void hfsm_machine_clear(HfsmMachine* m) {
+    hfsm_core.clear(m);
+}
+
+/**
+ * @brief 获取状态回调参数对应的当前状态
+ * @param m 状态机内核实例指针
+ * @return const HfsmState* 当前状态指针，参数无效时返回 NULL
+ */
+const HfsmState* hfsm_machine_state(const HfsmMachine* m) {
+    return hfsm_core.state(m);
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
-
-

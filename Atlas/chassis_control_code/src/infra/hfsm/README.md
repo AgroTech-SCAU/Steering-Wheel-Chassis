@@ -1,95 +1,94 @@
-# HFSM：轻量级层级有限状态机
+# HFSM：轻量级层级有限状态机库
 
-## 1. 概述
+`infra/hfsm` 是一个可移植的 C 语言层级有限状态机（Hierarchical Finite State Machine, HFSM）库，适合用于 MCU 裸机、RTOS、机器人任务编排、业务流程控制等场景
 
-`hfsm` 是一个面向 **嵌入式系统、机器人任务流程、业务状态编排** 的轻量级 C 语言层级有限状态机（Hierarchical Finite State Machine, HFSM）实现
+---
 
-它适合用来描述类似下面这类逻辑：
+## 1. 适合解决什么问题
+
+普通 FSM 通常把所有事件都写在同一层状态里，一旦状态数量变多，就容易出现大量重复判断；HFSM 的核心价值是：
 
 ```text
-系统启动
-  ├── 空闲
-  ├── 工作
-  │   ├── 准备
-  │   ├── 执行
-  │   └── 恢复
-  └── 故障
+子状态处理不了的事件，可以继续交给父状态处理
 ```
 
-与普通 FSM 相比，HFSM 的重点是：**子状态处理不了的事件，可以自动交给父状态兜底处理**；这样可以减少大量重复判断，让状态逻辑更清晰
+例如一个通用任务流程可以抽象成：
+
+```text
+Fault
+Manual
+Auto
+├── Idle
+├── Navigate
+├── Operate
+└── ReturnHome
+```
+
+其中：
+
+- `Idle / Navigate / Operate / ReturnHome` 只处理各自阶段的局部事件；
+- `Auto` 统一处理自主模式下共有的 `STOP / FAULT / SWITCH_TO_MANUAL`；
+- `Manual` 处理接管后的恢复逻辑；
+- `Fault` 作为故障收口状态，统一执行安全动作
+
+这样可以避免每个子状态都重复写“停止、故障、接管”等公共事件
 
 ---
 
-## 2. 特性
+## 2. 文件组成与移植方式
 
-- 纯 C 实现，适合 MCU、RTOS、裸机、Linux 用户态程序；
-- 不依赖动态内存分配，状态池和事件队列均为静态容量；
-- 支持层级状态：事件可从子状态逐级上送给父状态；
-- 支持 `entry`、`exit`、`action`、`handle` 四类状态回调；
-- 支持事件队列：`post()` 只投递事件，`process()` 才处理事件；
-- 支持用户上下文 `context` 和状态私有数据 `user_data`；
-- 支持 `process()` 单步处理和 `process_all()` 批量处理；
-- 配置项集中在 `hfsm_config.h`，便于裁剪容量
-
----
-
-## 3. 目录结构
+把以下文件加入目标工程即可：
 
 ```text
 hfsm/
-├── hfsm.h              # 业务友好封装层：推荐初学者优先使用
+├── hfsm.h
 ├── hfsm.c
-├── hfsm_core.h         # 最小内核层：适合高级用户直接静态定义状态
+├── hfsm_core.h
 ├── hfsm_core.c
-├── hfsm_config.h       # 容量与行为配置
-├── examples/
-│   └── quick_start.c   # 最小可运行示例
+├── hfsm_config.h
 └── README.md
 ```
 
-分层关系如下：
+其中：
+
+| 文件 | 作用 |
+|---|---|
+| `hfsm.h / hfsm.c` | 推荐业务层直接使用的封装层，提供状态池、生命周期检查、状态码和易用 API |
+| `hfsm_core.h / hfsm_core.c` | 最小状态机内核，负责事件队列、层级分发、状态切换、`entry/exit/action` 调度 |
+| `hfsm_config.h` | 配置状态数量、层级深度、事件队列长度、事件数据类型等 |
+
+---
+
+## 3. 分层设计
 
 ```text
 业务代码
    ↓
-hfsm.h / hfsm.c              	推荐入口：状态池、生命周期状态码、易用 API
+hfsm.h / hfsm.c
+   - 状态池 Hfsm.states[]
+   - init/start/pause/go_on/reset 生命周期
+   - post/clear/process/process_all 事件驱动接口
+   - HfsmStatus 状态码
+   - hfsm.machine.* 回调辅助接口
    ↓
-hfsm_core.h / hfsm_core.c       内核：事件队列、层级分发、entry/exit/action、LCA 转换
+hfsm_core.h / hfsm_core.c
+   - HfsmMachine 内核对象
+   - 环形事件队列
+   - 子状态到父状态的事件上送
+   - LCA 最近公共祖先状态切换
+   - entry / exit / action 调度
    ↓
-hfsm_config.h                   配置：状态数量、层级深度、队列长度、事件数据类型
-```
-
-初学者建议直接使用 `hfsm.h`，暂时不要直接操作 `hfsm_core.h`
-
----
-
-## 4. 快速开始
-
-### 在 STM32CubeIDE / Keil / 裸机工程中使用
-
-把下面 5 个文件加入工程即可：
-
-```text
-hfsm.h
-hfsm.c
-hfsm_core.h
-hfsm_core.c
 hfsm_config.h
+   - 容量与行为裁剪
 ```
 
-并保证头文件路径能找到 `hfsm.h`，业务代码中：
-
-```c
-#include "hfsm.h"
-```
+一般使用 `hfsm.h` 即可；只有在你希望完全静态定义 `HfsmState`、绕过封装层状态池，或者需要访问更底层的判断接口时，才直接使用 `hfsm_core.h`
 
 ---
 
-## 5. 核心类型定义
+## 4. 核心概念
 
-### 5.1 状态 State
-
-一个状态由 `HfsmState` 表示：
+### 4.1 状态：`HfsmState`
 
 ```c
 struct HfsmState {
@@ -105,451 +104,567 @@ struct HfsmState {
 };
 ```
 
-每个状态可以有：
-
 | 字段 | 含义 |
 |---|---|
-| `name` | 状态名称，主要用于调试 |
-| `parent` | 父状态，用于形成层级结构 |
-| `handle` | 事件处理函数 |
-| `entry` | 进入状态时执行 |
-| `exit` | 离开状态时执行 |
-| `action` | 每次 `process()` 后执行的周期动作 |
+| `name` | 状态名，主要用于调试；库不强制检查重名，建议业务层保持唯一 |
+| `parent` | 父状态指针，用于形成层级结构；根状态的 `parent` 为 `NULL` |
+| `handle` | 事件处理函数；返回 `ignore/handled/transition` |
+| `entry` | 进入该状态时执行 |
+| `exit` | 退出该状态时执行 |
+| `action` | `process()` 驱动时执行的周期动作 |
 | `user_data` | 状态私有数据，可选 |
 
-### 5.2 事件 Event
-
-事件由 `HfsmEvent` 表示：
+回调函数原型为：
 
 ```c
+typedef HfsmResult (*HfsmHandleFn)(HfsmMachine* m, const HfsmEvent* e);
+typedef void (*HfsmHookFn)(HfsmMachine* m);
+```
+
+注意：状态回调拿到的是 `HfsmMachine*`，不是 `Hfsm*`；在回调里需要访问上下文或投递事件时，推荐使用 `hfsm.machine.*` 辅助接口
+
+---
+
+### 4.2 事件：`HfsmEvent`
+
+```c
+typedef uint16_t HfsmEventId;
+
 typedef struct {
     HfsmEventId id;
     HFSM_EVENT_DATA_TYPE data;
 } HfsmEvent;
 ```
 
-其中：
+约定：
 
-- `id` 是事件编号；
-- `data` 是事件携带的数据；
-- `HFSM_EVENT_NONE` 等于 0，不能作为有效事件发送
+- `HFSM_EVENT_NONE == 0`，不能作为有效业务事件；
+- 业务事件 ID 建议从 `1` 开始；
+- `hfsm.post(&fsm, event_id, data)` 会把 `*data` 按 `sizeof(HFSM_EVENT_DATA_TYPE)` 拷贝进事件队列；
+- 如果事件不带数据，传 `NULL` 即可
 
-你通常会自己定义事件枚举：
+事件枚举示例：
 
 ```c
 typedef enum {
-    EVT_START = 1,
-    EVT_TICK,
-    EVT_STOP,
-    EVT_ERROR,
-} AppEvent;
+    APP_EVENT_START = 1,
+    APP_EVENT_STOP,
+    APP_EVENT_SWITCH_TO_MANUAL,
+    APP_EVENT_SWITCH_TO_AUTO,
+    APP_EVENT_STEP_FINISHED,
+    APP_EVENT_FAULT,
+    APP_EVENT_FAULT_CLEAR,
+} AppEventId;
 ```
 
-### 5.3 事件处理结果 HfsmResult
+---
 
-状态处理事件后，必须返回一种结果：
+### 4.3 事件处理结果：`HfsmResult`
+
+状态处理事件后必须返回一种结果：
 
 | 返回值 | 含义 |
 |---|---|
 | `hfsm.res.ignore()` | 当前状态不处理该事件，继续交给父状态 |
-| `hfsm.res.handled()` | 事件已处理，不切换状态 |
+| `hfsm.res.handled()` | 事件已处理，不切换状态，也不继续上送 |
 | `hfsm.res.transition(target)` | 事件已处理，并切换到目标状态 |
 
-例如：
+示例：
 
 ```c
 static HfsmResult idle_handle(HfsmMachine* m, const HfsmEvent* e) {
-    (void)m;
+    AppContext* ctx = (AppContext*)hfsm.machine.context(m);
 
-    if(e->id == EVT_START) {
-        return hfsm.res.transition(s_work);
+    if(ctx == NULL)
+        return hfsm.res.ignore();
+
+    if(e->id == APP_EVENT_START) {
+        ctx->step_index = 0u;
+        return hfsm.res.transition(s_run);
     }
 
     return hfsm.res.ignore();
 }
 ```
 
-### 5.4 用户上下文 context
+---
 
-`context` 是全局业务上下文，常用于保存电机对象、传感器数据、任务参数等：
+### 4.4 用户上下文：`context`
+
+`context` 是整台状态机共享的业务上下文，适合保存当前任务状态、子模块上下文、故障信息、计时数据等
 
 ```c
 typedef struct {
-    uint32_t tick_count;
-    float target_speed;
+    uint8_t step_index;
+    bool fault_latched;
 } AppContext;
 ```
 
 初始化时传入：
 
 ```c
-AppContext ctx = {0};
-Hfsm fsm;
+static Hfsm s_fsm;
+static AppContext s_ctx;
 
-hfsm.init(&fsm, &ctx);
+hfsm.init(&s_fsm, &s_ctx);
 ```
 
-在回调函数里取出：
+在状态回调中取出：
 
 ```c
-static void work_action(HfsmMachine* m) {
-    AppContext* ctx = (AppContext*)hfsm_core.context(m);
-    ctx->tick_count++;
+static AppContext* app_ctx_from_machine(HfsmMachine* m) {
+    return (AppContext*)hfsm.machine.context(m);
 }
 ```
 
-注意：状态回调函数收到的是 `HfsmMachine*`，所以回调内部使用 `hfsm_core.context(m)` 获取上下文
-
-### 5.5 状态私有数据 user_data
-
-`context` 适合放整个状态机共享的数据；`user_data` 适合放某个状态自己的数据
-
-设置：
-
-```c
-static int work_counter = 0;
-hfsm.set_user_data(s_work, &work_counter);
-```
-
-在回调中获取当前正在执行的状态：
-
-```c
-static void work_action(HfsmMachine* m) {
-    const HfsmState* s = hfsm_core.dispatching(m);
-    int* counter = (int*)s->user_data;
-    (*counter)++;
-}
-```
+`context` 的生命周期必须长于状态机运行周期，不能传入临时局部变量的地址后在函数返回后继续使用
 
 ---
 
-## 6. 流程演示
+### 4.5 状态私有数据：`user_data`
 
-下面示例代码演示了：
-
-- 创建状态机；
-- 添加 `Idle` 和 `Work` 两个状态；
-- 绑定事件处理函数；
-- 绑定 `entry / exit / action`；
-- 投递事件并驱动状态机运行（通常 process 放在主循环中，在需要的地方用 post 触发事件）
+如果某个状态需要绑定少量私有数据，可以使用：
 
 ```c
-#include <stdio.h>
-#include <stdint.h>
+static uint32_t s_run_counter = 0u;
+hfsm.set_user_data(s_run, &s_run_counter);
+```
+
+在回调里可以通过当前正在分发的状态获取：
+
+```c
+static void run_action(HfsmMachine* m) {
+    const HfsmState* state = hfsm_core.dispatching(m);
+
+    if(state == NULL || state->user_data == NULL)
+        return;
+
+    uint32_t* counter = (uint32_t*)state->user_data;
+    ++(*counter);
+}
+```
+
+一般建议优先使用 `context` 管理业务数据；`user_data` 更适合绑定状态局部计数器、配置表、只读参数等
+
+---
+
+## 5. 最小使用示例
+
+```c
 #include "hfsm.h"
 
+#include <stdbool.h>
+#include <stdint.h>
+
+// ! ========================= 业务事件 ========================= ! //
+
 typedef enum {
-    EVT_START = 1,
-    EVT_TICK,
-    EVT_STOP,
-} AppEvent;
+    APP_EVENT_START = 1,
+    APP_EVENT_STOP,
+    APP_EVENT_TICK,
+} AppEventId;
+
+// ! ========================= 业务上下文 ========================= ! //
 
 typedef struct {
     uint32_t tick_count;
+    bool running;
 } AppContext;
 
+// ! ========================= 状态指针 ========================= ! //
+
+static Hfsm s_fsm;
+static AppContext s_ctx;
 static HfsmState* s_idle = NULL;
-static HfsmState* s_work = NULL;
+static HfsmState* s_run = NULL;
+
+// ! ========================= 回调函数 ========================= ! //
+
+static AppContext* app_ctx_from_machine(HfsmMachine* m) {
+    return (AppContext*)hfsm.machine.context(m);
+}
 
 static HfsmResult idle_handle(HfsmMachine* m, const HfsmEvent* e) {
-    (void)m;
+    AppContext* ctx = app_ctx_from_machine(m);
 
-    if(e->id == EVT_START) {
-        printf("Idle handle EVT_START -> Work\n");
-        return hfsm.res.transition(s_work);
+    if(ctx == NULL)
+        return hfsm.res.ignore();
+
+    if(e->id == APP_EVENT_START) {
+        ctx->tick_count = 0u;
+        return hfsm.res.transition(s_run);
     }
 
     return hfsm.res.ignore();
 }
 
-static HfsmResult work_handle(HfsmMachine* m, const HfsmEvent* e) {
-    (void)m;
+static HfsmResult run_handle(HfsmMachine* m, const HfsmEvent* e) {
+    AppContext* ctx = app_ctx_from_machine(m);
 
-    if(e->id == EVT_TICK) {
-        printf("Work handle EVT_TICK\n");
+    if(ctx == NULL)
+        return hfsm.res.ignore();
+
+    if(e->id == APP_EVENT_STOP)
+        return hfsm.res.transition(s_idle);
+
+    if(e->id == APP_EVENT_TICK) {
+        ++ctx->tick_count;
         return hfsm.res.handled();
     }
 
-    if(e->id == EVT_STOP) {
-        printf("Work handle EVT_STOP -> Idle\n");
-        return hfsm.res.transition(s_idle);
-    }
-
     return hfsm.res.ignore();
 }
 
-static void work_entry(HfsmMachine* m) {
-    AppContext* ctx = (AppContext*)hfsm_core.context(m);
-    ctx->tick_count = 0;
-    printf("enter Work\n");
+static void idle_entry(HfsmMachine* m) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx != NULL)
+        ctx->running = false;
 }
 
-static void work_exit(HfsmMachine* m) {
-    AppContext* ctx = (AppContext*)hfsm_core.context(m);
-    printf("exit Work, tick_count=%u\n", (unsigned)ctx->tick_count);
+static void run_entry(HfsmMachine* m) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx != NULL)
+        ctx->running = true;
 }
 
-static void work_action(HfsmMachine* m) {
-    AppContext* ctx = (AppContext*)hfsm_core.context(m);
-    ctx->tick_count++;
-    printf("Work action, tick_count=%u\n", (unsigned)ctx->tick_count);
+static void run_action(HfsmMachine* m) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx == NULL)
+        return;
+
+    // 周期动作：可以在这里轮询子任务，并在条件满足时继续投递事件
+    if(ctx->tick_count >= 100u)
+        (void)hfsm.machine.post(m, APP_EVENT_STOP, NULL);
 }
 
-int main(void) {
-    Hfsm fsm;
-    AppContext ctx = {0};
+// ! ========================= 初始化与运行 ========================= ! //
 
-    hfsm.init(&fsm, &ctx);
+void app_fsm_init(void) {
+    hfsm.init(&s_fsm, &s_ctx);
 
-    s_idle = hfsm.add_state(&fsm, "Idle");
-    s_work = hfsm.add_state(&fsm, "Work");
+    s_idle = hfsm.add_state(&s_fsm, "Idle");
+    s_run = hfsm.add_state(&s_fsm, "Run");
 
     hfsm.set_handle(s_idle, idle_handle);
-    hfsm.set_handle(s_work, work_handle);
-    hfsm.set_entry(s_work, work_entry);
-    hfsm.set_exit(s_work, work_exit);
-    hfsm.set_action(s_work, work_action);
+    hfsm.set_entry(s_idle, idle_entry);
 
-    hfsm.set_initial(&fsm, s_idle);
-    hfsm.start(&fsm);
+    hfsm.set_handle(s_run, run_handle);
+    hfsm.set_entry(s_run, run_entry);
+    hfsm.set_action(s_run, run_action);
 
-    printf("current: %s\n", hfsm.state(&fsm)->name);
+    hfsm.set_initial(&s_fsm, s_idle);
+    hfsm.start(&s_fsm);
+}
 
-    hfsm.post(&fsm, EVT_START, NULL);
-    hfsm.process(&fsm);
-    printf("current: %s\n", hfsm.state(&fsm)->name);
+void app_fsm_process(void) {
+    (void)hfsm.process(&s_fsm);
+}
 
-    hfsm.post(&fsm, EVT_TICK, NULL);
-    hfsm.process(&fsm);
-
-    hfsm.post(&fsm, EVT_STOP, NULL);
-    hfsm.process(&fsm);
-    printf("current: %s\n", hfsm.state(&fsm)->name);
-
-    return 0;
+void app_fsm_start(void) {
+    (void)hfsm.post(&s_fsm, APP_EVENT_START, NULL);
 }
 ```
 
----
-
-## 7. 推荐使用流程
-
-使用 `hfsm.h` 封装层时，推荐按这个顺序写：
-
-```text
-1. 定义事件枚举
-2. 定义用户上下文结构体
-3. 定义 Hfsm 对象
-4. 定义状态指针
-5. 编写 handle / entry / exit / action 回调
-6. hfsm.init()
-7. hfsm.add_state() / hfsm.add_substate()
-8. hfsm.set_handle() / set_entry() / set_exit() / set_action()
-9. hfsm.set_initial()
-10. hfsm.start()
-11. hfsm.post()
-12. hfsm.process() 或 hfsm.process_all()
-```
-
-示例代码骨架：
+典型主循环：
 
 ```c
-Hfsm fsm;
-AppContext ctx;
+int main(void) {
+    app_fsm_init();
 
-hfsm.init(&fsm, &ctx);
-
-HfsmState* idle = hfsm.add_state(&fsm, "Idle");
-HfsmState* work = hfsm.add_state(&fsm, "Work");
-
-hfsm.set_handle(idle, idle_handle);
-hfsm.set_handle(work, work_handle);
-hfsm.set_initial(&fsm, idle);
-
-hfsm.start(&fsm);
-
-while(1) {
-    // 根据外设、通信、定时器、任务输入投递事件
-    // hfsm.post(&fsm, EVT_xxx, &data);
-
-    // 驱动状态机运行
-    hfsm.process(&fsm);
+    while(1) {
+        // 其他外设、通信、控制任务 ...
+        app_fsm_process();
+    }
 }
 ```
 
 ---
 
-## 8. 事件运行模型
+## 6. 推荐的应用层封装方式
 
-`hfsm` 不是在 `post()` 时立即处理事件，而是采用队列模型：
+在较大的工程里，不建议让外部模块直接访问 `Hfsm` 和 `HfsmState*`；推荐在应用层再包一层模块，把 HFSM 作为内部实现细节
 
-```text
-hfsm.post()       只把事件放入队列
-hfsm.process()    从队列取出一个事件并处理
-hfsm.process_all() 批量处理队列中的事件
+### 6.1 内部结构
+
+```c
+typedef struct {
+    Hfsm fsm;
+    AppContext ctx;
+} AppTask;
+
+static AppTask s_task;
 ```
 
-一次 `process()` 的内部流程可以理解为：
+### 6.2 对外接口
 
-```text
-1. 检查当前状态是否有效
-2. 如果队列里有事件，取出一个事件
-3. 从当前状态开始调用 handle()
-4. 如果返回 ignore()，事件交给父状态
-5. 如果返回 handled()，事件结束
-6. 如果返回 transition(target)，执行状态切换
-7. 状态切换时自动执行 exit 和 entry
-8. 最后执行 action
+```c
+void app_task_init(void);
+void app_task_process(void);
+bool app_task_post(AppEventId event_id);
+bool app_task_force_post(AppEventId event_id);
 ```
 
-事件分发规则：
+外部模块只投递业务事件，不直接操作状态机：
 
-```text
-当前状态 handle()
-    ↓ ignore
-父状态 handle()
-    ↓ ignore
-祖父状态 handle()
-    ↓ ignore
-最终事件被忽略
+```c
+bool app_task_post(AppEventId event_id) {
+    return hfsm.post(&s_task.fsm, (HfsmEventId)event_id, NULL) == hfsm.OK;
+}
+
+bool app_task_force_post(AppEventId event_id) {
+    (void)hfsm.clear(&s_task.fsm);
+    return app_task_post(event_id);
+}
+
+void app_task_process(void) {
+    (void)hfsm.process(&s_task.fsm);
+}
 ```
 
-只要某一级状态返回 `handled()` 或 `transition()`，事件就不会继续向父状态传递
+这种封装方式的好处是：
+
+- HFSM 库保持通用，不和具体业务耦合；
+- 外部模块只知道事件，不知道状态树细节；
+- 后续重构状态树时，对外接口基本不用改；
+- 高优先级事件可以通过 `clear + post` 做“清队列后插入”
 
 ---
 
-## 9. 层级状态示例
+## 7. 层级状态使用范式
 
-假设状态结构如下：
+下面是一个通用任务状态树示例：
 
 ```text
-Root
+Fault
+Auto
 ├── Idle
-└── Work
-    ├── Prepare
-    ├── Execute
-    └── Recover
+├── Navigate
+├── Operate
+└── ReturnHome
+Manual
 ```
 
-如果当前状态是 `Execute`，事件处理顺序是：
-
-```text
-Execute.handle()
-  -> Work.handle()
-  -> Root.handle()
-```
-
-这适合处理公共事件，例如：
-
-- `Execute` 只处理执行阶段自己的事件；
-- `Work` 统一处理工作模式下的暂停、恢复、故障；
-- `Root` 统一处理急停、复位等全局事件
-
-创建层级状态：
+状态创建：
 
 ```c
-HfsmState* root = hfsm.add_state(&fsm, "Root");
-HfsmState* idle = hfsm.add_substate(&fsm, root, "Idle");
-HfsmState* work = hfsm.add_substate(&fsm, root, "Work");
-HfsmState* prepare = hfsm.add_substate(&fsm, work, "Prepare");
-HfsmState* execute = hfsm.add_substate(&fsm, work, "Execute");
-HfsmState* recover = hfsm.add_substate(&fsm, work, "Recover");
+static HfsmState* s_fault = NULL;
+static HfsmState* s_auto = NULL;
+static HfsmState* s_idle = NULL;
+static HfsmState* s_navigate = NULL;
+static HfsmState* s_operate = NULL;
+static HfsmState* s_return_home = NULL;
+static HfsmState* s_manual = NULL;
+
+void app_task_init(void) {
+    hfsm.init(&s_task.fsm, &s_task.ctx);
+
+    s_fault = hfsm.add_state(&s_task.fsm, "Fault");
+    s_auto = hfsm.add_state(&s_task.fsm, "Auto");
+    s_manual = hfsm.add_state(&s_task.fsm, "Manual");
+
+    s_idle = hfsm.add_substate(&s_task.fsm, s_auto, "Idle");
+    s_navigate = hfsm.add_substate(&s_task.fsm, s_auto, "Navigate");
+    s_operate = hfsm.add_substate(&s_task.fsm, s_auto, "Operate");
+    s_return_home = hfsm.add_substate(&s_task.fsm, s_auto, "ReturnHome");
+
+    hfsm.set_handle(s_auto, auto_handle);
+    hfsm.set_handle(s_idle, idle_handle);
+    hfsm.set_handle(s_navigate, navigate_handle);
+    hfsm.set_handle(s_operate, operate_handle);
+    hfsm.set_handle(s_manual, manual_handle);
+    hfsm.set_handle(s_fault, fault_handle);
+
+    hfsm.set_action(s_navigate, navigate_action);
+    hfsm.set_action(s_operate, operate_action);
+    hfsm.set_action(s_return_home, return_home_action);
+
+    hfsm.set_initial(&s_task.fsm, s_idle);
+    hfsm.start(&s_task.fsm);
+}
 ```
 
-父状态兜底处理示例：
+父状态处理公共事件：
 
 ```c
-static HfsmResult work_handle(HfsmMachine* m, const HfsmEvent* e) {
+static HfsmResult auto_handle(HfsmMachine* m, const HfsmEvent* e) {
     (void)m;
 
-    if(e->id == EVT_PAUSE) {
-        return hfsm.res.transition(s_pause);
-    }
+    if(e->id == APP_EVENT_SWITCH_TO_MANUAL)
+        return hfsm.res.transition(s_manual);
 
-    if(e->id == EVT_ERROR) {
-        return hfsm.res.transition(s_error);
-    }
+    if(e->id == APP_EVENT_STOP)
+        return hfsm.res.transition(s_idle);
+
+    if(e->id == APP_EVENT_FAULT)
+        return hfsm.res.transition(s_fault);
 
     return hfsm.res.ignore();
 }
 ```
 
-子状态中不需要重复写 `EVT_PAUSE` 和 `EVT_ERROR`，只要子状态返回 `ignore()`，父状态就有机会处理
+子状态只处理局部事件：
+
+```c
+static HfsmResult navigate_handle(HfsmMachine* m, const HfsmEvent* e) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx == NULL)
+        return hfsm.res.ignore();
+
+    if(e->id == APP_EVENT_NAV_REACHED) {
+        if(ctx->need_operate)
+            return hfsm.res.transition(s_operate);
+
+        if(ctx->is_last_target)
+            return hfsm.res.transition(s_return_home);
+
+        return hfsm.res.handled();
+    }
+
+    // STOP / FAULT / SWITCH_TO_MANUAL 不在这里重复处理，交给 Auto
+    return hfsm.res.ignore();
+}
+```
+
+状态动作里轮询子流程，并把结果转换成事件：
+
+```c
+static void navigate_action(HfsmMachine* m) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx == NULL || ctx->fault_latched)
+        return;
+
+    switch(app_navigation_process(ctx)) {
+        case APP_NAV_REACHED:
+            (void)hfsm.machine.post(m, APP_EVENT_NAV_REACHED, NULL);
+            break;
+
+        case APP_NAV_FAILED:
+            ctx->fault_latched = true;
+            hfsm.machine.clear(m);
+            (void)hfsm.machine.post(m, APP_EVENT_FAULT, NULL);
+            break;
+
+        case APP_NAV_RUNNING:
+        default:
+            break;
+    }
+}
+```
+
+这个模式的重点是：
+
+```text
+子流程返回值  ->  状态机事件  ->  状态转移
+```
+
+不要让子流程直接修改状态机当前状态，这样业务边界更清楚
 
 ---
 
-## 10. 状态切换时 entry / exit 的执行顺序
+## 8. 事件队列与运行模型
 
-状态切换使用最近公共祖先（LCA, Lowest Common Ancestor）来决定退出和进入路径
+`post()` 不会立即执行状态转移，只是把事件放入队列；状态机只有在 `process()` 或 `process_all()` 被调用时才运行
+
+```text
+hfsm.post()         事件入队
+hfsm.clear()        清空待处理事件
+hfsm.process()      处理一个事件，并执行一次 action
+hfsm.process_all()  批量处理队列事件
+```
+
+`hfsm.process()` 的内部过程可以理解为：
+
+```text
+1. 如果队列里有事件，取出一个事件
+2. 从当前状态开始调用 handle()
+3. 如果返回 ignore()，继续交给父状态
+4. 如果返回 handled()，事件结束
+5. 如果返回 transition(target)，执行状态切换
+6. 状态切换时按 LCA 规则执行 exit/entry
+7. 执行当前状态 action；若 HFSM_RUN_PARENT_ACTIONS 为 true，也会执行祖先状态 action
+```
+
+即使当前没有待处理事件，`process()` 也会执行当前状态的 `action`因此 `action` 适合作为状态内周期轮询函数
+
+---
+
+## 9. `entry / exit / action` 执行规则
+
+### 9.1 初始进入
+
+如果初始状态是一个子状态，例如：
+
+```text
+Auto
+└── Idle
+```
+
+调用 `hfsm.start()` 后会从父到子执行：
+
+```text
+entry Auto
+entry Idle
+```
+
+### 9.2 状态切换
+
+状态切换使用最近公共祖先（LCA, Lowest Common Ancestor）决定退出和进入路径
 
 例如：
 
 ```text
-Work
-├── Prepare
-└── Execute
+Auto
+├── Navigate
+└── Operate
 ```
 
-从 `Prepare` 切换到 `Execute`：
+从 `Navigate` 切到 `Operate`：
 
 ```text
-exit Prepare
-entry Execute
+exit Navigate
+entry Operate
 ```
 
-因为它们的最近公共祖先是 `Work`，所以 `Work` 不会退出，也不会重新进入
+`Auto` 是最近公共祖先，不会退出，也不会重新进入
 
 再例如：
 
 ```text
-Root
-├── Idle
-└── Work
-    └── Execute
+Auto
+└── Navigate
+Manual
 ```
 
-从 `Execute` 切换到 `Idle`：
+从 `Navigate` 切到 `Manual`：
 
 ```text
-exit Execute
-exit Work
-entry Idle
+exit Navigate
+exit Auto
+entry Manual
 ```
 
-因为最近公共祖先是 `Root`
+### 9.3 action 执行
 
-规则总结：
-
-```text
-exit：从当前状态向上执行，直到 LCA，不包含 LCA
-entry：从 LCA 向下执行，直到目标状态，不包含 LCA，包含目标状态
-```
-
----
-
-## 11. action 的执行时机
-
-`action` 是状态的周期动作
-
-调用 `hfsm.process(&fsm)` 后：
-
-- 如果有事件，会先处理一个事件；
-- 如果发生状态切换，会先完成 `exit / entry`；
-- 最后执行当前状态的 `action`
-
-默认配置下：
+默认配置：
 
 ```c
 #define HFSM_RUN_PARENT_ACTIONS true
 ```
 
-此时 action 执行顺序是：
+此时 `process()` 会从当前状态开始，向父状态逐级执行 `action`：
 
 ```text
-当前状态 action -> 父状态 action -> 祖父状态 action -> ... -> 根状态 action
+current.action()
+parent.action()
+grandparent.action()
 ```
 
-如果只希望执行当前状态的 action，可以在编译配置中关闭：
+如果你只想执行当前状态的 `action`，在 `hfsm_config.h` 中设置：
 
 ```c
 #define HFSM_RUN_PARENT_ACTIONS false
@@ -557,206 +672,61 @@ entry：从 LCA 向下执行，直到目标状态，不包含 LCA，包含目标
 
 ---
 
-## 12. process() 和 process_all() 的区别
+## 10. 生命周期接口
 
-| 函数 | 行为 | 适合场景 |
+| 接口 | 作用 | 常见使用时机 |
 |---|---|---|
-| `hfsm.process(&fsm)` | 每次最多处理 1 个事件，然后执行 action | 主循环周期调用，节奏稳定 |
-| `hfsm.process_all(&fsm)` | 一次尽量处理完整个事件队列 | 初始化阶段、批量补处理、非实时业务 |
+| `hfsm.init(&fsm, context)` | 初始化封装层对象，清空状态池和队列 | 创建状态机时调用一次 |
+| `hfsm.add_state()` | 添加根状态 | `start()` 前 |
+| `hfsm.add_substate()` | 添加子状态 | `start()` 前 |
+| `hfsm.set_handle/entry/exit/action()` | 绑定状态回调 | `start()` 前 |
+| `hfsm.set_initial()` | 设置初始状态 | `start()` 前 |
+| `hfsm.start()` | 进入初始状态，执行初始路径上的 `entry` | 初始化完成后 |
+| `hfsm.post()` | 投递事件 | 运行期 |
+| `hfsm.clear()` | 清空待处理事件 | 急停、故障、模式强切换前 |
+| `hfsm.process()` | 处理一个事件并执行一次动作 | 主循环或周期任务中 |
+| `hfsm.process_all()` | 批量处理所有待处理事件 | 需要快速清空事件队列时 |
+| `hfsm.pause()` | 暂停状态机处理 | 临时挂起 |
+| `hfsm.go_on()` | 从暂停状态恢复 | 继续运行 |
+| `hfsm.reset()` | 重新进入初始状态 | 故障恢复、任务重启 |
 
-一般嵌入式主循环建议使用：
-
-```c
-while(1) {
-    collect_input_and_post_events();
-    hfsm.process(&fsm);
-}
-```
-
-如果你的事件可能在短时间内堆积，并且希望尽快清空队列，可以使用：
-
-```c
-hfsm.process_all(&fsm);
-```
-
-`process_all()` 受 `HFSM_MAX_CHAIN_LENGTH` 限制，避免事件链条过长导致长时间占用 CPU
+注意：状态结构和初始状态应在 `start()` 前配置完成；`start()` 后再添加状态或修改初始状态会失败或返回状态码
 
 ---
 
-## 13. API 说明
+## 11. 状态码
 
-### 13.1 生命周期
+`hfsm.h` 封装层的多数接口会返回 `HfsmStatus`：
 
-```c
-HfsmStatus hfsm.init(Hfsm* fsm, void* context);
-HfsmStatus hfsm.set_context(Hfsm* fsm, void* context);
-HfsmStatus hfsm.set_initial(Hfsm* fsm, const HfsmState* initial_state);
-HfsmStatus hfsm.start(Hfsm* fsm);
-HfsmStatus hfsm.pause(Hfsm* fsm);
-HfsmStatus hfsm.go_on(Hfsm* fsm);
-HfsmStatus hfsm.reset(Hfsm* fsm);
-```
+| 状态码 | 含义 |
+|---|---|
+| `hfsm.OK` | 操作成功 |
+| `hfsm.INVALID_ARG` | 参数无效，例如空指针或非法事件 ID |
+| `hfsm.NOT_INITIALIZE` | 状态机还没有初始化 |
+| `hfsm.NO_INITIAL_STATE` | 启动前没有设置初始状态 |
+| `hfsm.STARTED` | 当前状态机已经启动，某些配置操作不允许继续执行 |
+| `hfsm.NOT_STARTED` | 当前状态机未启动，不能投递或处理事件 |
+| `hfsm.NO_SPACE` | 事件队列已满，事件投递失败 |
 
-说明：
-
-- `init()`：清空并初始化 `Hfsm` 对象；
-- `set_context()`：设置用户上下文，必须在启动前调用；
-- `set_initial()`：设置初始状态，必须在启动前调用；
-- `start()`：启动状态机，进入初始状态；
-- `pause()`：暂停处理事件，保持当前状态不变；
-- `go_on()`：从暂停状态恢复；
-- `reset()`：重新进入初始状态
-
-### 13.2 状态构建
-
-```c
-HfsmState* hfsm.add_state(Hfsm* fsm, const char* name);
-HfsmState* hfsm.add_substate(Hfsm* fsm, HfsmState* parent, const char* name);
-HfsmState* hfsm.set_parent(HfsmState* s, const HfsmState* parent);
-```
-
-说明：
-
-- `add_state()`：添加一个顶层状态；
-- `add_substate()`：添加一个子状态；
-- `set_parent()`：手动设置父状态
-
-注意：状态由 `Hfsm` 内部的静态状态池保存，数量受 `HFSM_MAX_STATES` 限制
-
-### 13.3 状态回调设置
-
-```c
-HfsmState* hfsm.set_handle(HfsmState* s, HfsmHandleFn handle);
-HfsmState* hfsm.set_entry(HfsmState* s, HfsmHookFn entry);
-HfsmState* hfsm.set_exit(HfsmState* s, HfsmHookFn exit);
-HfsmState* hfsm.set_action(HfsmState* s, HfsmHookFn action);
-HfsmState* hfsm.set_user_data(HfsmState* s, void* user_data);
-```
-
-回调函数原型：
-
-```c
-typedef HfsmResult(*HfsmHandleFn)(HfsmMachine* m, const HfsmEvent* e);
-typedef void(*HfsmHookFn)(HfsmMachine* m);
-```
-
-### 13.4 事件处理
-
-```c
-HfsmStatus hfsm.post(Hfsm* fsm, HfsmEventId event_id, const void* data);
-HfsmStatus hfsm.clear(Hfsm* fsm);
-HfsmStatus hfsm.process(Hfsm* fsm);
-HfsmStatus hfsm.process_all(Hfsm* fsm);
-```
-
-说明：
-
-- `post()`：投递事件到队列；
-- `clear()`：清空事件队列；
-- `process()`：处理一个事件；
-- `process_all()`：批量处理事件
-
-### 13.5 查询接口
-
-```c
-const HfsmState* hfsm.state(const Hfsm* fsm);
-const HfsmState* hfsm.dispatching(const Hfsm* fsm);
-void* hfsm.context(Hfsm* fsm);
-const void* hfsm.const_context(const Hfsm* fsm);
-```
-
-说明：
-
-- `state()`：获取当前状态；
-- `dispatching()`：获取正在执行回调的状态；
-- `context()`：获取用户上下文；
-- `const_context()`：获取只读上下文
-
-在状态回调内部，你拿到的是 `HfsmMachine* m`，因此更常用的是内核查询接口：
-
-```c
-void* ctx = hfsm_core.context(m);
-const HfsmState* current = hfsm_core.state(m);
-const HfsmState* running = hfsm_core.dispatching(m);
-```
-
-### 13.6 事件处理结果
-
-```c
-HfsmResult hfsm.res.ignore(void);
-HfsmResult hfsm.res.handled(void);
-HfsmResult hfsm.res.transition(const HfsmState* next_state);
-```
+推荐业务层把状态码转换成模块自己的 `bool`、错误码或日志，而不要把 HFSM 状态码直接扩散到所有业务模块
 
 ---
 
-## 14. 状态码说明
+## 12. 配置项
 
-`hfsm` 封装层的函数通常返回 `HfsmStatus`：
-
-| 状态码 | 含义 | 常见原因 |
-|---|---|---|
-| `HFSM_STATUS_OK` | 成功 | 操作正常完成 |
-| `HFSM_STATUS_INVALID_ARG` | 参数非法 | 传入空指针、事件 ID 为 0 |
-| `HFSM_STATUS_NOT_INITIALIZE` | 未初始化 | 没有先调用 `hfsm.init()` |
-| `HFSM_STATUS_NO_INITIAL_STATE` | 未设置初始状态 | 没有调用 `hfsm.set_initial()` |
-| `HFSM_STATUS_STARTED` | 已启动 | 启动后又尝试修改初始化阶段配置 |
-| `HFSM_STATUS_NOT_STARTED` | 未启动 | 没有调用 `hfsm.start()`，或已经 `pause()` |
-| `HFSM_STATUS_NO_SPACE` | 队列满 | 事件投递太快，未及时 `process()` |
-
-由于头文件中定义了：
-
-```c
-#define hfsm hfsm_api_instance
-```
-
-所以也可以用下面这种形式判断：
-
-```c
-HfsmStatus st = hfsm.post(&fsm, EVT_START, NULL);
-if(st != hfsm.OK) {
-    // handle error
-}
-```
-
----
-
-## 15. 配置项
-
-配置项集中在 `hfsm_config.h`
-
-```c
-#ifndef HFSM_DEPTH
-#define HFSM_DEPTH 8
-#endif
-
-#ifndef HFSM_MAX_STATES
-#define HFSM_MAX_STATES 16
-#endif
-
-#ifndef HFSM_PENDING_QUEUE_MAX
-#define HFSM_PENDING_QUEUE_MAX 8
-#endif
-
-#ifndef HFSM_MAX_CHAIN_LENGTH
-#define HFSM_MAX_CHAIN_LENGTH 2 * HFSM_PENDING_QUEUE_MAX
-#endif
-```
-
-### 15.1 常用配置解释
+所有配置项位于 `hfsm_config.h`
 
 | 配置项 | 默认值 | 含义 |
 |---|---:|---|
-| `HFSM_DEPTH` | 8 | 状态层级最大深度 |
-| `HFSM_MAX_STATES` | 16 | 封装层状态池最大状态数 |
-| `HFSM_PENDING_QUEUE_MAX` | 8 | 事件队列最大长度 |
-| `HFSM_MAX_CHAIN_LENGTH` | `2 * HFSM_PENDING_QUEUE_MAX` | `process_all()` 最多连续处理多少个事件 |
-| `HFSM_RUN_PARENT_ACTIONS` | `true` | 是否执行父状态 action |
-| `HFSM_ENABLE_ASSERT` | `true` | 是否启用断言检查 |
+| `HFSM_DEPTH` | `8` | 最大状态层级深度 |
+| `HFSM_MAX_STATES` | `16` | `Hfsm` 封装层状态池容量 |
+| `HFSM_PENDING_QUEUE_MAX` | `8` | 待处理事件队列长度 |
+| `HFSM_MAX_CHAIN_LENGTH` | `2 * HFSM_PENDING_QUEUE_MAX` | `process_all()` 最多连续处理的事件数量，避免事件自投递导致死循环 |
+| `HFSM_RUN_PARENT_ACTIONS` | `true` | 是否在执行当前状态 `action` 后继续执行父状态 `action` |
+| `HFSM_ENABLE_ASSERT` | `true` | 层级深度越界时是否使用 `assert` |
+| `HFSM_EVENT_DATA_TYPE` | `HfsmEventData` | 事件携带数据类型 |
 
-### 15.2 自定义事件数据类型
-
-默认事件数据类型是：
+默认事件数据类型：
 
 ```c
 typedef union {
@@ -767,267 +737,225 @@ typedef union {
 } HfsmEventData;
 ```
 
-如果需要携带自己的数据，可以自定义：
+自定义事件数据类型示例：
 
 ```c
 typedef union {
     void* ptr;
-    uint32_t cmd;
-    float speed;
-    const MyMessage* msg;
+    uint32_t u32;
+    float f;
+    const MyCommand* command;
 } AppEventData;
 
 #define HFSM_EVENT_DATA_TYPE AppEventData
-#include "hfsm.h"
 ```
 
-但必须注意：`HFSM_EVENT_DATA_TYPE` 会影响 `HfsmEvent` 的内存布局，因此所有编译单元必须使用同一个定义；也就是说，不能只在 `main.c` 中定义，而 `hfsm.c` / `hfsm_core.c` 仍然使用默认定义
-
-更稳妥的做法是在工程里维护一个统一的配置头
+更稳妥的做法是直接在移植后的 `hfsm_config.h` 中统一修改，保证 `hfsm.c`、`hfsm_core.c` 和所有业务源文件看到的是同一个 `HFSM_EVENT_DATA_TYPE` 定义
 
 ---
 
-## 16. 封装层和内核层如何选择
+## 13. 事件数据传递示例
 
-### 16.1 推荐初学者使用封装层 `hfsm.h`
-
-封装层提供：
-
-- `Hfsm` 对象；
-- 状态池；
-- `add_state()` / `add_substate()`；
-- 生命周期状态码；
-- 更适合业务代码的 API
-
-典型用法：
+定义事件数据：
 
 ```c
-Hfsm fsm;
-hfsm.init(&fsm, &ctx);
-HfsmState* idle = hfsm.add_state(&fsm, "Idle");
+typedef union {
+    void* ptr;
+    uint32_t u32;
+    float f;
+} AppEventData;
+
+#define HFSM_EVENT_DATA_TYPE AppEventData
 ```
 
-### 16.2 什么时候直接使用内核层 `hfsm_core.h`
-
-如果你希望状态全部静态定义，不需要 `Hfsm` 的状态池，可以直接用内核层并裁剪掉封装层
-
-内核层特点：
-
-- 更小；
-- 没有生命周期状态码；
-- 不负责创建状态；
-- `HfsmState` 通常由用户手动静态定义
-
-示意：
+投递事件：
 
 ```c
-static const HfsmState state_idle = {
+AppEventData data = { .u32 = 3u };
+(void)hfsm.post(&s_fsm, APP_EVENT_SELECT_TARGET, &data);
+```
+
+处理事件：
+
+```c
+static HfsmResult idle_handle(HfsmMachine* m, const HfsmEvent* e) {
+    AppContext* ctx = app_ctx_from_machine(m);
+
+    if(ctx == NULL)
+        return hfsm.res.ignore();
+
+    if(e->id == APP_EVENT_SELECT_TARGET) {
+        ctx->target_index = (uint8_t)e->data.u32;
+        return hfsm.res.handled();
+    }
+
+    return hfsm.res.ignore();
+}
+```
+
+如果传入 `NULL`：
+
+```c
+hfsm.post(&s_fsm, APP_EVENT_START, NULL);
+```
+
+库会把事件数据区清零
+
+---
+
+## 14. 常见设计建议
+
+### 14.1 让父状态处理公共事件
+
+适合放在父状态的事件：
+
+- 停止；
+- 急停；
+- 故障；
+- 模式切换；
+- 暂停/恢复；
+- 全局复位
+
+子状态只处理本阶段真正关心的事件；处理不了就返回 `hfsm.res.ignore()`
+
+---
+
+### 14.2 `action` 里只轮询，不直接阻塞
+
+推荐：
+
+```c
+static void operate_action(HfsmMachine* m) {
+    switch(app_operate_process()) {
+        case APP_OPERATE_FINISHED:
+            (void)hfsm.machine.post(m, APP_EVENT_STEP_FINISHED, NULL);
+            break;
+
+        case APP_OPERATE_FAILED:
+            hfsm.machine.clear(m);
+            (void)hfsm.machine.post(m, APP_EVENT_FAULT, NULL);
+            break;
+
+        default:
+            break;
+    }
+}
+```
+
+不推荐在 `action`、`entry` 或 `handle` 中长时间阻塞等待，因为这会阻塞整个状态机驱动循环
+
+---
+
+### 14.3 高优先级事件可以先清队列
+
+对于急停、遥控接管、故障收口等事件，可以采用：
+
+```c
+hfsm.clear(&s_fsm);
+hfsm.post(&s_fsm, APP_EVENT_FAULT, NULL);
+```
+
+或者在应用层封装成：
+
+```c
+bool app_task_force_post(AppEventId event_id) {
+    (void)hfsm.clear(&s_task.fsm);
+    return app_task_post(event_id);
+}
+```
+
+这样可以避免旧事件在高优先级事件之前继续被处理
+
+---
+
+### 14.4 状态机库不负责线程安全
+
+HFSM 内部没有加锁，也没有关闭中断保护
+
+如果你在以下场景使用：
+
+- ISR 中投递事件，主循环中处理事件；
+- 多线程同时 `post/process`；
+- RTOS 多任务共享同一个 `Hfsm`；
+
+需要在业务层自行加临界区、互斥锁或消息桥接，避免事件队列并发读写
+
+---
+
+### 14.5 状态指针生命周期必须稳定
+
+使用 `hfsm.h` 封装层时，状态保存在 `Hfsm.states[]` 内部静态数组中，状态指针在该 `Hfsm` 对象生命周期内稳定
+
+注意不要：
+
+- 在 `hfsm.init()` 之后还继续使用旧状态指针；
+- 让 `Hfsm` 对象本身位于会失效的局部栈帧中；
+- 超过 `HFSM_MAX_STATES` 状态容量
+
+---
+
+## 15. 何时直接使用 `hfsm_core`
+
+默认不建议业务层直接操作 `hfsm_core`；可以直接使用它的情况包括：
+
+- 想完全静态定义 `HfsmState`，不使用 `Hfsm.states[]` 状态池；
+- 想更细地控制状态生命周期；
+- 想在回调里读取 `dispatching_state` 或判断父子关系；
+- 想把内核集成进另一个封装层
+
+直接使用内核的大致形式：
+
+```c
+static HfsmMachine s_machine;
+
+static const HfsmState s_idle = {
     .name = "Idle",
     .parent = NULL,
     .handle = idle_handle,
 };
 
-static HfsmMachine machine;
-hfsm_core.init(&machine, &state_idle, &ctx);
+hfsm_core.init(&s_machine, &s_idle, &s_ctx);
+hfsm_core.post(&s_machine, APP_EVENT_START, NULL);
+hfsm_core.process(&s_machine);
 ```
 
-如果只是正常写业务流程，优先使用 `hfsm.h`
+但在普通业务工程中，优先使用 `hfsm.h` 封装层更安全，因为它提供了状态池、启动状态检查和统一状态码
 
 ---
 
-## 17. 常见问题与排查
+## 16. 推荐落地模板
 
-### 17.1 为什么 `post()` 之后状态没有变化？
-
-`post()` 只负责把事件放进队列，不会立即处理事件
-
-你还需要调用：
-
-```c
-hfsm.process(&fsm);
-```
-
-或：
-
-```c
-hfsm.process_all(&fsm);
-```
-
-### 17.2 为什么 `post()` 返回 `NOT_STARTED`？
-
-常见原因：
-
-- 没有调用 `hfsm.start()`；
-- 调用了 `hfsm.pause()` 之后还没有调用 `hfsm.go_on()`
-
-正确顺序：
-
-```c
-hfsm.init(&fsm, &ctx);
-...
-hfsm.set_initial(&fsm, s_idle);
-hfsm.start(&fsm);
-hfsm.post(&fsm, EVT_START, NULL);
-```
-
-### 17.3 为什么事件没有被任何状态处理？
-
-检查以下几点：
-
-- 当前状态是否设置了 `handle`；
-- 父状态是否设置了 `handle`；
-- 事件 ID 是否写错；
-- 子状态是否返回了 `handled()`，导致事件没有继续上传；
-- 是否误用了 `HFSM_EVENT_NONE`，它的值为 0，不能作为有效事件
-
-### 17.4 为什么状态创建失败？
-
-`hfsm.add_state()` 返回 `NULL` 时，常见原因是：
-
-- `fsm` 没有初始化；
-- `name` 是空指针；
-- 状态数量超过 `HFSM_MAX_STATES`；
-- 状态机已经启动，启动后不允许继续添加状态
-
-### 17.5 为什么进入深层状态时断言失败？
-
-可能是状态层级超过了 `HFSM_DEPTH`
-
-解决方法：
-
-```c
-#define HFSM_DEPTH 12
-```
-
-### 17.6 多线程或中断里能直接调用吗？
-
-当前实现默认不提供线程安全保护
-
-如果在中断、RTOS 多任务或多线程里调用 `post()` / `process()`，需要自行保证互斥，例如：
-
-- 只在一个任务中调用 `hfsm.process()`；
-- 中断里只置标志，主循环里再 `post()`；
-- RTOS 下对 `post()` 和 `process()` 加锁；
-- 或使用消息队列把外部事件统一转发到状态机任务
-
-### 17.7 状态名称是否会自动检查重复？
-
-不会，`name` 主要用于调试阅读，当前实现不会强制检查状态名称唯一性
-
-建议你在业务代码中保持名称唯一，便于日志定位
-
----
-
-## 18. 设计建议
-
-### 18.1 事件命名建议
-
-推荐按业务含义命名，而不是按硬件输入命名：
-
-```c
-typedef enum {
-    EVT_START = 1,
-    EVT_STOP,
-    EVT_PAUSE,
-    EVT_RESUME,
-    EVT_ERROR,
-    EVT_TIMEOUT,
-} AppEvent;
-```
-
-不建议：
-
-```c
-typedef enum {
-    EVT_KEY1_DOWN = 1,
-    EVT_UART_RX_0X03,
-} AppEvent;
-```
-
-硬件输入可以在外层转换成业务事件
-
-### 18.2 状态划分建议
-
-状态应该表示系统当前处于什么阶段，而不是表示某一个函数是否执行过
-
-推荐：
+一个可维护的业务状态机模块可以按下面结构组织：
 
 ```text
-Idle
-Prepare
-Running
-Recover
-Error
+app_task.h
+  - 对外事件投递接口
+  - 对外状态查询接口
+
+app_task_internal.h
+  - AppTask 结构体
+  - AppContext 定义或引用
+  - 仅内部源文件使用
+
+app_task.c
+  - Hfsm 实例
+  - HfsmState* 状态指针
+  - init/process/post/force_post
+  - handle/entry/exit/action 回调
+  - ctx_from_machine() 辅助函数
+
+sub_task_xxx.c
+  - 子流程本身
+  - 返回 RUNNING / FINISHED / FAILED
+  - 不直接修改 HFSM 当前状态
 ```
 
-不推荐：
+核心边界是：
 
 ```text
-ReadSensor
-CalcPid
-SetPwm
-Delay10ms
+HFSM 负责状态编排
+子流程负责执行具体动作
+外部模块只投递事件或查询状态
 ```
 
-后者更像普通流程函数，不适合拆成状态
-
-### 18.3 父状态适合放公共逻辑
-
-例如：
-
-```text
-Work
-├── Prepare
-├── Execute
-└── Recover
-```
-
-`Work` 可以统一处理：
-
-- 暂停；
-- 故障；
-- 急停；
-- 工作模式下的公共 action
-
-子状态只处理自己的局部事件
-
----
-
-## 19. 状态结构参考
-
-例如一个简单电机任务可以这样组织：
-
-```text
-Root
-├── Idle
-├── Manual
-├── Auto
-│   ├── AutoPrepare
-│   ├── AutoRun
-│   └── AutoFinish
-└── Fault
-```
-
-事件可以这样定义：
-
-```c
-typedef enum {
-    EVT_START = 1,
-    EVT_STOP,
-    EVT_MANUAL_MODE,
-    EVT_AUTO_MODE,
-    EVT_PREPARE_DONE,
-    EVT_TARGET_REACHED,
-    EVT_FAULT,
-    EVT_RESET,
-} AppEvent;
-```
-
-公共规则：
-
-- `Root` 处理 `EVT_FAULT`，任何状态都能进入 `Fault`；
-- `Fault` 处理 `EVT_RESET`，恢复到 `Idle`；
-- `Auto` 处理 `EVT_STOP`，所有自动子状态都能停止；
-- `AutoPrepare`、`AutoRun`、`AutoFinish` 只处理本阶段事件
-
-这样可以避免每个子状态都重复写故障和停止逻辑
+这样 `infra/hfsm` 仍然是独立库，业务工程只是在它之上构建自己的任务状态机

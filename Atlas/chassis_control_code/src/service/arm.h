@@ -58,6 +58,7 @@ typedef struct {
 } ArmJointServoMap;
 
 typedef BusServoStatus (*ArmServoStopFn)(uint8_t id);
+typedef BusServoStatus (*ArmServoEnableFn)(uint8_t id);
 
 typedef BusServoStatus (*ArmServoBatchSetPosSpdFn)(const uint8_t* ids,
                                                    const float* positions,
@@ -76,6 +77,8 @@ typedef struct {
     const BusServoInterface* servo_interface;
     /** 可选的单舵机停止/卸力函数，由具体驱动适配 */
     ArmServoStopFn stop_servo;
+    /** 可选的单舵机使能扭矩函数，由具体驱动适配 */
+    ArmServoEnableFn enable_servo;
     /** 可选的批量写入位置和速度函数，由具体驱动适配 */
     ArmServoBatchSetPosSpdFn batch_set_pos_spd;
     /** 可选的批量更新反馈函数，由具体驱动适配 */
@@ -98,6 +101,9 @@ typedef struct {
  */
 typedef struct {
     ArmConfig config;
+    FiveDofArmJointArray target_joints;
+    FiveDofArmPose target_pose;
+    bool target_valid;
     FiveDofArmJointArray current_joints;
     FiveDofArmPose current_pose;
     bool current_valid;
@@ -181,6 +187,11 @@ extern const struct ArmInterface {
      * @return ArmStatus 服务状态码
      */
     ArmStatus (*stop)(void);
+    /**
+     * @brief 使能全部舵机扭矩
+     * @return ArmStatus 服务状态码
+     */
+    ArmStatus (*enable)(void);
     /**
      * @brief 计算正运动学
      * @param joints 输入关节数组，单位 rad
@@ -302,6 +313,11 @@ ArmStatus arm_move_orientation(float roll, float pitch, float yaw, float speed_r
  * @return ArmStatus 服务状态码
  */
 ArmStatus arm_stop(void);
+/**
+ * @brief 使能全部舵机扭矩
+ * @return ArmStatus 服务状态码
+ */
+ArmStatus arm_enable(void);
 /**
  * @brief 计算正运动学
  * @param joints 输入关节数组，单位 rad
