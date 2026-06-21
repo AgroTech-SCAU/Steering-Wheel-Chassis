@@ -341,11 +341,11 @@ static bool app_runtime_pi_arm_cmd_pending(void) {
 
 static bool app_runtime_remote_clear_fault_requested(void) {
     const AppFault* fault = app_fsm_get_fault();
-    const uint16_t swa = s_remote_state.rc_data.channel[REMOTE_CH_SWA];
+    const uint16_t swc = s_remote_state.rc_data.channel[REMOTE_CH_SWC];
     const uint16_t swd = s_remote_state.rc_data.channel[REMOTE_CH_SWD];
     const uint16_t vra = s_remote_state.rc_data.channel[REMOTE_CH_VRA];
     const uint16_t vrb = s_remote_state.rc_data.channel[REMOTE_CH_VRB];
-    const bool safe_combo = swa == REMOTE_SW_CENTER && swd == REMOTE_SW_CENTER &&
+    const bool safe_combo = swc == REMOTE_SW_HIGH && swd == REMOTE_SW_LOW &&
                             vra <= REMOTE_VR_LOW_THRESHOLD && vrb <= REMOTE_VR_LOW_THRESHOLD;
 
     if(app_fsm_get_state() != APP_FSM_STATE_FAULT || !s_remote_state.online || fault == NULL ||
