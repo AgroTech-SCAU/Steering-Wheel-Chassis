@@ -125,11 +125,12 @@ CRC_L    1 byte   CRC16 low byte
 
 | MSG_ID | 名称 | payload 长度 | 语义 |
 |---:|---|---:|---|
-| `0x20` | `MCU_IMU_ODOM` | 40 | IMU 与里程计 |
 | `0x21` | `MCU_STATUS` | 16 | MCU 状态 |
 | `0x22` | `MCU_START_SENSOR_EVENT` | 8 | 启动传感器事件 |
 | `0x23` | `MCU_ACK` | 4 | MCU ACK |
 | `0x24` | `MCU_FAULT_EVENT` | 8 | 故障事件，当前预留 |
+| `0x25` | `MCU_IMU` | 48 | IMU 周期帧，100Hz |
+| `0x26` | `MCU_ODOM` | 32 | 底盘局部里程计周期帧，50Hz |
 
 ### 5.3 Pi -> MCU
 
@@ -514,50 +515,55 @@ payload 偏移：
 
 ## 8. MCU -> Pi 消息
 
-### 8.1 MCU_IMU_ODOM
+### 8.1 MCU_IMU
 
 方向：
-
 ```text
 MCU -> Pi
 ```
 
-`MSG_ID = 0x20`
+`MSG_ID = 0x25`
 
 建议频率：
-
 ```text
-20Hz
+100Hz
 ```
 
 payload 长度：
-
 ```text
-40 bytes
+48 bytes
 ```
 
-payload 偏移：
+说明：
+1. 周期发送完整 IMU 信息，包含三轴加速度、三轴角速度和三轴姿态角。
+2. `yaw_urad` 使用融合后的 `angle.z`，与 `MCU_ODOM.yaw_urad` 同源。
+3. 该帧是高频周期帧，不使用 `ACK`，避免阻塞主循环。
 
-| payload 偏移 | 长度 | 类型 | 字段 | 单位 |
-|---:|---:|---|---|---|
-| 0 | 4 | `uint32_t` | `stamp_ms` | `ms` |
-| 4 | 4 | `int32_t` | `roll_urad` | `urad` |
-| 8 | 4 | `int32_t` | `pitch_urad` | `urad` |
-| 12 | 4 | `int32_t` | `yaw_urad` | `urad` |
-| 16 | 4 | `int32_t` | `gyro_x_urad_s` | `urad/s` |
-| 20 | 4 | `int32_t` | `gyro_y_urad_s` | `urad/s` |
-| 24 | 4 | `int32_t` | `gyro_z_urad_s` | `urad/s` |
-| 28 | 4 | `int32_t` | `odom_x_mm` | `mm` |
-| 32 | 4 | `int32_t` | `odom_y_mm` | `mm` |
-| 36 | 4 | `int32_t` | `odom_yaw_urad` | `urad` |
+### 8.2 MCU_ODOM
+
+方向：
+```text
+MCU -> Pi
+```
+
+`MSG_ID = 0x26`
+
+建议频率：
+```text
+50Hz
+```
+
+payload 长度：
+```text
+32 bytes
+```
 
 说明：
+1. `x_mm / y_mm / yaw_urad` 属于 odom 坐标系下的局部位姿。
+2. `vx_mm_s / vy_mm_s / wz_urad_s` 属于 base_link 坐标系下的底盘速度。
+3. `yaw_urad` 同样使用融合后的 `angle.z`，Pi 端不需要再拼接 odom yaw。
 
-1. `pi_comms` 只负责打包发送
-2. snapshot 由 app 层组装
-3. `pi_comms` 不直接读取 `odom` 或 `imu`
-
-### 8.2 MCU_STATUS
+### 8.3 MCU_STATUS
 
 方向：
 
@@ -614,7 +620,7 @@ payload 偏移：
 | bit3 | `has_fault` |
 | bit4 | `estop` |
 
-### 8.3 MCU_START_SENSOR_EVENT
+### 8.4 MCU_START_SENSOR_EVENT
 
 方向：
 
@@ -650,7 +656,7 @@ payload 偏移：
 3. 收到匹配 `PI_ACK` 后清除 pending
 4. ACK 超时不会阻塞主循环，不会卡死系统
 
-### 8.4 MCU_ACK
+### 8.5 MCU_ACK
 
 方向：
 
@@ -678,7 +684,7 @@ payload 偏移：
 
 用于确认 Pi 的一次性动作或事件；当前阶段主要预留统一 ACK 格式和发送接口
 
-### 8.5 MCU_FAULT_EVENT
+### 8.6 MCU_FAULT_EVENT
 
 方向：
 
@@ -793,7 +799,8 @@ payload 偏移：
 | `PC_MASTER_JOINTS` | 30Hz ~ 100Hz |
 | `PI_HEARTBEAT` | 1Hz，最低不建议低于 0.5Hz |
 | `PI_CONTROL` | 20Hz ~ 50Hz |
-| `MCU_IMU_ODOM` | 20Hz |
+| `MCU_IMU` | 100Hz |
+| `MCU_ODOM` | 50Hz |
 | `MCU_STATUS` | 5Hz ~ 10Hz |
 | `MCU_START_SENSOR_EVENT` pending retry | 100ms |
 

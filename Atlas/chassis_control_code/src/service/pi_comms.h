@@ -101,18 +101,45 @@ typedef struct {
     int16_t fault_code;
 } PiCommsStatusSnapshot;
 
+/**
+ * @brief MCU -> Pi IMU 快照，100Hz 周期发送
+ *
+ * payload 内多字节字段统一按小端打包，roll/pitch/yaw 全部来自融合姿态 angle。
+ * yaw 与 ODOM 帧保留同源副本，便于 Pi 端分别发布 IMU 与里程计话题。
+ */
 typedef struct {
     uint32_t stamp_ms;
-    float angle_x;
-    float angle_y;
-    float angle_z;
-    float gyro_x;
-    float gyro_y;
-    float gyro_z;
-    float odom_x;
-    float odom_y;
-    float odom_yaw;
-} PiCommsImuOdomSnapshot;
+    uint16_t status_flags;
+    uint16_t sequence_count;
+    int32_t acc_x_mm_s2;
+    int32_t acc_y_mm_s2;
+    int32_t acc_z_mm_s2;
+    int32_t gyro_x_urad_s;
+    int32_t gyro_y_urad_s;
+    int32_t gyro_z_urad_s;
+    int32_t roll_urad;
+    int32_t pitch_urad;
+    int32_t yaw_urad;
+    uint32_t reserved;
+} PiCommsImuSnapshot;
+
+/**
+ * @brief MCU -> Pi 底盘局部里程计快照，50Hz 周期发送
+ *
+ * x/y/yaw 属于 odom 坐标系，vx/vy/wz 属于 base_link 坐标系。
+ * yaw 同样来自融合后的 angle.z，不使用 odom.z 充当航向角。
+ */
+typedef struct {
+    uint32_t stamp_ms;
+    uint16_t status_flags;
+    uint16_t reset_counter;
+    int32_t x_mm;
+    int32_t y_mm;
+    int32_t yaw_urad;
+    int32_t vx_mm_s;
+    int32_t vy_mm_s;
+    int32_t wz_urad_s;
+} PiCommsOdomSnapshot;
 
 typedef struct {
     uint8_t sensor_id;
@@ -136,6 +163,25 @@ typedef struct {
 
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
+#define PI_COMMS_PAYLOAD_IMU_LEN 48u
+#define PI_COMMS_PAYLOAD_ODOM_LEN 32u
+
+#define PI_COMMS_IMU_STATUS_IMU_READY              0x0001u
+#define PI_COMMS_IMU_STATUS_ACC_VALID              0x0002u
+#define PI_COMMS_IMU_STATUS_GYRO_VALID             0x0004u
+#define PI_COMMS_IMU_STATUS_ANGLE_VALID            0x0008u
+#define PI_COMMS_IMU_STATUS_YAW_FUSED_WITH_CHASSIS 0x0010u
+#define PI_COMMS_IMU_STATUS_BIAS_CORRECTED         0x0020u
+
+#define PI_COMMS_ODOM_STATUS_ODOM_READY      0x0001u
+#define PI_COMMS_ODOM_STATUS_POSE_VALID      0x0002u
+#define PI_COMMS_ODOM_STATUS_TWIST_VALID     0x0004u
+#define PI_COMMS_ODOM_STATUS_IMU_FUSED       0x0008u
+#define PI_COMMS_ODOM_STATUS_WHEEL_FUSED     0x0010u
+#define PI_COMMS_ODOM_STATUS_STATIC_DETECTED 0x0020u
+#define PI_COMMS_ODOM_STATUS_SLIP_SUSPECTED  0x0040u
+#define PI_COMMS_ODOM_STATUS_ODOM_RESET      0x0080u
+
 PiCommsStatus pi_comms_init(const PiCommsConfig* config);
 void pi_comms_on_rx_byte(uint8_t data);
 void pi_comms_process(void);
@@ -152,7 +198,8 @@ bool pi_comms_has_pending_arm_action(void);
 bool pi_comms_take_estop(PiCommsEstopEvent* event);
 bool pi_comms_take_mission_event(PiCommsMissionEvent* event);
 bool pi_comms_send_status(const PiCommsStatusSnapshot* status);
-bool pi_comms_send_imu_odom(const PiCommsImuOdomSnapshot* odom);
+bool pi_comms_send_imu(const PiCommsImuSnapshot* snapshot);
+bool pi_comms_send_odom(const PiCommsOdomSnapshot* snapshot);
 bool pi_comms_publish_start_sensor_event(uint8_t sensor_id,
                                          uint8_t event_type,
                                          uint16_t value);

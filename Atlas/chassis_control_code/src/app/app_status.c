@@ -35,15 +35,21 @@ typedef enum {
 
 static ms_t s_log_timer = 0u;
 static ms_t s_heartbeat_timer = 0u;
-static ms_t s_pi_status_send_timer = 0u;
-static ms_t s_pi_imu_odom_send_timer = 0u;
+static ms_t s_pi_status_send_ms = 0u;
+static ms_t s_pi_imu_send_ms = 0u;
+static ms_t s_pi_odom_send_ms = 0u;
 static AppLedState s_led_state = APP_LED_STATE_NOT_READY;
+static uint16_t s_pi_imu_sequence_count = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 static void app_status_update_led(void);
+static bool app_status_interval_due(ms_t now_ms, ms_t* last_ms, ms_t interval_ms);
 static void app_status_send_pi_status(void);
-static void app_status_send_pi_imu_odom(void);
+static void app_status_send_pi_imu(void);
+static void app_status_send_pi_odom(void);
+static void app_status_build_pi_imu_snapshot(PiCommsImuSnapshot* snapshot);
+static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot);
 static void app_status_log(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -51,19 +57,39 @@ static void app_status_log(void);
 void app_status_init(void) {
     s_log_timer = 0u;
     s_heartbeat_timer = 0u;
-    s_pi_status_send_timer = 0u;
-    s_pi_imu_odom_send_timer = 0u;
+    s_pi_status_send_ms = 0u;
+    s_pi_imu_send_ms = 0u;
+    s_pi_odom_send_ms = 0u;
     s_led_state = APP_LED_STATE_NOT_READY;
+    s_pi_imu_sequence_count = 0u;
 }
 
 void app_status_process(void) {
     app_status_update_led();
     app_status_send_pi_status();
-    app_status_send_pi_imu_odom();
+    app_status_send_pi_imu();
+    app_status_send_pi_odom();
     app_status_log();
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
+
+/**
+ * @brief 非阻塞周期判断
+ * @details 周期状态帧使用 now_ms + last_send_ms 判定，避免在 500Hz 主循环里无节制发送
+ */
+static bool app_status_interval_due(ms_t now_ms, ms_t* last_ms, ms_t interval_ms) {
+    if(last_ms == NULL) {
+        return false;
+    }
+
+    if(*last_ms == 0u || (now_ms - *last_ms) >= interval_ms) {
+        *last_ms = now_ms;
+        return true;
+    }
+
+    return false;
+}
 
 static void app_status_update_led(void) {
     AppLedState target_state;
@@ -148,8 +174,9 @@ static void app_status_send_pi_status(void) {
     const bool pi_online = pi_comms_is_online();
     const bool has_fault = app_runtime_has_fault();
     const bool estop = app_runtime_get_state() == APP_FSM_STATE_ESTOP;
+    const ms_t now_ms = delay_now_ms();
 
-    if(!delay_nb_ms(&s_pi_status_send_timer, 100u)) {
+    if(!app_status_interval_due(now_ms, &s_pi_status_send_ms, 100u)) {
         return;
     }
 
@@ -167,7 +194,7 @@ static void app_status_send_pi_status(void) {
     online_flags |= has_fault ? BINARY_FRAME_STATUS_HAS_FAULT : 0u;
     online_flags |= estop ? BINARY_FRAME_STATUS_ESTOP : 0u;
 
-    status.stamp_ms = delay_now_ms();
+    status.stamp_ms = now_ms;
     status.app_state = (uint8_t)app_runtime_get_state();
     status.manual_mode = (uint8_t)app_runtime_get_manual_mode();
     status.ready_flags = ready_flags;
@@ -178,31 +205,116 @@ static void app_status_send_pi_status(void) {
     (void)pi_comms_send_status(&status);
 }
 
-static void app_status_send_pi_imu_odom(void) {
-    PiCommsImuOdomSnapshot snapshot = { 0 };
-    Vector3 angle = { 0 };
-    Vector3 gyro = { 0 };
-    Vector3 odom_vec = { 0 };
+/**
+ * @brief 按 100Hz 周期发送 MCU_IMU
+ */
+static void app_status_send_pi_imu(void) {
+    PiCommsImuSnapshot snapshot = { 0 };
+    const ms_t now_ms = delay_now_ms();
 
-    if(!delay_nb_ms(&s_pi_imu_odom_send_timer, 50u)) {
+    if(!app_status_interval_due(now_ms, &s_pi_imu_send_ms, 10u)) {
         return;
     }
 
-    (void)odom.get_angle(&angle);
-    (void)odom.get_gyro_corrected(&gyro);
-    (void)odom.get_odom(&odom_vec);
+    app_status_build_pi_imu_snapshot(&snapshot);
+    (void)pi_comms_send_imu(&snapshot);
+}
 
-    snapshot.stamp_ms = delay_now_ms();
-    snapshot.angle_x = angle.x;
-    snapshot.angle_y = angle.y;
-    snapshot.angle_z = angle.z;
-    snapshot.gyro_x = gyro.x;
-    snapshot.gyro_y = gyro.y;
-    snapshot.gyro_z = gyro.z;
-    snapshot.odom_x = odom_vec.x;
-    snapshot.odom_y = odom_vec.y;
-    snapshot.odom_yaw = odom_vec.z;
-    (void)pi_comms_send_imu_odom(&snapshot);
+/**
+ * @brief 按 50Hz 周期发送 MCU_ODOM
+ */
+static void app_status_send_pi_odom(void) {
+    PiCommsOdomSnapshot snapshot = { 0 };
+    const ms_t now_ms = delay_now_ms();
+
+    if(!app_status_interval_due(now_ms, &s_pi_odom_send_ms, 20u)) {
+        return;
+    }
+
+    app_status_build_pi_odom_snapshot(&snapshot);
+    (void)pi_comms_send_odom(&snapshot);
+}
+
+/**
+ * @brief 组装 MCU_IMU 快照
+ * @details yaw 使用融合后的 angle.z，gyro 优先使用去 bias 后的 gyro_corrected
+ */
+static void app_status_build_pi_imu_snapshot(PiCommsImuSnapshot* snapshot) {
+    Vector3 angle = { 0 };
+    Vector3 acc = { 0 };
+    Vector3 gyro = { 0 };
+    uint16_t status_flags = 0u;
+
+    if(snapshot == NULL) {
+        return;
+    }
+
+    snapshot->stamp_ms = delay_now_ms();
+    snapshot->sequence_count = s_pi_imu_sequence_count++;
+
+    if(odom.get_acc(&acc) == ODOM_OK) {
+        status_flags |= PI_COMMS_IMU_STATUS_ACC_VALID;
+        snapshot->acc_x_mm_s2 = binary_frame_m_to_mm_i32(acc.x);
+        snapshot->acc_y_mm_s2 = binary_frame_m_to_mm_i32(acc.y);
+        snapshot->acc_z_mm_s2 = binary_frame_m_to_mm_i32(acc.z);
+    }
+
+    if(odom.get_gyro_corrected(&gyro) == ODOM_OK) {
+        status_flags |= PI_COMMS_IMU_STATUS_GYRO_VALID | PI_COMMS_IMU_STATUS_BIAS_CORRECTED;
+        snapshot->gyro_x_urad_s = binary_frame_rad_to_urad(gyro.x);
+        snapshot->gyro_y_urad_s = binary_frame_rad_to_urad(gyro.y);
+        snapshot->gyro_z_urad_s = binary_frame_rad_to_urad(gyro.z);
+    }
+
+    if(odom.get_angle(&angle) == ODOM_OK) {
+        status_flags |= PI_COMMS_IMU_STATUS_ANGLE_VALID | PI_COMMS_IMU_STATUS_YAW_FUSED_WITH_CHASSIS;
+        snapshot->roll_urad = binary_frame_rad_to_urad(angle.x);
+        snapshot->pitch_urad = binary_frame_rad_to_urad(angle.y);
+        snapshot->yaw_urad = binary_frame_rad_to_urad(angle.z);
+    }
+
+    if(odom.is_ready()) {
+        status_flags |= PI_COMMS_IMU_STATUS_IMU_READY;
+    }
+
+    snapshot->status_flags = status_flags;
+}
+
+/**
+ * @brief 组装 MCU_ODOM 快照
+ * @details x/y 属于 odom 坐标系，vx/vy/wz 属于 base_link 坐标系，yaw 与 IMU 帧同源
+ */
+static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot) {
+    Vector3 angle = { 0 };
+    Vector3 odom_vec = { 0 };
+    Vector3 velocity = { 0 };
+    uint16_t status_flags = 0u;
+
+    if(snapshot == NULL) {
+        return;
+    }
+
+    snapshot->stamp_ms = delay_now_ms();
+
+    if(odom.get_odom(&odom_vec) == ODOM_OK) {
+        status_flags |= PI_COMMS_ODOM_STATUS_ODOM_READY | PI_COMMS_ODOM_STATUS_POSE_VALID;
+        snapshot->x_mm = binary_frame_m_to_mm_i32(odom_vec.x);
+        snapshot->y_mm = binary_frame_m_to_mm_i32(odom_vec.y);
+    }
+
+    if(odom.get_angle(&angle) == ODOM_OK) {
+        status_flags |= PI_COMMS_ODOM_STATUS_IMU_FUSED;
+        snapshot->yaw_urad = binary_frame_rad_to_urad(angle.z);
+    }
+
+    if(odom.get_velocity(&velocity) == ODOM_OK) {
+        status_flags |= PI_COMMS_ODOM_STATUS_TWIST_VALID | PI_COMMS_ODOM_STATUS_WHEEL_FUSED;
+        snapshot->vx_mm_s = binary_frame_m_to_mm_i32(velocity.x);
+        snapshot->vy_mm_s = binary_frame_m_to_mm_i32(velocity.y);
+        snapshot->wz_urad_s = binary_frame_rad_to_urad(velocity.z);
+    }
+
+    snapshot->status_flags = status_flags;
 }
 
 static void app_status_log(void) {

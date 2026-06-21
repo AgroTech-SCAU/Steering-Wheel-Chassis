@@ -29,7 +29,6 @@
 #define PI_COMMS_PAYLOAD_ESTOP_LEN 8u
 #define PI_COMMS_PAYLOAD_ACK_LEN 4u
 #define PI_COMMS_PAYLOAD_STATUS_LEN 16u
-#define PI_COMMS_PAYLOAD_IMU_ODOM_LEN 40u
 #define PI_COMMS_PAYLOAD_START_SENSOR_EVENT_LEN 8u
 
 // ! ========================= 变 量 声 明 ========================= ! //
@@ -285,24 +284,46 @@ bool pi_comms_send_status(const PiCommsStatusSnapshot* status) {
     return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_STATUS, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
 }
 
-bool pi_comms_send_imu_odom(const PiCommsImuOdomSnapshot* odom) {
-    uint8_t payload[PI_COMMS_PAYLOAD_IMU_ODOM_LEN] = { 0 };
+bool pi_comms_send_imu(const PiCommsImuSnapshot* snapshot) {
+    uint8_t payload[PI_COMMS_PAYLOAD_IMU_LEN] = { 0 };
 
-    if(odom == NULL) {
+    if(snapshot == NULL) {
         return false;
     }
 
-    binary_frame_write_u32_le(&payload[0], odom->stamp_ms);
-    binary_frame_write_i32_le(&payload[4], binary_frame_rad_to_urad(odom->angle_x));
-    binary_frame_write_i32_le(&payload[8], binary_frame_rad_to_urad(odom->angle_y));
-    binary_frame_write_i32_le(&payload[12], binary_frame_rad_to_urad(odom->angle_z));
-    binary_frame_write_i32_le(&payload[16], binary_frame_rad_to_urad(odom->gyro_x));
-    binary_frame_write_i32_le(&payload[20], binary_frame_rad_to_urad(odom->gyro_y));
-    binary_frame_write_i32_le(&payload[24], binary_frame_rad_to_urad(odom->gyro_z));
-    binary_frame_write_i32_le(&payload[28], binary_frame_m_to_mm_i32(odom->odom_x));
-    binary_frame_write_i32_le(&payload[32], binary_frame_m_to_mm_i32(odom->odom_y));
-    binary_frame_write_i32_le(&payload[36], binary_frame_rad_to_urad(odom->odom_yaw));
-    return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_IMU_ODOM, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
+    binary_frame_write_u32_le(&payload[0], snapshot->stamp_ms);
+    binary_frame_write_u16_le(&payload[4], snapshot->status_flags);
+    binary_frame_write_u16_le(&payload[6], snapshot->sequence_count);
+    binary_frame_write_i32_le(&payload[8], snapshot->acc_x_mm_s2);
+    binary_frame_write_i32_le(&payload[12], snapshot->acc_y_mm_s2);
+    binary_frame_write_i32_le(&payload[16], snapshot->acc_z_mm_s2);
+    binary_frame_write_i32_le(&payload[20], snapshot->gyro_x_urad_s);
+    binary_frame_write_i32_le(&payload[24], snapshot->gyro_y_urad_s);
+    binary_frame_write_i32_le(&payload[28], snapshot->gyro_z_urad_s);
+    binary_frame_write_i32_le(&payload[32], snapshot->roll_urad);
+    binary_frame_write_i32_le(&payload[36], snapshot->pitch_urad);
+    binary_frame_write_i32_le(&payload[40], snapshot->yaw_urad);
+    binary_frame_write_u32_le(&payload[44], snapshot->reserved);
+    return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_IMU, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
+}
+
+bool pi_comms_send_odom(const PiCommsOdomSnapshot* snapshot) {
+    uint8_t payload[PI_COMMS_PAYLOAD_ODOM_LEN] = { 0 };
+
+    if(snapshot == NULL) {
+        return false;
+    }
+
+    binary_frame_write_u32_le(&payload[0], snapshot->stamp_ms);
+    binary_frame_write_u16_le(&payload[4], snapshot->status_flags);
+    binary_frame_write_u16_le(&payload[6], snapshot->reset_counter);
+    binary_frame_write_i32_le(&payload[8], snapshot->x_mm);
+    binary_frame_write_i32_le(&payload[12], snapshot->y_mm);
+    binary_frame_write_i32_le(&payload[16], snapshot->yaw_urad);
+    binary_frame_write_i32_le(&payload[20], snapshot->vx_mm_s);
+    binary_frame_write_i32_le(&payload[24], snapshot->vy_mm_s);
+    binary_frame_write_i32_le(&payload[28], snapshot->wz_urad_s);
+    return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ODOM, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
 }
 
 bool pi_comms_publish_start_sensor_event(uint8_t sensor_id,

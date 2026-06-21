@@ -58,6 +58,7 @@ typedef struct {
     Vector3 gyro_corrected; /**< 最近一次扣除零偏和补偿后的三轴角速度，单位 rad/s */
     Vector3 angle;          /**< 融合后的三轴姿态角，x/y/z 分别为 roll/pitch/yaw，单位 rad */
     Vector3 odom;           /**< 融合后的三轴里程，x/y 单位 m；z 当前为预留高度状态 */
+    Vector3 velocity;       /**< 融合后的底盘速度，x/y/z 分别表示 vx/vy/wz */
     bool imu_ready;         /**< true 表示最近一次 IMU 更新成功 */
     bool fusion_ready;      /**< true 表示最近一次融合更新成功 */
     bool initialized;       /**< true 表示服务已初始化 */
@@ -126,6 +127,13 @@ extern const struct OdomInterface {
      * @return OdomStatus 状态码
      */
     OdomStatus (*get_odom)(Vector3* odom_out);
+    /**
+     * @brief 获取融合后的底盘速度
+     * @details x/y/z 分别表示 base_link 坐标系下的 vx/vy/wz
+     * @param velocity_out 输出速度
+     * @return OdomStatus 状态码
+     */
+    OdomStatus (*get_velocity)(Vector3* velocity_out);
     /**
      * @brief 获取里程计服务只读状态快照
      * @return const Odom* 状态快照指针
@@ -200,6 +208,13 @@ OdomStatus odom_get_angle(Vector3* angle);
  * @return OdomStatus 状态码
  */
 OdomStatus odom_get_odom(Vector3* odom_out);
+/**
+ * @brief 获取融合后的底盘速度
+ * @details x/y/z 分别表示 base_link 坐标系下的 vx/vy/wz
+ * @param velocity_out 输出速度
+ * @return OdomStatus 状态码
+ */
+OdomStatus odom_get_velocity(Vector3* velocity_out);
 /**
  * @brief 获取里程计服务只读状态快照
  * @return const Odom* 状态快照指针

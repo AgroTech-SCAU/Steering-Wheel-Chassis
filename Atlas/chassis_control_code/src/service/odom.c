@@ -48,6 +48,7 @@ const struct OdomInterface odom_interface = {
     .get_gyro_corrected = odom_get_gyro_corrected,
     .get_angle = odom_get_angle,
     .get_odom = odom_get_odom,
+    .get_velocity = odom_get_velocity,
     .get_state = odom_get_state,
     .is_ready = odom_is_ready,
     .status_str = odom_status_str
@@ -180,6 +181,9 @@ OdomStatus odom_process(void) {
 
     (void)chassis_imu_odom.get_angle(&s_fusion, &s_odom.angle);
     (void)chassis_imu_odom.get_odom(&s_fusion, &s_odom.odom);
+    s_odom.velocity.x = s_fusion.output.velocity.vx;
+    s_odom.velocity.y = s_fusion.output.velocity.vy;
+    s_odom.velocity.z = s_fusion.output.velocity.wz;
     s_odom.fusion_ready = true;
 
     return od.OK;
@@ -237,6 +241,16 @@ OdomStatus odom_get_angle(Vector3* angle) {
  */
 OdomStatus odom_get_odom(Vector3* odom_out) {
     return odom_copy_vec3(s_odom.fusion_ready, &s_odom.odom, odom_out);
+}
+
+/**
+ * @brief 获取融合后的底盘速度
+ * @details x/y/z 分别表示 base_link 坐标系下的 vx/vy/wz
+ * @param velocity_out 输出速度
+ * @return OdomStatus 状态码
+ */
+OdomStatus odom_get_velocity(Vector3* velocity_out) {
+    return odom_copy_vec3(s_odom.fusion_ready, &s_odom.velocity, velocity_out);
 }
 
 /**
