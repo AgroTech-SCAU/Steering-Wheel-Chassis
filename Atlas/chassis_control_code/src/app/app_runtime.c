@@ -102,7 +102,7 @@ static void app_runtime_update_mode(void) {
     PiCommsEstopEvent estop_event;
 
     if(pi_comms_take_estop(&estop_event)) {
-        log_warn("APP_RUNTIME estop event requested by Pi: reason=%d", estop_event.reason);
+        log_warn("APP_RUNTIME estop event requested by Pi: reason=%u", estop_event.reason);
         (void)app_fsm_request_estop();
         return;
     }
