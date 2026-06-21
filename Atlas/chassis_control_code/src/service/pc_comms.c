@@ -14,10 +14,10 @@
 
 // ! ========================= 宏 定 义 声 明 ========================= ! //
 
-#define PC_COMMS_RX_RING_SIZE             256u
-#define PC_COMMS_FRAME_BUF_SIZE           64u
-#define PC_COMMS_ONLINE_TIMEOUT_MS        500u
-#define PC_COMMS_WARN_LOG_PERIOD_MS       1000u
+#define PC_COMMS_RX_RING_SIZE 256u
+#define PC_COMMS_FRAME_BUF_SIZE 64u
+#define PC_COMMS_ONLINE_TIMEOUT_MS 3000u
+#define PC_COMMS_WARN_LOG_PERIOD_MS 1000u
 #define PC_COMMS_MASTER_JOINTS_PAYLOAD_LEN 24u
 
 // ! ========================= 变 量 声 明 ========================= ! //

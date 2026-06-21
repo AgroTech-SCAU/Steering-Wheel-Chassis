@@ -170,7 +170,7 @@ empty
 推荐频率：
 
 ```text
-10Hz，最低不建议低于 5Hz
+1Hz，最低不建议低于 0.5Hz
 ```
 
 ### 6.2 PC_MASTER_JOINTS
@@ -239,7 +239,7 @@ empty
 推荐频率：
 
 ```text
-10Hz，最低不建议低于 5Hz
+1Hz，最低不建议低于 0.5Hz
 ```
 
 ### 7.2 PI_CONTROL
@@ -789,9 +789,9 @@ payload 偏移：
 
 | 消息 | 推荐频率 |
 |---|---|
-| `PC_HEARTBEAT` | 10Hz，最低不建议低于 5Hz |
+| `PC_HEARTBEAT` | 1Hz，最低不建议低于 0.5Hz |
 | `PC_MASTER_JOINTS` | 30Hz ~ 100Hz |
-| `PI_HEARTBEAT` | 10Hz，最低不建议低于 5Hz |
+| `PI_HEARTBEAT` | 1Hz，最低不建议低于 0.5Hz |
 | `PI_CONTROL` | 20Hz ~ 50Hz |
 | `MCU_IMU_ODOM` | 20Hz |
 | `MCU_STATUS` | 5Hz ~ 10Hz |
