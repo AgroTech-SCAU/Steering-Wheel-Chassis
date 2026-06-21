@@ -21,7 +21,7 @@ typedef enum {
 
 typedef struct {
     bool (*write)(const char* data, uint32_t len);
-    uint32_t(*now_ms)(void);
+    uint32_t (*now_ms)(void);
 } PiCommsPortOps;
 
 typedef struct {
@@ -32,13 +32,9 @@ typedef struct {
     float vx;
     float vy;
     float wz;
+    bool brake_request;
     uint32_t stamp_ms;
 } PiCommsChassisControl;
-
-typedef struct {
-    float yaw_rate;
-    uint32_t stamp_ms;
-} PiCommsYawRateControl;
 
 typedef struct {
     FiveDofArmJointArray joints;
@@ -48,7 +44,6 @@ typedef struct {
 
 typedef struct {
     PiCommsChassisControl chassis;
-    PiCommsYawRateControl yaw_rate;
     PiCommsArmJointControl arm_joint;
 } PiCommsControl;
 
@@ -92,22 +87,18 @@ typedef struct {
 
 typedef struct {
     uint32_t stamp_ms;
+    uint8_t reason;
 } PiCommsEstopEvent;
 
 typedef struct {
     uint32_t stamp_ms;
-    const char* state;
-    const char* manual;
-    uint8_t chassis_ready;
-    uint8_t arm_ready;
-    uint8_t odom_ready;
-    uint8_t remote_online;
-    uint8_t pc_online;
-    uint8_t pi_online;
-    uint8_t fault;
+    uint8_t app_state;
+    uint8_t manual_mode;
+    uint8_t ready_flags;
+    uint8_t online_flags;
     uint8_t fault_source;
     uint8_t fault_level;
-    int32_t fault_code;
+    int16_t fault_code;
 } PiCommsStatusSnapshot;
 
 typedef struct {
@@ -115,11 +106,33 @@ typedef struct {
     float angle_x;
     float angle_y;
     float angle_z;
+    float gyro_x;
+    float gyro_y;
     float gyro_z;
     float odom_x;
     float odom_y;
-    float odom_z;
+    float odom_yaw;
 } PiCommsImuOdomSnapshot;
+
+typedef struct {
+    uint8_t sensor_id;
+    uint8_t event_type;
+    uint16_t value;
+    uint32_t stamp_ms;
+} PiCommsStartSensorEvent;
+
+typedef struct {
+    uint32_t rx_frame_count;
+    uint32_t rx_bad_crc_count;
+    uint32_t rx_bad_len_count;
+    uint32_t rx_unknown_msg_count;
+    uint8_t rx_last_msg_id;
+    uint8_t rx_last_seq;
+    uint32_t last_rx_ms;
+    uint32_t tx_frame_count;
+    uint32_t pending_event_count;
+    uint32_t ack_timeout_count;
+} PiCommsStats;
 
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
@@ -130,10 +143,8 @@ bool pi_comms_is_online(void);
 bool pi_comms_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_get_control(PiCommsControl* control);
 bool pi_comms_get_chassis_control(PiCommsChassisControl* control);
-bool pi_comms_get_yaw_rate_control(PiCommsYawRateControl* control);
 bool pi_comms_get_arm_joint_control(PiCommsArmJointControl* control);
 bool pi_comms_chassis_control_is_fresh(uint32_t timeout_ms);
-bool pi_comms_yaw_rate_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_arm_joint_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_take_yaw_action(PiCommsYawAction* action);
 bool pi_comms_take_arm_action(PiCommsArmAction* action);
@@ -142,6 +153,11 @@ bool pi_comms_take_estop(PiCommsEstopEvent* event);
 bool pi_comms_take_mission_event(PiCommsMissionEvent* event);
 bool pi_comms_send_status(const PiCommsStatusSnapshot* status);
 bool pi_comms_send_imu_odom(const PiCommsImuOdomSnapshot* odom);
+bool pi_comms_publish_start_sensor_event(uint8_t sensor_id,
+                                         uint8_t event_type,
+                                         uint16_t value);
+bool pi_comms_send_ack(uint8_t ack_msg_id, uint8_t ack_seq, uint16_t code);
+bool pi_comms_get_stats(PiCommsStats* stats);
 void pi_comms_clear_controls(void);
 
 #endif

@@ -30,7 +30,7 @@ bool uart1_write_blocking(const char* data, uint32_t len) {
         return false;
     }
 
-    return HAL_UART_Transmit(&huart1, (uint8_t*)data, (uint16_t)len, HAL_MAX_DELAY) == HAL_OK;
+    return HAL_UART_Transmit(&huart1, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 bool uart7_write_blocking(const char* data, uint32_t len) {
@@ -38,7 +38,7 @@ bool uart7_write_blocking(const char* data, uint32_t len) {
         return false;
     }
 
-    return HAL_UART_Transmit(&huart7, (uint8_t*)data, (uint16_t)len, HAL_MAX_DELAY) == HAL_OK;
+    return HAL_UART_Transmit(&huart7, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 bool uart10_write_blocking(const char* data, uint32_t len) {
@@ -46,7 +46,7 @@ bool uart10_write_blocking(const char* data, uint32_t len) {
         return false;
     }
 
-    return HAL_UART_Transmit(&huart10, (uint8_t*)data, (uint16_t)len, HAL_MAX_DELAY) == HAL_OK;
+    return HAL_UART_Transmit(&huart10, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 bool uart_receive_it(UART_HandleTypeDef* huart, uint8_t* data, uint16_t len) {

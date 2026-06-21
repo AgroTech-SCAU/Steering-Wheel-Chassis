@@ -30,6 +30,17 @@ typedef struct {
     PcCommsPortOps port_ops;
 } PcCommsConfig;
 
+typedef struct {
+    uint32_t rx_frame_count;
+    uint32_t rx_bad_crc_count;
+    uint32_t rx_bad_len_count;
+    uint32_t rx_unknown_msg_count;
+    uint8_t rx_last_msg_id;
+    uint8_t rx_last_seq;
+    uint32_t last_rx_ms;
+    uint32_t tx_frame_count;
+} PcCommsStats;
+
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
 /**
@@ -75,5 +86,12 @@ bool pc_comms_master_joints_is_fresh(uint32_t timeout_ms);
  * @brief 清除缓存的 PC 主臂关节目标
  */
 void pc_comms_clear_master_joints(void);
+
+/**
+ * @brief 读取 PC 通信统计信息
+ * @param stats 输出统计信息
+ * @return bool `true` 表示读取成功
+ */
+bool pc_comms_get_stats(PcCommsStats* stats);
 
 #endif

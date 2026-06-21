@@ -99,8 +99,10 @@ static void app_runtime_update_inputs(void) {
 
 static void app_runtime_update_mode(void) {
     PiCommsMissionEvent mission_event;
+    PiCommsEstopEvent estop_event;
 
-    if(pi_comms_take_estop(NULL)) {
+    if(pi_comms_take_estop(&estop_event)) {
+        log_warn("APP_RUNTIME estop event requested by Pi: reason=%d", estop_event.reason);
         (void)app_fsm_request_estop();
         return;
     }

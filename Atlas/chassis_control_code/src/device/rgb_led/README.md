@@ -84,7 +84,7 @@ typedef struct {
 
 ```c
 static bool board_rgb_write(const uint8_t* data, uint32_t len) {
-    return HAL_SPI_Transmit(&hspi6, (uint8_t*)data, (uint16_t)len, HAL_MAX_DELAY) == HAL_OK;
+    return HAL_SPI_Transmit(&hspi6, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 static const RgbLedPortOps rgb_ops = {

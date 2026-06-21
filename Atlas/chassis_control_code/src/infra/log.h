@@ -12,7 +12,7 @@
  *
  * @code
  * static bool board_log_write(const char* data, uint32_t len) {
- *     return HAL_UART_Transmit(&huart1, (uint8_t*)data, (uint16_t)len, HAL_MAX_DELAY) == HAL_OK;
+ *     return HAL_UART_Transmit(&huart1, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
  * }
  *
  * static const LogPortOps log_ops = {
@@ -274,29 +274,28 @@ const char* log_status_str(LogStatus status);
     LOG_VOFA_ARG_COUNT_IMPL(__VA_ARGS__, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
 
 #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
-#define LOG_VOFA_VALUE(value) \
-    _Generic((value), \
-        bool: log_vofa_value_bool, \
-        char: log_vofa_value_i64, \
-        signed char: log_vofa_value_i64, \
-        unsigned char: log_vofa_value_u64, \
-        short: log_vofa_value_i64, \
-        unsigned short: log_vofa_value_u64, \
-        int: log_vofa_value_i64, \
-        unsigned int: log_vofa_value_u64, \
-        long: log_vofa_value_i64, \
-        unsigned long: log_vofa_value_u64, \
-        long long: log_vofa_value_i64, \
+#define LOG_VOFA_VALUE(value)                   \
+    _Generic((value),                           \
+        bool: log_vofa_value_bool,              \
+        char: log_vofa_value_i64,               \
+        signed char: log_vofa_value_i64,        \
+        unsigned char: log_vofa_value_u64,      \
+        short: log_vofa_value_i64,              \
+        unsigned short: log_vofa_value_u64,     \
+        int: log_vofa_value_i64,                \
+        unsigned int: log_vofa_value_u64,       \
+        long: log_vofa_value_i64,               \
+        unsigned long: log_vofa_value_u64,      \
+        long long: log_vofa_value_i64,          \
         unsigned long long: log_vofa_value_u64, \
-        float: log_vofa_value_f64, \
-        double: log_vofa_value_f64, \
-        long double: log_vofa_value_f64, \
-        char*: log_vofa_value_cstr, \
-        const char*: log_vofa_value_cstr, \
-        void*: log_vofa_value_ptr, \
-        const void*: log_vofa_value_ptr, \
-        default: log_vofa_value_i64 \
-    )(value)
+        float: log_vofa_value_f64,              \
+        double: log_vofa_value_f64,             \
+        long double: log_vofa_value_f64,        \
+        char*: log_vofa_value_cstr,             \
+        const char*: log_vofa_value_cstr,       \
+        void*: log_vofa_value_ptr,              \
+        const void*: log_vofa_value_ptr,        \
+        default: log_vofa_value_i64)(value)
 #else
 #error "log_vofa(...) requires C11 _Generic support. Please compile with -std=c11 or newer."
 #endif
@@ -326,10 +325,10 @@ const char* log_status_str(LogStatus status);
  * @note 至少传入 1 个参数，最多默认支持 16 个参数
  * @note 变量名通过 #__VA_ARGS__ 获取，因此请传入简单变量名或简单表达式
  */
-#define log_vofa(...) \
-    log_vofa_write(#__VA_ARGS__, \
+#define log_vofa(...)                                         \
+    log_vofa_write(#__VA_ARGS__,                              \
                    (uint32_t)LOG_VOFA_ARG_COUNT(__VA_ARGS__), \
-                   (const LogVofaValue[]){LOG_VOFA_VALUES(__VA_ARGS__)})
+                   (const LogVofaValue[]){ LOG_VOFA_VALUES(__VA_ARGS__) })
 
 #endif
 

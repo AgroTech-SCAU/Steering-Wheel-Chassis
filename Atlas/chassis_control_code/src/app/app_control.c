@@ -277,6 +277,7 @@ AppControlResult app_control_apply_auto_pi(void) {
     result = app_control_merge_result(result, app_control_apply_pi_yaw());
     result = app_control_merge_result(result, app_control_apply_pi_chassis());
     result = app_control_merge_result(result, app_control_apply_pi_arm());
+
     return result;
 }
 
@@ -648,7 +649,6 @@ static AppControlResult app_control_apply_pc_arm(void) {
 
 static AppControlResult app_control_apply_pi_chassis(void) {
     PiCommsChassisControl cmd;
-    PiCommsYawRateControl yaw_cmd;
     float vx;
     float vy;
     float wz;
@@ -658,16 +658,13 @@ static AppControlResult app_control_apply_pi_chassis(void) {
         return app_control_brake_chassis();
     }
 
+    if(cmd.brake_request) {
+        return app_control_brake_chassis();
+    }
+
     vx = app_control_limit_abs(cmd.vx, APP_CONTROL_PI_MAX_VX_MPS);
     vy = app_control_limit_abs(cmd.vy, APP_CONTROL_PI_MAX_VY_MPS);
     wz = app_control_limit_abs(cmd.wz, APP_CONTROL_PI_MAX_WZ_RAD_S);
-
-    if(pi_comms_yaw_rate_control_is_fresh(APP_CONTROL_PI_YAW_TIMEOUT_MS) &&
-       pi_comms_get_yaw_rate_control(&yaw_cmd) &&
-       isfinite(yaw_cmd.yaw_rate)) {
-        chassis_yaw_hold_disable();
-        wz = app_control_limit_abs(yaw_cmd.yaw_rate, APP_CONTROL_PI_MAX_WZ_RAD_S);
-    }
 
     if(chassis_yaw_hold_is_active()) {
         Vector3 angle = { 0 };
