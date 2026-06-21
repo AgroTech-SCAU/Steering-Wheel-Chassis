@@ -9,6 +9,7 @@
 #include "app_fsm.h"
 #include "arm.h"
 #include "chassis.h"
+#include "chassis_yaw_hold.h"
 #include "delay.h"
 #include "log.h"
 #include "odom.h"
@@ -25,12 +26,17 @@
 #define APP_RUNTIME_ODOM_NOT_READY_FAULT_CODE 1
 #define APP_RUNTIME_PI_TIMEOUT_FAULT_CODE 1
 #define APP_RUNTIME_CONTROL_EXEC_FAULT_CODE 2
+#define APP_RUNTIME_REMOTE_CLEAR_FAULT_HOLD_MS 800u
+#define APP_RUNTIME_RESULT_LOG_PERIOD_MS 1000u
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
 static RemoteState s_remote_state = { 0 };
 static PcCommand s_pc_command = { 0 };
 static bool s_pc_command_valid = false;
+static ms_t s_remote_clear_fault_timer = 0u;
+static ms_t s_command_invalid_log_timer = 0u;
+static ms_t s_unsupported_log_timer = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -40,6 +46,8 @@ static bool app_runtime_apply_safety(void);
 static void app_runtime_apply_control(void);
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code);
 static bool app_runtime_pi_arm_cmd_pending(void);
+static bool app_runtime_remote_clear_fault_requested(void);
+static void app_runtime_clear_recoverable_fault(void);
 static void app_runtime_handle_control_result(AppControlResult result);
 static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event);
 
@@ -49,6 +57,9 @@ void app_runtime_init(void) {
     memset(&s_remote_state, 0, sizeof(s_remote_state));
     memset(&s_pc_command, 0, sizeof(s_pc_command));
     s_pc_command_valid = false;
+    s_remote_clear_fault_timer = 0u;
+    s_command_invalid_log_timer = 0u;
+    s_unsupported_log_timer = 0u;
 
     app_control_init();
     app_fsm_init();
@@ -102,6 +113,11 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
+    if(app_runtime_remote_clear_fault_requested()) {
+        app_runtime_clear_recoverable_fault();
+        return;
+    }
+
     if(s_pc_command_valid) {
         switch(s_pc_command.id) {
             case PC_COMMAND_ARM_STOP:
@@ -134,7 +150,7 @@ static void app_runtime_update_mode(void) {
 
             case PC_COMMAND_CLEAR_FAULT:
                 if(app_fsm_get_state() == APP_FSM_STATE_FAULT) {
-                    (void)app_fsm_clear_fault();
+                    app_runtime_clear_recoverable_fault();
                 }
                 pc_link_clear_command();
                 s_pc_command_valid = false;
@@ -323,6 +339,48 @@ static bool app_runtime_pi_arm_cmd_pending(void) {
     return cmd.type != PI_ARM_COMMAND_NONE;
 }
 
+static bool app_runtime_remote_clear_fault_requested(void) {
+    const AppFault* fault = app_fsm_get_fault();
+    const uint16_t swa = s_remote_state.rc_data.channel[REMOTE_CH_SWA];
+    const uint16_t swd = s_remote_state.rc_data.channel[REMOTE_CH_SWD];
+    const uint16_t vra = s_remote_state.rc_data.channel[REMOTE_CH_VRA];
+    const uint16_t vrb = s_remote_state.rc_data.channel[REMOTE_CH_VRB];
+    const bool safe_combo = swa == REMOTE_SW_CENTER && swd == REMOTE_SW_CENTER &&
+                            vra <= REMOTE_VR_LOW_THRESHOLD && vrb <= REMOTE_VR_LOW_THRESHOLD;
+
+    if(app_fsm_get_state() != APP_FSM_STATE_FAULT || !s_remote_state.online || fault == NULL ||
+       fault->level == APP_FAULT_LEVEL_FATAL || !safe_combo) {
+        s_remote_clear_fault_timer = 0u;
+        return false;
+    }
+
+    if(s_remote_clear_fault_timer == 0u) {
+        s_remote_clear_fault_timer = delay_now_ms();
+        return false;
+    }
+
+    if((delay_now_ms() - s_remote_clear_fault_timer) < APP_RUNTIME_REMOTE_CLEAR_FAULT_HOLD_MS) {
+        return false;
+    }
+
+    s_remote_clear_fault_timer = 0u;
+    return true;
+}
+
+static void app_runtime_clear_recoverable_fault(void) {
+    if(!app_fsm_clear_fault()) {
+        return;
+    }
+
+    pc_link_clear_command();
+    pc_link_clear_master_joints();
+    pi_link_clear_commands();
+    chassis_yaw_hold_reset();
+    memset(&s_pc_command, 0, sizeof(s_pc_command));
+    s_pc_command_valid = false;
+    s_remote_clear_fault_timer = 0u;
+}
+
 static void app_runtime_handle_control_result(AppControlResult result) {
     switch(result) {
         case APP_CONTROL_RESULT_CHASSIS_ERROR:
@@ -363,16 +421,20 @@ static void app_runtime_handle_control_result(AppControlResult result) {
             }
             break;
 
+        case APP_CONTROL_RESULT_REJECTED:
+            break;
+
         case APP_CONTROL_RESULT_COMMAND_INVALID:
-            if(app_fsm_get_state() == APP_FSM_STATE_AUTO_PI) {
-                app_runtime_raise_fault_once(APP_FAULT_SOURCE_COMMAND,
-                                             APP_FAULT_LEVEL_RECOVERABLE,
-                                             APP_RUNTIME_CONTROL_EXEC_FAULT_CODE);
+            if(delay_nb_ms(&s_command_invalid_log_timer, APP_RUNTIME_RESULT_LOG_PERIOD_MS)) {
+                log_warn("APP_RUNTIME control command invalid: state=%s",
+                         app_fsm_state_str(app_fsm_get_state()));
             }
             break;
 
         case APP_CONTROL_RESULT_UNSUPPORTED:
-            log_warn("APP_RUNTIME auto_pi received unsupported command");
+            if(delay_nb_ms(&s_unsupported_log_timer, APP_RUNTIME_RESULT_LOG_PERIOD_MS)) {
+                log_warn("APP_RUNTIME auto_pi received unsupported command");
+            }
             break;
 
         case APP_CONTROL_RESULT_OK:

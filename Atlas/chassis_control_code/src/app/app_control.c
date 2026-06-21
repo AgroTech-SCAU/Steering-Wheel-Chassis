@@ -44,6 +44,8 @@
 #define APP_CONTROL_SKIP_LOG_PERIOD_MS 1000u
 #define APP_CONTROL_ARM_STOP_RETRY_MS 1000u
 #define APP_CONTROL_ARM_STOP_LOG_MS 1000u
+#define APP_CONTROL_ARM_REJECTED_LOG_MS 1000u
+#define APP_CONTROL_COMMAND_LOG_MS 1000u
 
 // ! ========================= 类 型 声 明 ========================= ! //
 
@@ -70,6 +72,8 @@ static bool s_arm_stop_done = false;
 static bool s_arm_active = false;
 static ms_t s_stop_arm_retry_last_ms = 0u;
 static ms_t s_stop_arm_fail_log_last_ms = 0u;
+static ms_t s_arm_rejected_log_timer = 0u;
+static ms_t s_command_invalid_log_timer = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -80,6 +84,13 @@ static ms_t s_stop_arm_fail_log_last_ms = 0u;
  * @return AppControlResult 优先级更高的结果
  */
 static AppControlResult app_control_merge_result(AppControlResult lhs, AppControlResult rhs);
+
+/**
+ * @brief 获取控制结果的优先级
+ * @param result 待评估的结果
+ * @return uint8_t 优先级数值, 数值越大优先级越高
+ */
+static uint8_t app_control_result_priority(AppControlResult result);
 
 /**
  * @brief 将底盘返回码转换为控制层结果, 并在失败时记录告警
@@ -224,6 +235,8 @@ void app_control_init(void) {
     s_arm_active = false;
     s_stop_arm_retry_last_ms = 0u;
     s_stop_arm_fail_log_last_ms = 0u;
+    s_arm_rejected_log_timer = 0u;
+    s_command_invalid_log_timer = 0u;
 }
 
 AppControlResult app_control_apply_manual_chassis_pc_arm(void) {
@@ -337,23 +350,34 @@ AppControlResult app_control_stop_all(void) {
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static AppControlResult app_control_merge_result(AppControlResult lhs, AppControlResult rhs) {
-    if(lhs == APP_CONTROL_RESULT_CHASSIS_ERROR || lhs == APP_CONTROL_RESULT_ARM_ERROR ||
-       lhs == APP_CONTROL_RESULT_ODOM_ERROR || lhs == APP_CONTROL_RESULT_COMMAND_INVALID ||
-       lhs == APP_CONTROL_RESULT_UNSUPPORTED) {
+    if(app_control_result_priority(lhs) >= app_control_result_priority(rhs)) {
         return lhs;
     }
 
-    if(rhs == APP_CONTROL_RESULT_CHASSIS_ERROR || rhs == APP_CONTROL_RESULT_ARM_ERROR ||
-       rhs == APP_CONTROL_RESULT_ODOM_ERROR || rhs == APP_CONTROL_RESULT_COMMAND_INVALID ||
-       rhs == APP_CONTROL_RESULT_UNSUPPORTED) {
-        return rhs;
-    }
+    return rhs;
+}
 
-    if(lhs == APP_CONTROL_RESULT_OK) {
-        return rhs;
-    }
+static uint8_t app_control_result_priority(AppControlResult result) {
+    switch(result) {
+        case APP_CONTROL_RESULT_CHASSIS_ERROR:
+        case APP_CONTROL_RESULT_ARM_ERROR:
+        case APP_CONTROL_RESULT_ODOM_ERROR:
+            return 4u;
 
-    return lhs;
+        case APP_CONTROL_RESULT_COMMAND_INVALID:
+        case APP_CONTROL_RESULT_UNSUPPORTED:
+            return 3u;
+
+        case APP_CONTROL_RESULT_REJECTED:
+            return 2u;
+
+        case APP_CONTROL_RESULT_SKIPPED:
+            return 1u;
+
+        case APP_CONTROL_RESULT_OK:
+        default:
+            return 0u;
+    }
 }
 
 static AppControlResult app_control_result_from_chassis(ChassisErrorCode status, const char* action) {
@@ -368,6 +392,14 @@ static AppControlResult app_control_result_from_chassis(ChassisErrorCode status,
 static AppControlResult app_control_result_from_arm(ArmStatus status, const char* action) {
     if(status == ARM_OK) {
         return APP_CONTROL_RESULT_OK;
+    }
+
+    if(status == ARM_NO_SOLUTION || status == ARM_OUT_OF_LIMIT || status == ARM_INVALID_PARAM ||
+       status == ARM_KINEMATICS_FAILED) {
+        if(delay_nb_ms(&s_arm_rejected_log_timer, APP_CONTROL_ARM_REJECTED_LOG_MS)) {
+            log_warn("APP_CONTROL %s rejected: %s", action, arm.status_str(status));
+        }
+        return APP_CONTROL_RESULT_REJECTED;
     }
 
     log_warn("APP_CONTROL %s failed: %s", action, arm.status_str(status));
@@ -628,8 +660,10 @@ static AppControlResult app_control_apply_pc_arm(void) {
     }
 
     if(!app_control_arm_joints_valid(&joints)) {
-        log_warn("APP_CONTROL pc arm rejected: invalid master joints");
-        return APP_CONTROL_RESULT_COMMAND_INVALID;
+        if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
+            log_warn("APP_CONTROL pc arm rejected: invalid master joints");
+        }
+        return APP_CONTROL_RESULT_REJECTED;
     }
 
     return app_control_result_from_arm(arm.move_joints(&joints, app_control_get_arm_default_speed()),
@@ -700,8 +734,10 @@ static AppControlResult app_control_apply_pi_yaw(void) {
 
         case PI_YAW_MODE_TARGET_SET:
             if(!isfinite(cmd.target_yaw)) {
-                log_warn("APP_CONTROL pi yaw target rejected: invalid target");
-                return APP_CONTROL_RESULT_COMMAND_INVALID;
+                if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
+                    log_warn("APP_CONTROL pi yaw target rejected: invalid target");
+                }
+                return APP_CONTROL_RESULT_REJECTED;
             }
             chassis_yaw_hold_set_target(cmd.target_yaw);
             return APP_CONTROL_RESULT_OK;
@@ -758,12 +794,6 @@ static AppControlResult app_control_apply_pi_arm(void) {
     }
 
     switch(cmd.type) {
-        case PI_ARM_COMMAND_STOP:
-            return app_control_result_from_arm(arm.stop(), "pi arm stop");
-
-        case PI_ARM_COMMAND_ENABLE:
-            return app_control_result_from_arm(arm.enable(), "pi arm enable");
-
         case PI_ARM_COMMAND_JOINT_TARGET:
             if(app_control_arm_joints_valid(&cmd.joints)) {
                 float speed_rad_s = cmd.speed_rad_s;
@@ -776,8 +806,14 @@ static AppControlResult app_control_apply_pi_arm(void) {
                                                    "pi arm move_joints");
             }
 
-            log_warn("APP_CONTROL pi arm rejected: invalid joint target");
-            return APP_CONTROL_RESULT_COMMAND_INVALID;
+            if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
+                log_warn("APP_CONTROL pi arm rejected: invalid joint target");
+            }
+            return APP_CONTROL_RESULT_REJECTED;
+
+        case PI_ARM_COMMAND_STOP:
+        case PI_ARM_COMMAND_ENABLE:
+            return APP_CONTROL_RESULT_SKIPPED;
 
         case PI_ARM_COMMAND_SEQUENCE_ID:
             log_warn("APP_CONTROL pi arm seq unsupported: id=%u", cmd.sequence_id);

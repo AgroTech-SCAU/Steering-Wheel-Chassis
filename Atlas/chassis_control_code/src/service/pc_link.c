@@ -122,6 +122,13 @@ void pc_link_clear_command(void) {
     s_pc_command.stamp_ms = 0u;
 }
 
+void pc_link_clear_master_joints(void) {
+    memset(&s_pc_master_joints, 0, sizeof(s_pc_master_joints));
+    s_pc_master_joints.dof = FIVE_DOF_ARM_DOF;
+    s_pc_master_joints_stamp_ms = 0u;
+    s_pc_master_joints_valid = false;
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static void pc_link_start_receive(void) {

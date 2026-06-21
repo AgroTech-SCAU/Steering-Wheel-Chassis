@@ -81,4 +81,9 @@ bool pc_link_master_joints_is_fresh(uint32_t timeout_ms);
  */
 void pc_link_clear_command(void);
 
+/**
+ * @brief 清除缓存的 PC 主臂关节目标
+ */
+void pc_link_clear_master_joints(void);
+
 #endif

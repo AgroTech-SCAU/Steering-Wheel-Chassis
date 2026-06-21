@@ -131,7 +131,7 @@ bool app_fsm_request_estop(void);
 
 /**
  * @brief 清除当前锁存故障并请求退出 Fault
- * @details 仅当当前状态为 Fault 时才应调用, EStop 不允许通过该接口恢复
+ * @details 仅当当前状态为 Fault 且故障级别为 recoverable 时才应调用, EStop 不允许通过该接口恢复
  * @return bool `true` 表示清故障事件投递成功
  */
 bool app_fsm_clear_fault(void);

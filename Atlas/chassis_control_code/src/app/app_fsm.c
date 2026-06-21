@@ -106,6 +106,11 @@ bool app_fsm_request_estop(void) {
 }
 
 bool app_fsm_clear_fault(void) {
+    if(s_app_fsm.current_state != APP_FSM_STATE_FAULT || !s_app_fsm.fault_latched ||
+       s_app_fsm.fault_info.level != APP_FAULT_LEVEL_RECOVERABLE) {
+        return false;
+    }
+
     return app_fsm_post(APP_FSM_EVENT_CLEAR_FAULT);
 }
 
