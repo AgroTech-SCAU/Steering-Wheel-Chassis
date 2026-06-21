@@ -14,8 +14,8 @@
 #include "delay.h"
 #include "log.h"
 #include "odom.h"
-#include "pc_link.h"
-#include "pi_link.h"
+#include "pc_comms.h"
+#include "pi_comms.h"
 #include "remote.h"
 
 #include <stdbool.h>
@@ -121,8 +121,11 @@ static inline void entry_init(void) {
     {
         remote_init();
 
-        pc_link_init();
-        pi_link_init();
+        if(assemble_pc_comms() != SYSTEM_STATUS_OK)
+            return;
+
+        if(assemble_pi_comms() != SYSTEM_STATUS_OK)
+            return;
 
         app_runtime_init();
         app_status_init();
@@ -148,7 +151,7 @@ static inline void entry_init(void) {
  * 500Hz base order:
  * 1. chassis.process()
  * 2. 250Hz slot: odom.process()
- * 3. 100Hz slot: remote_process() -> pc_link_process() -> pi_link_process()
+ * 3. 100Hz slot: remote_process() -> pc_comms_process() -> pi_comms_process()
  * 4. 50Hz slot: arm.refresh_current_state()
  * 5. app_runtime_process()
  *
@@ -171,8 +174,8 @@ static inline void entry_loop(void) {
 
         if(entry_tick_100hz()) {
             remote_process();
-            pc_link_process();
-            pi_link_process();
+            pc_comms_process();
+            pi_comms_process();
         }
 
         if(entry_tick_50hz()) {

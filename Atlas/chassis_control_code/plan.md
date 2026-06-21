@@ -45,7 +45,7 @@ FS-iA10B 主要负责：
 ```text
 entry
   ↓
-remote / pc_link / pi_link / chassis / odom / arm
+remote / pc_comms / pi_comms / chassis / odom / arm
   ↓
 app_runtime
   ↓
@@ -66,13 +66,13 @@ entry.h
 remote
   FS-iA10B 遥控输入解析
 
-pc_link
+pc_comms
   USART1 PC 通信
   接收 PC 调试命令
   接收 PC 主臂关节角
   保留 USART1 log 发送能力
 
-pi_link
+pi_comms
   USART10 树莓派通信
   发送 IMU / odom / MCU_STATUS
   接收底盘 / yaw / 机械臂 / 急停 / 任务结果命令
@@ -125,8 +125,8 @@ arm
 
 100Hz:
   remote_process()
-  pc_link_process()
-  pi_link_process()
+  pc_comms_process()
+  pi_comms_process()
 
 50Hz:
   arm.refresh_current_state()
@@ -322,8 +322,8 @@ MCU_STATUS:stamp_ms,state,manual_mode,chassis_ready,arm_ready,odom_ready,remote_
 - `Navigate / Pollinate / ReturnHome` 已退出 MCU 主链路
 - `entry.h` 已整理为清晰调度表
 - `remote` 已变成纯遥控输入解析服务
-- `pc_link` 已支持 PC 命令和主臂关节角输入
-- `pi_link` 已支持树莓派底盘 / yaw / 机械臂命令
+- `pc_comms` 已支持 PC 命令和主臂关节角输入
+- `pi_comms` 已支持树莓派底盘 / yaw / 机械臂命令
 - `Pi ESTOP` 已接入
 - `Pi MISSION:DONE / FAIL` 已接入
 - `MCU_STATUS` 已包含状态机和故障信息
@@ -647,9 +647,9 @@ TX DMA
 
 ## P3 架构纯度优化
 
-### TODO 13：降低 `pi_link` 对 app 层的依赖
+### TODO 13：降低 `pi_comms` 对 app 层的依赖
 
-当前 `pi_link` 可能直接依赖：
+当前 `pi_comms` 可能直接依赖：
 
 ```text
 app_runtime
@@ -657,7 +657,7 @@ chassis
 arm
 odom
 remote
-pc_link
+pc_comms
 ```
 
 用于组装 MCU 状态帧
@@ -666,7 +666,7 @@ pc_link
 
 ```text
 app_runtime / app_status 组装 McuStatusFrame
-pi_link 只负责发送 frame
+pi_comms 只负责发送 frame
 ```
 
 建议后续改为：
@@ -688,13 +688,13 @@ typedef struct {
     int32_t fault_code;
 } McuStatusFrame;
 
-void pi_link_send_mcu_status(const McuStatusFrame* frame);
+void pi_comms_send_mcu_status(const McuStatusFrame* frame);
 ```
 
 目标：
 
 - service 层不反向依赖 app 层
-- pi_link 更像纯通信模块
+- pi_comms 更像纯通信模块
 - 状态组装逻辑更清楚
 
 ------
@@ -815,7 +815,7 @@ Root
 ```text
 1. 升级二进制协议 + CRC
 2. USART TX/RX DMA 化
-3. 降低 pi_link 对 app 层依赖
+3. 降低 pi_comms 对 app 层依赖
 4. 根据状态复杂度决定是否真正层级化 app_fsm
 ```
 

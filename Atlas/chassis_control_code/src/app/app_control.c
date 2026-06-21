@@ -11,7 +11,8 @@
 #include "delay.h"
 #include "log.h"
 #include "odom.h"
-#include "pi_link.h"
+#include "pc_comms.h"
+#include "pi_comms.h"
 #include "remote.h"
 
 #include <math.h>
@@ -277,31 +278,6 @@ AppControlResult app_control_apply_auto_pi(void) {
     result = app_control_merge_result(result, app_control_apply_pi_chassis());
     result = app_control_merge_result(result, app_control_apply_pi_arm());
     return result;
-}
-
-AppControlResult app_control_apply_pc_command(PcCommandId command_id) {
-    switch(command_id) {
-        case PC_COMMAND_STOP:
-        case PC_COMMAND_BRAKE:
-            return app_control_stop_all();
-
-        case PC_COMMAND_ARM_ENABLE:
-            if(!arm.is_ready()) {
-                log_warn("APP_CONTROL pc arm_enable skipped: arm not ready");
-                return APP_CONTROL_RESULT_SKIPPED;
-            }
-            return app_control_result_from_arm(arm.enable(), "pc arm_enable");
-
-        case PC_COMMAND_ARM_STOP:
-            return app_control_stop_arm();
-
-        case PC_COMMAND_NONE:
-        case PC_COMMAND_START:
-        case PC_COMMAND_CLEAR_FAULT:
-        case PC_COMMAND_ESTOP:
-        default:
-            return APP_CONTROL_RESULT_SKIPPED;
-    }
 }
 
 AppControlResult app_control_brake_chassis(void) {
@@ -651,11 +627,11 @@ static AppControlResult app_control_apply_pc_arm(void) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    if(!pc_link_master_joints_is_fresh(APP_CONTROL_PC_JOINT_TIMEOUT_MS)) {
+    if(!pc_comms_master_joints_is_fresh(APP_CONTROL_PC_JOINT_TIMEOUT_MS)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    if(!pc_link_get_master_joints(&joints)) {
+    if(!pc_comms_get_master_joints(&joints)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
@@ -671,13 +647,14 @@ static AppControlResult app_control_apply_pc_arm(void) {
 }
 
 static AppControlResult app_control_apply_pi_chassis(void) {
-    PiChassisCommand cmd;
-    PiYawCommand yaw_cmd;
+    PiCommsChassisControl cmd;
+    PiCommsYawRateControl yaw_cmd;
     float vx;
     float vy;
     float wz;
 
-    if(!pi_link_chassis_cmd_is_fresh(APP_CONTROL_PI_CHASSIS_TIMEOUT_MS) || !pi_link_get_chassis_cmd(&cmd)) {
+    if(!pi_comms_chassis_control_is_fresh(APP_CONTROL_PI_CHASSIS_TIMEOUT_MS) ||
+       !pi_comms_get_chassis_control(&cmd)) {
         return app_control_brake_chassis();
     }
 
@@ -685,9 +662,8 @@ static AppControlResult app_control_apply_pi_chassis(void) {
     vy = app_control_limit_abs(cmd.vy, APP_CONTROL_PI_MAX_VY_MPS);
     wz = app_control_limit_abs(cmd.wz, APP_CONTROL_PI_MAX_WZ_RAD_S);
 
-    if(pi_link_yaw_cmd_is_fresh(APP_CONTROL_PI_YAW_TIMEOUT_MS) &&
-       pi_link_get_yaw_cmd(&yaw_cmd) &&
-       yaw_cmd.mode == PI_YAW_MODE_RATE_SET &&
+    if(pi_comms_yaw_rate_control_is_fresh(APP_CONTROL_PI_YAW_TIMEOUT_MS) &&
+       pi_comms_get_yaw_rate_control(&yaw_cmd) &&
        isfinite(yaw_cmd.yaw_rate)) {
         chassis_yaw_hold_disable();
         wz = app_control_limit_abs(yaw_cmd.yaw_rate, APP_CONTROL_PI_MAX_WZ_RAD_S);
@@ -709,14 +685,14 @@ static AppControlResult app_control_apply_pi_chassis(void) {
 }
 
 static AppControlResult app_control_apply_pi_yaw(void) {
-    PiYawCommand cmd;
+    PiCommsYawAction cmd;
 
-    if(!pi_link_take_yaw_cmd(&cmd)) {
+    if(!pi_comms_take_yaw_action(&cmd)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    switch(cmd.mode) {
-        case PI_YAW_MODE_HOLD_ENABLE: {
+    switch(cmd.type) {
+        case PI_COMMS_YAW_ACTION_HOLD_ENABLE: {
             Vector3 angle = { 0 };
 
             if(odom.get_angle(&angle) != ODOM_OK) {
@@ -728,11 +704,11 @@ static AppControlResult app_control_apply_pi_yaw(void) {
             return APP_CONTROL_RESULT_OK;
         }
 
-        case PI_YAW_MODE_HOLD_DISABLE:
+        case PI_COMMS_YAW_ACTION_HOLD_DISABLE:
             chassis_yaw_hold_disable();
             return APP_CONTROL_RESULT_OK;
 
-        case PI_YAW_MODE_TARGET_SET:
+        case PI_COMMS_YAW_ACTION_TARGET_SET:
             if(!isfinite(cmd.target_yaw)) {
                 if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
                     log_warn("APP_CONTROL pi yaw target rejected: invalid target");
@@ -742,34 +718,31 @@ static AppControlResult app_control_apply_pi_yaw(void) {
             chassis_yaw_hold_set_target(cmd.target_yaw);
             return APP_CONTROL_RESULT_OK;
 
-        case PI_YAW_MODE_RATE_SET:
-            chassis_yaw_hold_disable();
-            return APP_CONTROL_RESULT_OK;
-
-        case PI_YAW_MODE_NONE:
+        case PI_COMMS_YAW_ACTION_NONE:
         default:
             return APP_CONTROL_RESULT_SKIPPED;
     }
 }
 
 static AppControlResult app_control_apply_pi_arm(void) {
-    PiArmCommand cmd;
+    PiCommsArmAction action;
+    PiCommsArmJointControl cmd;
 
-    if(pi_link_take_arm_cmd(&cmd)) {
+    if(pi_comms_take_arm_action(&action)) {
         if(!arm.is_ready()) {
             log_warn("APP_CONTROL pi arm skipped: arm not ready");
             return APP_CONTROL_RESULT_SKIPPED;
         }
 
-        switch(cmd.type) {
-            case PI_ARM_COMMAND_STOP:
+        switch(action.type) {
+            case PI_COMMS_ARM_ACTION_STOP:
                 return app_control_stop_arm();
 
-            case PI_ARM_COMMAND_ENABLE:
+            case PI_COMMS_ARM_ACTION_ENABLE:
                 return app_control_result_from_arm(arm.enable(), "pi arm enable");
 
-            case PI_ARM_COMMAND_SEQUENCE_ID:
-                log_warn("APP_CONTROL pi arm seq unsupported: id=%u", cmd.sequence_id);
+            case PI_COMMS_ARM_ACTION_SEQUENCE_ID:
+                log_warn("APP_CONTROL pi arm seq unsupported: id=%u", action.sequence_id);
                 (void)app_control_stop_arm();
                 /**
                  * TODO:
@@ -777,14 +750,13 @@ static AppControlResult app_control_apply_pi_arm(void) {
                  */
                 return APP_CONTROL_RESULT_UNSUPPORTED;
 
-            case PI_ARM_COMMAND_NONE:
-            case PI_ARM_COMMAND_JOINT_TARGET:
+            case PI_COMMS_ARM_ACTION_NONE:
             default:
                 break;
         }
     }
 
-    if(!pi_link_arm_cmd_is_fresh(APP_CONTROL_PI_ARM_TIMEOUT_MS) || !pi_link_get_arm_cmd(&cmd)) {
+    if(!pi_comms_arm_joint_control_is_fresh(APP_CONTROL_PI_ARM_TIMEOUT_MS) || !pi_comms_get_arm_joint_control(&cmd)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
@@ -793,41 +765,20 @@ static AppControlResult app_control_apply_pi_arm(void) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    switch(cmd.type) {
-        case PI_ARM_COMMAND_JOINT_TARGET:
-            if(app_control_arm_joints_valid(&cmd.joints)) {
-                float speed_rad_s = cmd.speed_rad_s;
+    if(app_control_arm_joints_valid(&cmd.joints)) {
+        float speed_rad_s = cmd.speed_rad_s;
 
-                if(!app_control_arm_speed_valid(speed_rad_s)) {
-                    speed_rad_s = app_control_get_arm_default_speed();
-                }
+        if(!app_control_arm_speed_valid(speed_rad_s)) {
+            speed_rad_s = app_control_get_arm_default_speed();
+        }
 
-                return app_control_result_from_arm(arm.move_joints(&cmd.joints, speed_rad_s),
-                                                   "pi arm move_joints");
-            }
-
-            if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
-                log_warn("APP_CONTROL pi arm rejected: invalid joint target");
-            }
-            return APP_CONTROL_RESULT_REJECTED;
-
-        case PI_ARM_COMMAND_STOP:
-        case PI_ARM_COMMAND_ENABLE:
-            return APP_CONTROL_RESULT_SKIPPED;
-
-        case PI_ARM_COMMAND_SEQUENCE_ID:
-            log_warn("APP_CONTROL pi arm seq unsupported: id=%u", cmd.sequence_id);
-            (void)app_control_stop_arm();
-            /**
-             * TODO:
-             * ARM:SEQ 当前仅完成协议解析, 尚未接入本地机械臂动作序列执行器
-             */
-            return APP_CONTROL_RESULT_UNSUPPORTED;
-
-        case PI_ARM_COMMAND_NONE:
-        default:
-            return APP_CONTROL_RESULT_SKIPPED;
+        return app_control_result_from_arm(arm.move_joints(&cmd.joints, speed_rad_s), "pi arm move_joints");
     }
+
+    if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
+        log_warn("APP_CONTROL pi arm rejected: invalid joint target");
+    }
+    return APP_CONTROL_RESULT_REJECTED;
 }
 
 static float app_control_get_arm_default_speed(void) {

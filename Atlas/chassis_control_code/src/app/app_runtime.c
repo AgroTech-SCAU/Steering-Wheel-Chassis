@@ -13,8 +13,8 @@
 #include "delay.h"
 #include "log.h"
 #include "odom.h"
-#include "pc_link.h"
-#include "pi_link.h"
+#include "pc_comms.h"
+#include "pi_comms.h"
 #include "remote.h"
 
 #include <string.h>
@@ -32,8 +32,6 @@
 // ! ========================= 变 量 声 明 ========================= ! //
 
 static RemoteState s_remote_state = { 0 };
-static PcCommand s_pc_command = { 0 };
-static bool s_pc_command_valid = false;
 static ms_t s_remote_clear_fault_timer = 0u;
 static ms_t s_command_invalid_log_timer = 0u;
 static ms_t s_unsupported_log_timer = 0u;
@@ -44,19 +42,19 @@ static void app_runtime_update_inputs(void);
 static void app_runtime_update_mode(void);
 static bool app_runtime_apply_safety(void);
 static void app_runtime_apply_control(void);
+static void app_runtime_leave_manual_chassis_pc_arm(void);
+static void app_runtime_leave_auto_pi(void);
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code);
 static bool app_runtime_pi_arm_cmd_pending(void);
 static bool app_runtime_remote_clear_fault_requested(void);
 static void app_runtime_clear_recoverable_fault(void);
 static void app_runtime_handle_control_result(AppControlResult result);
-static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event);
+static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 void app_runtime_init(void) {
     memset(&s_remote_state, 0, sizeof(s_remote_state));
-    memset(&s_pc_command, 0, sizeof(s_pc_command));
-    s_pc_command_valid = false;
     s_remote_clear_fault_timer = 0u;
     s_command_invalid_log_timer = 0u;
     s_unsupported_log_timer = 0u;
@@ -97,18 +95,17 @@ bool app_runtime_has_fault(void) {
 
 static void app_runtime_update_inputs(void) {
     (void)remote_get_state(&s_remote_state);
-    s_pc_command_valid = pc_link_get_command(&s_pc_command);
 }
 
 static void app_runtime_update_mode(void) {
-    PiMissionEvent mission_event;
+    PiCommsMissionEvent mission_event;
 
-    if(pi_link_take_estop_requested()) {
+    if(pi_comms_take_estop(NULL)) {
         (void)app_fsm_request_estop();
         return;
     }
 
-    if(pi_link_take_mission_event(&mission_event)) {
+    if(pi_comms_take_mission_event(&mission_event)) {
         app_runtime_handle_pi_mission_event(&mission_event);
         return;
     }
@@ -118,84 +115,40 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
-    if(s_pc_command_valid) {
-        switch(s_pc_command.id) {
-            case PC_COMMAND_ARM_STOP:
-                (void)app_control_apply_pc_command(s_pc_command.id);
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                break;
-
-            case PC_COMMAND_ARM_ENABLE:
-                if(app_fsm_get_state() != APP_FSM_STATE_FAULT &&
-                   app_fsm_get_state() != APP_FSM_STATE_ESTOP &&
-                   app_fsm_get_state() != APP_FSM_STATE_AUTO_PI) {
-                    (void)app_control_apply_pc_command(s_pc_command.id);
-                }
-                else {
-                    log_warn("APP_RUNTIME pc arm_enable rejected: state=%s",
-                             app_fsm_state_str(app_fsm_get_state()));
-                }
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                break;
-
-            case PC_COMMAND_STOP:
-            case PC_COMMAND_BRAKE:
-                (void)app_control_apply_pc_command(s_pc_command.id);
-                (void)app_fsm_post(APP_FSM_EVENT_STOP);
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                return;
-
-            case PC_COMMAND_CLEAR_FAULT:
-                if(app_fsm_get_state() == APP_FSM_STATE_FAULT) {
-                    app_runtime_clear_recoverable_fault();
-                }
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                return;
-
-            case PC_COMMAND_ESTOP:
-                (void)app_fsm_request_estop();
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                return;
-
-            case PC_COMMAND_START:
-                log_warn("APP_RUNTIME pc start ignored: use mode switch instead");
-                pc_link_clear_command();
-                s_pc_command_valid = false;
-                break;
-
-            case PC_COMMAND_NONE:
-            default:
-                break;
-        }
-    }
-
     if(app_fsm_get_state() == APP_FSM_STATE_FAULT || app_fsm_get_state() == APP_FSM_STATE_ESTOP) {
         return;
     }
 
     if(remote_is_manual_requested()) {
-        if(remote_get_manual_source() == REMOTE_MANUAL_SOURCE_ARM) {
-            app_fsm_set_manual_mode(APP_MANUAL_MODE_ARM_FS);
+        const AppManualMode next_manual_mode = remote_get_manual_source() == REMOTE_MANUAL_SOURCE_ARM
+                                                   ? APP_MANUAL_MODE_ARM_FS
+                                                   : APP_MANUAL_MODE_CHASSIS_PC_ARM;
+
+        if(app_fsm_get_state() == APP_FSM_STATE_AUTO_PI) {
+            app_runtime_leave_auto_pi();
         }
-        else {
-            app_fsm_set_manual_mode(APP_MANUAL_MODE_CHASSIS_PC_ARM);
+        if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM &&
+           next_manual_mode != APP_MANUAL_MODE_CHASSIS_PC_ARM) {
+            app_runtime_leave_manual_chassis_pc_arm();
         }
 
+        app_fsm_set_manual_mode(next_manual_mode);
         (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_MANUAL);
         return;
     }
 
     if(remote_is_auto_requested()) {
+        if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
+            app_runtime_leave_manual_chassis_pc_arm();
+        }
         (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI);
         return;
     }
 
     if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && !s_remote_state.manual_request) {
+        if(app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
+            app_runtime_leave_manual_chassis_pc_arm();
+        }
         (void)app_fsm_post(APP_FSM_EVENT_STOP);
     }
 }
@@ -258,11 +211,11 @@ static bool app_runtime_apply_safety(void) {
             allow_control = false;
         }
 
-        if(!pi_link_is_online()) {
+        if(!pi_comms_is_online()) {
             app_runtime_raise_fault_once(APP_FAULT_SOURCE_PI_LINK,
                                          APP_FAULT_LEVEL_RECOVERABLE,
                                          APP_RUNTIME_PI_TIMEOUT_FAULT_CODE);
-            pi_link_clear_commands();
+            pi_comms_clear_controls();
             allow_control = false;
         }
 
@@ -310,11 +263,26 @@ static void app_runtime_apply_control(void) {
     app_runtime_handle_control_result(result);
 }
 
+static void app_runtime_leave_manual_chassis_pc_arm(void) {
+    pc_comms_clear_master_joints();
+}
+
+static void app_runtime_leave_auto_pi(void) {
+    pi_comms_clear_controls();
+}
+
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code) {
     AppFault fault;
 
     if(app_fsm_has_fault()) {
         return;
+    }
+
+    if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
+        app_runtime_leave_manual_chassis_pc_arm();
+    }
+    if(app_fsm_get_state() == APP_FSM_STATE_AUTO_PI) {
+        app_runtime_leave_auto_pi();
     }
 
     fault.source = source;
@@ -326,17 +294,17 @@ static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel le
 }
 
 static bool app_runtime_pi_arm_cmd_pending(void) {
-    PiArmCommand cmd;
+    PiCommsArmJointControl cmd;
 
-    if(pi_link_has_pending_arm_action()) {
+    if(pi_comms_has_pending_arm_action()) {
         return true;
     }
 
-    if(!pi_link_arm_cmd_is_fresh(200u) || !pi_link_get_arm_cmd(&cmd)) {
+    if(!pi_comms_arm_joint_control_is_fresh(200u) || !pi_comms_get_arm_joint_control(&cmd)) {
         return false;
     }
 
-    return cmd.type != PI_ARM_COMMAND_NONE;
+    return cmd.stamp_ms != 0u;
 }
 
 static bool app_runtime_remote_clear_fault_requested(void) {
@@ -372,12 +340,9 @@ static void app_runtime_clear_recoverable_fault(void) {
         return;
     }
 
-    pc_link_clear_command();
-    pc_link_clear_master_joints();
-    pi_link_clear_commands();
+    pc_comms_clear_master_joints();
+    pi_comms_clear_controls();
     chassis_yaw_hold_reset();
-    memset(&s_pc_command, 0, sizeof(s_pc_command));
-    s_pc_command_valid = false;
     s_remote_clear_fault_timer = 0u;
 }
 
@@ -444,7 +409,7 @@ static void app_runtime_handle_control_result(AppControlResult result) {
     }
 }
 
-static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event) {
+static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event) {
     if(event == NULL) {
         return;
     }
@@ -453,13 +418,15 @@ static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event) {
         return;
     }
 
-    if(event->type == PI_MISSION_EVENT_DONE) {
+    if(event->type == PI_COMMS_MISSION_EVENT_DONE) {
+        app_runtime_leave_auto_pi();
         (void)app_control_stop_all();
         (void)app_fsm_post(APP_FSM_EVENT_FINISHED);
         return;
     }
 
-    if(event->type == PI_MISSION_EVENT_FAIL) {
+    if(event->type == PI_COMMS_MISSION_EVENT_FAIL) {
+        app_runtime_leave_auto_pi();
         app_runtime_raise_fault_once(APP_FAULT_SOURCE_PI_MISSION,
                                      APP_FAULT_LEVEL_RECOVERABLE,
                                      event->fail_code);

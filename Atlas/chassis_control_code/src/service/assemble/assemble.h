@@ -23,5 +23,7 @@ SystemStatus assemble_odom(void);
 SystemStatus assemble_remote(void);
 SystemStatus assemble_tim6_500hz(void);
 SystemStatus assemble_arm(void);
+SystemStatus assemble_pc_comms(void);
+SystemStatus assemble_pi_comms(void);
 
 #endif

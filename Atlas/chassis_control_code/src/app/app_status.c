@@ -5,13 +5,15 @@
 
 #include "app_status.h"
 
+#include "app_fsm.h"
 #include "app_runtime.h"
 #include "arm.h"
 #include "chassis.h"
 #include "delay.h"
 #include "log.h"
-#include "pc_link.h"
-#include "pi_link.h"
+#include "odom.h"
+#include "pc_comms.h"
+#include "pi_comms.h"
 #include "remote.h"
 #include "rgb_led/rgb_led.h"
 
@@ -32,11 +34,15 @@ typedef enum {
 
 static ms_t s_log_timer = 0u;
 static ms_t s_heartbeat_timer = 0u;
+static ms_t s_pi_status_send_timer = 0u;
+static ms_t s_pi_imu_odom_send_timer = 0u;
 static AppLedState s_led_state = APP_LED_STATE_NOT_READY;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 static void app_status_update_led(void);
+static void app_status_send_pi_status(void);
+static void app_status_send_pi_imu_odom(void);
 static void app_status_log(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -44,11 +50,15 @@ static void app_status_log(void);
 void app_status_init(void) {
     s_log_timer = 0u;
     s_heartbeat_timer = 0u;
+    s_pi_status_send_timer = 0u;
+    s_pi_imu_odom_send_timer = 0u;
     s_led_state = APP_LED_STATE_NOT_READY;
 }
 
 void app_status_process(void) {
     app_status_update_led();
+    app_status_send_pi_status();
+    app_status_send_pi_imu_odom();
     app_status_log();
 }
 
@@ -127,6 +137,56 @@ static void app_status_update_led(void) {
     }
 }
 
+static void app_status_send_pi_status(void) {
+    PiCommsStatusSnapshot status = { 0 };
+    const AppFault* fault;
+
+    if(!delay_nb_ms(&s_pi_status_send_timer, 100u)) {
+        return;
+    }
+
+    fault = app_runtime_get_fault();
+    status.stamp_ms = delay_now_ms();
+    status.state = app_fsm_state_str(app_runtime_get_state());
+    status.manual = app_fsm_manual_mode_str(app_runtime_get_manual_mode());
+    status.chassis_ready = chassis.is_ready() ? 1u : 0u;
+    status.arm_ready = arm.is_ready() ? 1u : 0u;
+    status.odom_ready = odom.is_ready() ? 1u : 0u;
+    status.remote_online = remote_is_online(100u) ? 1u : 0u;
+    status.pc_online = pc_comms_is_online() ? 1u : 0u;
+    status.pi_online = pi_comms_is_online() ? 1u : 0u;
+    status.fault = app_runtime_has_fault() ? 1u : 0u;
+    status.fault_source = fault != NULL ? (uint8_t)fault->source : 0u;
+    status.fault_level = fault != NULL ? (uint8_t)fault->level : 0u;
+    status.fault_code = fault != NULL ? fault->code : 0;
+    (void)pi_comms_send_status(&status);
+}
+
+static void app_status_send_pi_imu_odom(void) {
+    PiCommsImuOdomSnapshot snapshot = { 0 };
+    Vector3 angle = { 0 };
+    Vector3 gyro = { 0 };
+    Vector3 odom_vec = { 0 };
+
+    if(!delay_nb_ms(&s_pi_imu_odom_send_timer, 50u)) {
+        return;
+    }
+
+    (void)odom.get_angle(&angle);
+    (void)odom.get_gyro_corrected(&gyro);
+    (void)odom.get_odom(&odom_vec);
+
+    snapshot.stamp_ms = delay_now_ms();
+    snapshot.angle_x = angle.x;
+    snapshot.angle_y = angle.y;
+    snapshot.angle_z = angle.z;
+    snapshot.gyro_z = gyro.z;
+    snapshot.odom_x = odom_vec.x;
+    snapshot.odom_y = odom_vec.y;
+    snapshot.odom_z = odom_vec.z;
+    (void)pi_comms_send_imu_odom(&snapshot);
+}
+
 static void app_status_log(void) {
     const AppFault* fault;
 
@@ -139,8 +199,8 @@ static void app_status_log(void) {
              app_fsm_state_str(app_runtime_get_state()),
              app_fsm_manual_mode_str(app_runtime_get_manual_mode()),
              remote_is_online(100u) ? 1u : 0u,
-             pc_link_is_online() ? 1u : 0u,
-             pi_link_is_online() ? 1u : 0u,
+             pc_comms_is_online() ? 1u : 0u,
+             pi_comms_is_online() ? 1u : 0u,
              app_runtime_has_fault() ? 1u : 0u,
              fault != NULL ? (unsigned int)fault->source : 0u,
              fault != NULL ? (unsigned int)fault->level : 0u,

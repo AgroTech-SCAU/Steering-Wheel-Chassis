@@ -6,8 +6,6 @@
  * @brief MCU 控制映射与安全执行接口
  */
 
-#include "pc_link.h"
-
 // ! ========================= 类 型 声 明 ========================= ! //
 
 /**
@@ -53,13 +51,6 @@ AppControlResult app_control_apply_manual_arm_fs(void);
  * @return AppControlResult 执行结果
  */
 AppControlResult app_control_apply_auto_pi(void);
-
-/**
- * @brief 执行 PC 安全命令
- * @param command_id PC 命令 ID
- * @return AppControlResult 执行结果
- */
-AppControlResult app_control_apply_pc_command(PcCommandId command_id);
 
 /**
  * @brief 请求底盘进入刹车状态
