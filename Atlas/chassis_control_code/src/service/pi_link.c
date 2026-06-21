@@ -36,7 +36,9 @@ static ms_t s_pi_send_imu_timer = 0u;
 static ms_t s_pi_send_status_timer = 0u;
 static PiChassisCommand s_pi_chassis_cmd = { 0 };
 static PiYawCommand s_pi_yaw_cmd = { 0 };
+static PiYawCommand s_pi_yaw_action = { 0 };
 static PiArmCommand s_pi_arm_cmd = { 0 };
+static PiArmCommand s_pi_arm_action = { 0 };
 static bool s_pi_estop_requested = false;
 static PiMissionEvent s_pi_mission_event = { 0 };
 
@@ -58,9 +60,12 @@ void pi_link_init(void) {
 
     memset(&s_pi_chassis_cmd, 0, sizeof(s_pi_chassis_cmd));
     memset(&s_pi_yaw_cmd, 0, sizeof(s_pi_yaw_cmd));
+    memset(&s_pi_yaw_action, 0, sizeof(s_pi_yaw_action));
     memset(&s_pi_arm_cmd, 0, sizeof(s_pi_arm_cmd));
+    memset(&s_pi_arm_action, 0, sizeof(s_pi_arm_action));
     memset(&s_pi_mission_event, 0, sizeof(s_pi_mission_event));
     s_pi_arm_cmd.joints.dof = FIVE_DOF_ARM_DOF;
+    s_pi_arm_action.joints.dof = FIVE_DOF_ARM_DOF;
     s_pi_last_rx_ms = 0u;
     s_pi_line_len = 0u;
     s_pi_send_imu_timer = 0u;
@@ -124,7 +129,7 @@ bool pi_link_get_chassis_cmd(PiChassisCommand* cmd) {
 }
 
 bool pi_link_get_yaw_cmd(PiYawCommand* cmd) {
-    if(cmd == NULL || s_pi_yaw_cmd.stamp_ms == 0u) {
+    if(cmd == NULL || s_pi_yaw_cmd.mode != PI_YAW_MODE_RATE_SET || s_pi_yaw_cmd.stamp_ms == 0u) {
         return false;
     }
 
@@ -132,13 +137,38 @@ bool pi_link_get_yaw_cmd(PiYawCommand* cmd) {
     return true;
 }
 
+bool pi_link_take_yaw_cmd(PiYawCommand* cmd) {
+    if(cmd == NULL || s_pi_yaw_action.mode == PI_YAW_MODE_NONE) {
+        return false;
+    }
+
+    *cmd = s_pi_yaw_action;
+    memset(&s_pi_yaw_action, 0, sizeof(s_pi_yaw_action));
+    return true;
+}
+
 bool pi_link_get_arm_cmd(PiArmCommand* cmd) {
-    if(cmd == NULL || s_pi_arm_cmd.stamp_ms == 0u) {
+    if(cmd == NULL || s_pi_arm_cmd.type != PI_ARM_COMMAND_JOINT_TARGET || s_pi_arm_cmd.stamp_ms == 0u) {
         return false;
     }
 
     *cmd = s_pi_arm_cmd;
     return true;
+}
+
+bool pi_link_take_arm_cmd(PiArmCommand* cmd) {
+    if(cmd == NULL || s_pi_arm_action.type == PI_ARM_COMMAND_NONE) {
+        return false;
+    }
+
+    *cmd = s_pi_arm_action;
+    memset(&s_pi_arm_action, 0, sizeof(s_pi_arm_action));
+    s_pi_arm_action.joints.dof = FIVE_DOF_ARM_DOF;
+    return true;
+}
+
+bool pi_link_has_pending_arm_action(void) {
+    return s_pi_arm_action.type != PI_ARM_COMMAND_NONE;
 }
 
 bool pi_link_chassis_cmd_is_fresh(uint32_t timeout_ms) {
@@ -156,25 +186,23 @@ bool pi_link_arm_cmd_is_fresh(uint32_t timeout_ms) {
            (delay_now_ms() - s_pi_arm_cmd.stamp_ms) <= timeout_ms;
 }
 
-bool pi_link_get_estop_requested(void) {
-    return s_pi_estop_requested;
-}
+bool pi_link_take_estop_requested(void) {
+    if(!s_pi_estop_requested) {
+        return false;
+    }
 
-void pi_link_clear_estop_request(void) {
     s_pi_estop_requested = false;
+    return true;
 }
 
-bool pi_link_get_mission_event(PiMissionEvent* event) {
+bool pi_link_take_mission_event(PiMissionEvent* event) {
     if(event == NULL || s_pi_mission_event.type == PI_MISSION_EVENT_NONE) {
         return false;
     }
 
     *event = s_pi_mission_event;
-    return true;
-}
-
-void pi_link_clear_mission_event(void) {
     memset(&s_pi_mission_event, 0, sizeof(s_pi_mission_event));
+    return true;
 }
 
 void pi_link_send_imu_odom(void) {
@@ -228,8 +256,11 @@ void pi_link_send_mcu_status(void) {
 void pi_link_clear_commands(void) {
     memset(&s_pi_chassis_cmd, 0, sizeof(s_pi_chassis_cmd));
     memset(&s_pi_yaw_cmd, 0, sizeof(s_pi_yaw_cmd));
+    memset(&s_pi_yaw_action, 0, sizeof(s_pi_yaw_action));
     memset(&s_pi_arm_cmd, 0, sizeof(s_pi_arm_cmd));
+    memset(&s_pi_arm_action, 0, sizeof(s_pi_arm_action));
     s_pi_arm_cmd.joints.dof = FIVE_DOF_ARM_DOF;
+    s_pi_arm_action.joints.dof = FIVE_DOF_ARM_DOF;
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
@@ -315,24 +346,29 @@ static void pi_link_parse_yaw(const char* payload) {
     }
 
     if(strcmp(payload, "HOLD_ENABLE") == 0) {
-        s_pi_yaw_cmd.mode = PI_YAW_MODE_HOLD_ENABLE;
+        memset(&s_pi_yaw_cmd, 0, sizeof(s_pi_yaw_cmd));
+        s_pi_yaw_action.mode = PI_YAW_MODE_HOLD_ENABLE;
+        s_pi_yaw_action.stamp_ms = delay_now_ms();
     }
     else if(strcmp(payload, "HOLD_DISABLE") == 0) {
-        s_pi_yaw_cmd.mode = PI_YAW_MODE_HOLD_DISABLE;
+        memset(&s_pi_yaw_cmd, 0, sizeof(s_pi_yaw_cmd));
+        s_pi_yaw_action.mode = PI_YAW_MODE_HOLD_DISABLE;
+        s_pi_yaw_action.stamp_ms = delay_now_ms();
     }
     else if(sscanf(payload, "TARGET,%f", &value) == 1) {
-        s_pi_yaw_cmd.mode = PI_YAW_MODE_TARGET_SET;
-        s_pi_yaw_cmd.target_yaw = value;
+        memset(&s_pi_yaw_cmd, 0, sizeof(s_pi_yaw_cmd));
+        s_pi_yaw_action.mode = PI_YAW_MODE_TARGET_SET;
+        s_pi_yaw_action.target_yaw = value;
+        s_pi_yaw_action.stamp_ms = delay_now_ms();
     }
     else if(sscanf(payload, "RATE,%f", &value) == 1) {
         s_pi_yaw_cmd.mode = PI_YAW_MODE_RATE_SET;
         s_pi_yaw_cmd.yaw_rate = value;
+        s_pi_yaw_cmd.stamp_ms = delay_now_ms();
     }
     else {
         return;
     }
-
-    s_pi_yaw_cmd.stamp_ms = delay_now_ms();
 }
 
 static void pi_link_parse_arm(const char* payload) {
@@ -344,14 +380,23 @@ static void pi_link_parse_arm(const char* payload) {
     }
 
     if(strcmp(payload, "STOP") == 0) {
-        s_pi_arm_cmd.type = PI_ARM_COMMAND_STOP;
+        memset(&s_pi_arm_cmd, 0, sizeof(s_pi_arm_cmd));
+        s_pi_arm_cmd.joints.dof = FIVE_DOF_ARM_DOF;
+        s_pi_arm_action.type = PI_ARM_COMMAND_STOP;
+        s_pi_arm_action.stamp_ms = delay_now_ms();
     }
     else if(strcmp(payload, "ENABLE") == 0) {
-        s_pi_arm_cmd.type = PI_ARM_COMMAND_ENABLE;
+        memset(&s_pi_arm_cmd, 0, sizeof(s_pi_arm_cmd));
+        s_pi_arm_cmd.joints.dof = FIVE_DOF_ARM_DOF;
+        s_pi_arm_action.type = PI_ARM_COMMAND_ENABLE;
+        s_pi_arm_action.stamp_ms = delay_now_ms();
     }
     else if(sscanf(payload, "SEQ,%u", &sequence_id) == 1) {
-        s_pi_arm_cmd.type = PI_ARM_COMMAND_SEQUENCE_ID;
-        s_pi_arm_cmd.sequence_id = (uint16_t)sequence_id;
+        memset(&s_pi_arm_cmd, 0, sizeof(s_pi_arm_cmd));
+        s_pi_arm_cmd.joints.dof = FIVE_DOF_ARM_DOF;
+        s_pi_arm_action.type = PI_ARM_COMMAND_SEQUENCE_ID;
+        s_pi_arm_action.sequence_id = (uint16_t)sequence_id;
+        s_pi_arm_action.stamp_ms = delay_now_ms();
     }
     else if(sscanf(payload,
                    "JOINT,%f,%f,%f,%f,%f,%f",
@@ -369,12 +414,11 @@ static void pi_link_parse_arm(const char* payload) {
         s_pi_arm_cmd.joints.q[3] = q3;
         s_pi_arm_cmd.joints.q[4] = q4;
         s_pi_arm_cmd.speed_rad_s = speed_rad_s;
+        s_pi_arm_cmd.stamp_ms = delay_now_ms();
     }
     else {
         return;
     }
-
-    s_pi_arm_cmd.stamp_ms = delay_now_ms();
 }
 
 static void pi_link_parse_mission(const char* payload) {

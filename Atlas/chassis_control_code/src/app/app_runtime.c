@@ -41,7 +41,7 @@ static void app_runtime_apply_control(void);
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code);
 static bool app_runtime_pi_arm_cmd_pending(void);
 static void app_runtime_handle_control_result(AppControlResult result);
-static void app_runtime_handle_pi_mission_event(void);
+static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -92,14 +92,13 @@ static void app_runtime_update_inputs(void) {
 static void app_runtime_update_mode(void) {
     PiMissionEvent mission_event;
 
-    if(pi_link_get_estop_requested()) {
-        pi_link_clear_estop_request();
+    if(pi_link_take_estop_requested()) {
         (void)app_fsm_request_estop();
         return;
     }
 
-    if(pi_link_get_mission_event(&mission_event)) {
-        app_runtime_handle_pi_mission_event();
+    if(pi_link_take_mission_event(&mission_event)) {
+        app_runtime_handle_pi_mission_event(&mission_event);
         return;
     }
 
@@ -313,6 +312,10 @@ static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel le
 static bool app_runtime_pi_arm_cmd_pending(void) {
     PiArmCommand cmd;
 
+    if(pi_link_has_pending_arm_action()) {
+        return true;
+    }
+
     if(!pi_link_arm_cmd_is_fresh(200u) || !pi_link_get_arm_cmd(&cmd)) {
         return false;
     }
@@ -379,29 +382,24 @@ static void app_runtime_handle_control_result(AppControlResult result) {
     }
 }
 
-static void app_runtime_handle_pi_mission_event(void) {
-    PiMissionEvent event;
-
-    if(!pi_link_get_mission_event(&event)) {
+static void app_runtime_handle_pi_mission_event(const PiMissionEvent* event) {
+    if(event == NULL) {
         return;
     }
 
     if(app_fsm_get_state() != APP_FSM_STATE_AUTO_PI) {
-        pi_link_clear_mission_event();
         return;
     }
 
-    if(event.type == PI_MISSION_EVENT_DONE) {
+    if(event->type == PI_MISSION_EVENT_DONE) {
         (void)app_control_stop_all();
         (void)app_fsm_post(APP_FSM_EVENT_FINISHED);
-        pi_link_clear_mission_event();
         return;
     }
 
-    if(event.type == PI_MISSION_EVENT_FAIL) {
-        pi_link_clear_mission_event();
+    if(event->type == PI_MISSION_EVENT_FAIL) {
         app_runtime_raise_fault_once(APP_FAULT_SOURCE_PI_MISSION,
                                      APP_FAULT_LEVEL_RECOVERABLE,
-                                     event.fail_code);
+                                     event->fail_code);
     }
 }

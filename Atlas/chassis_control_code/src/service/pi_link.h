@@ -123,11 +123,31 @@ bool pi_link_get_chassis_cmd(PiChassisCommand* cmd);
 bool pi_link_get_yaw_cmd(PiYawCommand* cmd);
 
 /**
+ * @brief 读取并消费一条 Pi 一次性 yaw 动作命令
+ * @param cmd 输出命令缓冲区
+ * @return bool `true` 表示存在待消费的一次性 yaw 动作
+ */
+bool pi_link_take_yaw_cmd(PiYawCommand* cmd);
+
+/**
  * @brief 获取最近一帧机械臂命令
  * @param cmd 输出命令缓冲区
  * @return bool `true` 表示存在有效命令
  */
 bool pi_link_get_arm_cmd(PiArmCommand* cmd);
+
+/**
+ * @brief 读取并消费一条 Pi 一次性机械臂动作命令
+ * @param cmd 输出命令缓冲区
+ * @return bool `true` 表示存在待消费的一次性机械臂动作
+ */
+bool pi_link_take_arm_cmd(PiArmCommand* cmd);
+
+/**
+ * @brief 查询是否存在待消费的 Pi 一次性机械臂动作命令
+ * @return bool `true` 表示存在待消费动作
+ */
+bool pi_link_has_pending_arm_action(void);
 
 /**
  * @brief 判断底盘命令是否仍然新鲜
@@ -154,24 +174,14 @@ bool pi_link_arm_cmd_is_fresh(uint32_t timeout_ms);
  * @brief 查询树莓派是否请求急停
  * @return bool `true` 表示存在待消费的 Pi 急停请求
  */
-bool pi_link_get_estop_requested(void);
+bool pi_link_take_estop_requested(void);
 
 /**
- * @brief 清除待消费的 Pi 急停请求
- */
-void pi_link_clear_estop_request(void);
-
-/**
- * @brief 获取最近一次自动任务结果事件
+ * @brief 读取并消费最近一次自动任务结果事件
  * @param event 输出事件缓冲区
  * @return bool `true` 表示存在待消费的任务结果事件
  */
-bool pi_link_get_mission_event(PiMissionEvent* event);
-
-/**
- * @brief 清除待消费的自动任务结果事件
- */
-void pi_link_clear_mission_event(void);
+bool pi_link_take_mission_event(PiMissionEvent* event);
 
 /**
  * @brief 向 Pi 周期发送 IMU 与里程计摘要

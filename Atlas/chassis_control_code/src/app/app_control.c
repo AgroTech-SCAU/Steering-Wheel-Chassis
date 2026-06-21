@@ -42,6 +42,8 @@
 #define APP_CONTROL_ARM_LIMIT_EPS_RAD 0.001f
 #define APP_CONTROL_ARM_FALLBACK_SPEED_RAD_S 3.14f
 #define APP_CONTROL_SKIP_LOG_PERIOD_MS 1000u
+#define APP_CONTROL_ARM_STOP_RETRY_MS 1000u
+#define APP_CONTROL_ARM_STOP_LOG_MS 1000u
 
 // ! ========================= 类 型 声 明 ========================= ! //
 
@@ -64,6 +66,10 @@ typedef struct {
 
 static uint16_t s_last_arm_swc = 0u;
 static ms_t s_stop_arm_skip_log_timer = 0u;
+static bool s_arm_stop_done = false;
+static bool s_arm_active = false;
+static ms_t s_stop_arm_retry_last_ms = 0u;
+static ms_t s_stop_arm_fail_log_last_ms = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -186,6 +192,20 @@ static bool app_control_arm_speed_valid(float speed_rad_s);
  */
 static bool app_control_arm_joints_valid(const FiveDofArmJointArray* joints);
 
+/**
+ * @brief 判断指定时间间隔是否到期, 到期时更新最后触发时间
+ * @param last_ms 上次触发时间
+ * @param interval_ms 间隔
+ * @return bool `true` 表示本次允许触发
+ */
+static bool app_control_interval_due(ms_t* last_ms, uint32_t interval_ms);
+
+/**
+ * @brief 标记当前进入机械臂有效控制分支
+ * @details 仅在从非激活切换到激活时清除 stop 锁存, 以便退出后重新执行 stop
+ */
+static void app_control_mark_arm_active(void);
+
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 void app_control_init(void) {
@@ -200,11 +220,17 @@ void app_control_init(void) {
 
     s_last_arm_swc = 0u;
     s_stop_arm_skip_log_timer = 0u;
+    s_arm_stop_done = false;
+    s_arm_active = false;
+    s_stop_arm_retry_last_ms = 0u;
+    s_stop_arm_fail_log_last_ms = 0u;
 }
 
 AppControlResult app_control_apply_manual_chassis_pc_arm(void) {
     RemoteState state;
     AppControlResult result = APP_CONTROL_RESULT_OK;
+
+    app_control_mark_arm_active();
 
     if(!app_control_get_remote_state(&state)) {
         return app_control_stop_all();
@@ -219,6 +245,8 @@ AppControlResult app_control_apply_manual_arm_fs(void) {
     RemoteState state;
     AppControlResult result;
 
+    app_control_mark_arm_active();
+
     result = app_control_brake_chassis();
     if(!app_control_get_remote_state(&state)) {
         return app_control_merge_result(result, app_control_stop_arm());
@@ -229,6 +257,8 @@ AppControlResult app_control_apply_manual_arm_fs(void) {
 
 AppControlResult app_control_apply_auto_pi(void) {
     AppControlResult result = APP_CONTROL_RESULT_OK;
+
+    app_control_mark_arm_active();
 
     result = app_control_merge_result(result, app_control_apply_pi_yaw());
     result = app_control_merge_result(result, app_control_apply_pi_chassis());
@@ -250,10 +280,7 @@ AppControlResult app_control_apply_pc_command(PcCommandId command_id) {
             return app_control_result_from_arm(arm.enable(), "pc arm_enable");
 
         case PC_COMMAND_ARM_STOP:
-            if(!arm.is_ready()) {
-                return APP_CONTROL_RESULT_SKIPPED;
-            }
-            return app_control_result_from_arm(arm.stop(), "pc arm_stop");
+            return app_control_stop_arm();
 
         case PC_COMMAND_NONE:
         case PC_COMMAND_START:
@@ -270,6 +297,14 @@ AppControlResult app_control_brake_chassis(void) {
 }
 
 AppControlResult app_control_stop_arm(void) {
+    ArmStatus status;
+
+    s_arm_active = false;
+
+    if(s_arm_stop_done) {
+        return APP_CONTROL_RESULT_SKIPPED;
+    }
+
     if(!arm.is_ready()) {
         if(delay_nb_ms(&s_stop_arm_skip_log_timer, APP_CONTROL_SKIP_LOG_PERIOD_MS)) {
             log_warn("APP_CONTROL arm stop skipped: arm not ready");
@@ -277,7 +312,21 @@ AppControlResult app_control_stop_arm(void) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    return app_control_result_from_arm(arm.stop(), "stop arm");
+    if(!app_control_interval_due(&s_stop_arm_retry_last_ms, APP_CONTROL_ARM_STOP_RETRY_MS)) {
+        return APP_CONTROL_RESULT_SKIPPED;
+    }
+
+    status = arm.stop();
+    if(status == ARM_OK) {
+        s_arm_stop_done = true;
+        return APP_CONTROL_RESULT_OK;
+    }
+
+    if(app_control_interval_due(&s_stop_arm_fail_log_last_ms, APP_CONTROL_ARM_STOP_LOG_MS)) {
+        log_warn("APP_CONTROL stop arm failed: %s", arm.status_str(status));
+    }
+
+    return APP_CONTROL_RESULT_ARM_ERROR;
 }
 
 AppControlResult app_control_stop_all(void) {
@@ -606,6 +655,7 @@ static AppControlResult app_control_apply_pi_chassis(void) {
        pi_link_get_yaw_cmd(&yaw_cmd) &&
        yaw_cmd.mode == PI_YAW_MODE_RATE_SET &&
        isfinite(yaw_cmd.yaw_rate)) {
+        chassis_yaw_hold_disable();
         wz = app_control_limit_abs(yaw_cmd.yaw_rate, APP_CONTROL_PI_MAX_WZ_RAD_S);
     }
 
@@ -627,7 +677,7 @@ static AppControlResult app_control_apply_pi_chassis(void) {
 static AppControlResult app_control_apply_pi_yaw(void) {
     PiYawCommand cmd;
 
-    if(!pi_link_yaw_cmd_is_fresh(APP_CONTROL_PI_YAW_TIMEOUT_MS) || !pi_link_get_yaw_cmd(&cmd)) {
+    if(!pi_link_take_yaw_cmd(&cmd)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
@@ -668,6 +718,35 @@ static AppControlResult app_control_apply_pi_yaw(void) {
 
 static AppControlResult app_control_apply_pi_arm(void) {
     PiArmCommand cmd;
+
+    if(pi_link_take_arm_cmd(&cmd)) {
+        if(!arm.is_ready()) {
+            log_warn("APP_CONTROL pi arm skipped: arm not ready");
+            return APP_CONTROL_RESULT_SKIPPED;
+        }
+
+        switch(cmd.type) {
+            case PI_ARM_COMMAND_STOP:
+                return app_control_stop_arm();
+
+            case PI_ARM_COMMAND_ENABLE:
+                return app_control_result_from_arm(arm.enable(), "pi arm enable");
+
+            case PI_ARM_COMMAND_SEQUENCE_ID:
+                log_warn("APP_CONTROL pi arm seq unsupported: id=%u", cmd.sequence_id);
+                (void)app_control_stop_arm();
+                /**
+                 * TODO:
+                 * ARM:SEQ 当前仅完成协议解析, 尚未接入本地机械臂动作序列执行器
+                 */
+                return APP_CONTROL_RESULT_UNSUPPORTED;
+
+            case PI_ARM_COMMAND_NONE:
+            case PI_ARM_COMMAND_JOINT_TARGET:
+            default:
+                break;
+        }
+    }
 
     if(!pi_link_arm_cmd_is_fresh(APP_CONTROL_PI_ARM_TIMEOUT_MS) || !pi_link_get_arm_cmd(&cmd)) {
         return APP_CONTROL_RESULT_SKIPPED;
@@ -758,4 +837,29 @@ static bool app_control_arm_joints_valid(const FiveDofArmJointArray* joints) {
     }
 
     return true;
+}
+
+static bool app_control_interval_due(ms_t* last_ms, uint32_t interval_ms) {
+    const ms_t now_ms = delay_now_ms();
+
+    if(last_ms == NULL) {
+        return false;
+    }
+
+    if(*last_ms == 0u || (now_ms - *last_ms) >= interval_ms) {
+        *last_ms = now_ms;
+        return true;
+    }
+
+    return false;
+}
+
+static void app_control_mark_arm_active(void) {
+    if(!s_arm_active) {
+        s_arm_stop_done = false;
+        s_stop_arm_retry_last_ms = 0u;
+        s_stop_arm_fail_log_last_ms = 0u;
+    }
+
+    s_arm_active = true;
 }
