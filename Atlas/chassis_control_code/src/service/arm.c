@@ -548,11 +548,6 @@ ArmStatus arm_refresh_current_state(void) {
         s_refresh_fallback_seen[index] = true;
         s_refresh_fallback_index = (uint8_t)((index + 1u) % ARM_DOF);
 
-        /*
-         * Fallback drivers may still use blocking single-servo reads. Refresh
-         * only one servo per call so the 500Hz loop is never held by five
-         * serial waits; update FK after every servo has a valid cached value.
-         */
         for(uint8_t i = 0u; i < ARM_DOF; i++) {
             if(s_refresh_fallback_seen[i] == false) {
                 return ARM_OK;

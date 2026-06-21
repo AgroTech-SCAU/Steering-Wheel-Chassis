@@ -16,9 +16,9 @@
 /**
  * @brief 默认里程计服务周期
  *
- * 当前由 TIM6 500Hz 任务调用，周期为 0.002s
+ * 当前由 250Hz 任务调用，周期为 0.004s
  */
-#define ODOM_DEFAULT_PROCESS_PERIOD_S 0.002f
+#define ODOM_DEFAULT_PROCESS_PERIOD_S 0.004f
 
 /**
  * @brief 里程计服务对外状态缓存

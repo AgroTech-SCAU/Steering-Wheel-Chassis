@@ -19,7 +19,7 @@
 
 // ! ========================= 宏 定 义 声 明 ========================= ! //
 
-#define REMOTE_CONTROL_PERIOD_S 0.010f
+#define REMOTE_CONTROL_PERIOD_S 0.002f
 
 #define REMOTE_FAST_MAX_VX_MPS 2.0f
 #define REMOTE_FAST_MAX_VY_MPS 2.0f
@@ -578,15 +578,15 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
             target_joints = *current_joints;
         }
 
-        target_joints.q[3] = current_joints->q[3] + ch_right_y * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        target_joints.q[4] = current_joints->q[4] + ch_right_x * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        target_joints.q[3] = current_joints->q[3] + ch_right_y * 5 * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        target_joints.q[4] = current_joints->q[4] + ch_right_x * 5 * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         s_last_arm_swc = swc;
         return app_control_result_from_arm(arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s),
                                            "remote arm move_joints");
     }
 
     if(ch_left_x != 0.0f) {
-        const float target_base_yaw = current_joints->q[0] + ch_left_x * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
+        const float target_base_yaw = current_joints->q[0] + ch_left_x * 5 * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         result = app_control_result_from_arm(arm.move_joint(0u, target_base_yaw, speed_limit.servo_speed_rad_s),
                                              "remote arm move_joint");
         s_last_arm_swc = swc;
@@ -601,10 +601,10 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
 
         if(updated_joints != NULL && updated_pose != NULL) {
             const float base_yaw = updated_joints->q[0];
-            const float reach_delta = -ch_right_y * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
+            const float reach_delta = -ch_right_y * 5 * speed_limit.reach_speed_m_s * REMOTE_CONTROL_PERIOD_S;
             const float target_x = updated_pose->position.x + cosf(base_yaw) * reach_delta;
             const float target_y = updated_pose->position.y + sinf(base_yaw) * reach_delta;
-            const float target_z = updated_pose->position.z - ch_right_x * speed_limit.z_speed_m_s * REMOTE_CONTROL_PERIOD_S;
+            const float target_z = updated_pose->position.z - ch_right_x * 5 * speed_limit.z_speed_m_s * REMOTE_CONTROL_PERIOD_S;
 
             s_last_arm_swc = swc;
             return app_control_merge_result(result,
