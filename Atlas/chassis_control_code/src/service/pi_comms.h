@@ -142,6 +142,20 @@ typedef struct {
 } PiCommsOdomSnapshot;
 
 typedef struct {
+    uint32_t stamp_ms;
+    uint16_t status_flags;
+    uint16_t sequence_count;
+    int32_t q0_urad;
+    int32_t q1_urad;
+    int32_t q2_urad;
+    int32_t q3_urad;
+    int32_t q4_urad;
+    int32_t x_mm;
+    int32_t y_mm;
+    int32_t z_mm;
+} PiCommsArmStateSnapshot;
+
+typedef struct {
     uint8_t sensor_id;
     uint8_t event_type;
     uint16_t value;
@@ -165,6 +179,7 @@ typedef struct {
 
 #define PI_COMMS_PAYLOAD_IMU_LEN 48u
 #define PI_COMMS_PAYLOAD_ODOM_LEN 32u
+#define PI_COMMS_PAYLOAD_ARM_STATE_LEN 40u
 
 #define PI_COMMS_IMU_STATUS_IMU_READY              0x0001u
 #define PI_COMMS_IMU_STATUS_ACC_VALID              0x0002u
@@ -181,6 +196,10 @@ typedef struct {
 #define PI_COMMS_ODOM_STATUS_STATIC_DETECTED 0x0020u
 #define PI_COMMS_ODOM_STATUS_SLIP_SUSPECTED  0x0040u
 #define PI_COMMS_ODOM_STATUS_ODOM_RESET      0x0080u
+
+#define PI_COMMS_ARM_STATE_STATUS_ARM_READY    0x0001u
+#define PI_COMMS_ARM_STATE_STATUS_JOINT_VALID  0x0002u
+#define PI_COMMS_ARM_STATE_STATUS_FK_VALID     0x0004u
 
 PiCommsStatus pi_comms_init(const PiCommsConfig* config);
 void pi_comms_on_rx_byte(uint8_t data);
@@ -200,6 +219,7 @@ bool pi_comms_take_mission_event(PiCommsMissionEvent* event);
 bool pi_comms_send_status(const PiCommsStatusSnapshot* status);
 bool pi_comms_send_imu(const PiCommsImuSnapshot* snapshot);
 bool pi_comms_send_odom(const PiCommsOdomSnapshot* snapshot);
+bool pi_comms_send_arm_state(const PiCommsArmStateSnapshot* snapshot);
 bool pi_comms_publish_start_sensor_event(uint8_t sensor_id,
                                          uint8_t event_type,
                                          uint16_t value);

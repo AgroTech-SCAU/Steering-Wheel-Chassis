@@ -41,6 +41,12 @@ typedef struct {
     uint32_t tx_frame_count;
 } PcCommsStats;
 
+typedef struct {
+    FiveDofArmJointArray joints;
+    uint8_t end_switch;
+    uint32_t stamp_ms;
+} PcCommsMasterJoints;
+
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
 /**
@@ -74,6 +80,8 @@ bool pc_comms_is_online(void);
  * @return bool `true` 表示存在缓存目标
  */
 bool pc_comms_get_master_joints(FiveDofArmJointArray* joints);
+bool pc_comms_get_master_joints_snapshot(PcCommsMasterJoints* snapshot);
+bool pc_comms_get_master_end_switch(uint8_t* end_switch);
 
 /**
  * @brief 判断 PC 主臂关节角数据是否新鲜

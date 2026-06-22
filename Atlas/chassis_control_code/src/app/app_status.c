@@ -38,8 +38,10 @@ static ms_t s_heartbeat_timer = 0u;
 static ms_t s_pi_status_send_ms = 0u;
 static ms_t s_pi_imu_send_ms = 0u;
 static ms_t s_pi_odom_send_ms = 0u;
+static ms_t s_pi_arm_state_send_ms = 0u;
 static AppLedState s_led_state = APP_LED_STATE_NOT_READY;
 static uint16_t s_pi_imu_sequence_count = 0u;
+static uint16_t s_pi_arm_state_sequence_count = 0u;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -48,8 +50,10 @@ static bool app_status_interval_due(ms_t now_ms, ms_t* last_ms, ms_t interval_ms
 static void app_status_send_pi_status(void);
 static void app_status_send_pi_imu(void);
 static void app_status_send_pi_odom(void);
+static void app_status_send_pi_arm_state(void);
 static void app_status_build_pi_imu_snapshot(PiCommsImuSnapshot* snapshot);
 static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot);
+static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snapshot);
 static void app_status_log(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -60,8 +64,10 @@ void app_status_init(void) {
     s_pi_status_send_ms = 0u;
     s_pi_imu_send_ms = 0u;
     s_pi_odom_send_ms = 0u;
+    s_pi_arm_state_send_ms = 0u;
     s_led_state = APP_LED_STATE_NOT_READY;
     s_pi_imu_sequence_count = 0u;
+    s_pi_arm_state_sequence_count = 0u;
 }
 
 void app_status_process(void) {
@@ -69,6 +75,7 @@ void app_status_process(void) {
     app_status_send_pi_status();
     app_status_send_pi_imu();
     app_status_send_pi_odom();
+    app_status_send_pi_arm_state();
     app_status_log();
 }
 
@@ -236,6 +243,21 @@ static void app_status_send_pi_odom(void) {
 }
 
 /**
+ * @brief 按 50Hz 周期发送 MCU_ARM_STATE
+ */
+static void app_status_send_pi_arm_state(void) {
+    PiCommsArmStateSnapshot snapshot = { 0 };
+    const ms_t now_ms = delay_now_ms();
+
+    if(!app_status_interval_due(now_ms, &s_pi_arm_state_send_ms, 20u)) {
+        return;
+    }
+
+    app_status_build_pi_arm_state_snapshot(&snapshot);
+    (void)pi_comms_send_arm_state(&snapshot);
+}
+
+/**
  * @brief 组装 MCU_IMU 快照
  * @details yaw 使用融合后的 angle.z，gyro 优先使用去 bias 后的 gyro_corrected
  */
@@ -312,6 +334,47 @@ static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot) {
         snapshot->vx_mm_s = binary_frame_m_to_mm_i32(velocity.x);
         snapshot->vy_mm_s = binary_frame_m_to_mm_i32(velocity.y);
         snapshot->wz_urad_s = binary_frame_rad_to_urad(velocity.z);
+    }
+
+    snapshot->status_flags = status_flags;
+}
+
+/**
+ * @brief 组装 MCU_ARM_STATE 快照
+ * @details 只读取 arm 服务缓存，不在此处主动刷新机械臂当前状态
+ */
+static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snapshot) {
+    const FiveDofArmJointArray* joints;
+    const FiveDofArmPose* pose;
+    uint16_t status_flags = 0u;
+
+    if(snapshot == NULL) {
+        return;
+    }
+
+    snapshot->stamp_ms = delay_now_ms();
+    snapshot->sequence_count = s_pi_arm_state_sequence_count++;
+
+    if(arm.is_ready()) {
+        status_flags |= PI_COMMS_ARM_STATE_STATUS_ARM_READY;
+    }
+
+    joints = arm.get_current_joints();
+    if(joints != NULL && joints->dof >= FIVE_DOF_ARM_DOF) {
+        status_flags |= PI_COMMS_ARM_STATE_STATUS_JOINT_VALID;
+        snapshot->q0_urad = binary_frame_rad_to_urad(joints->q[0]);
+        snapshot->q1_urad = binary_frame_rad_to_urad(joints->q[1]);
+        snapshot->q2_urad = binary_frame_rad_to_urad(joints->q[2]);
+        snapshot->q3_urad = binary_frame_rad_to_urad(joints->q[3]);
+        snapshot->q4_urad = binary_frame_rad_to_urad(joints->q[4]);
+    }
+
+    pose = arm.get_current_pose();
+    if(pose != NULL) {
+        status_flags |= PI_COMMS_ARM_STATE_STATUS_FK_VALID;
+        snapshot->x_mm = binary_frame_m_to_mm_i32(pose->position.x);
+        snapshot->y_mm = binary_frame_m_to_mm_i32(pose->position.y);
+        snapshot->z_mm = binary_frame_m_to_mm_i32(pose->position.z);
     }
 
     snapshot->status_flags = status_flags;

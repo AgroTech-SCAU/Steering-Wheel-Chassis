@@ -326,6 +326,34 @@ bool pi_comms_send_odom(const PiCommsOdomSnapshot* snapshot) {
     return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ODOM, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
 }
 
+bool pi_comms_send_arm_state(const PiCommsArmStateSnapshot* snapshot) {
+    uint8_t payload[PI_COMMS_PAYLOAD_ARM_STATE_LEN] = { 0 };
+
+    if(snapshot == NULL) {
+        return false;
+    }
+
+    binary_frame_write_u32_le(&payload[0], snapshot->stamp_ms);
+    binary_frame_write_u16_le(&payload[4], snapshot->status_flags);
+    binary_frame_write_u16_le(&payload[6], snapshot->sequence_count);
+
+    binary_frame_write_i32_le(&payload[8], snapshot->q0_urad);
+    binary_frame_write_i32_le(&payload[12], snapshot->q1_urad);
+    binary_frame_write_i32_le(&payload[16], snapshot->q2_urad);
+    binary_frame_write_i32_le(&payload[20], snapshot->q3_urad);
+    binary_frame_write_i32_le(&payload[24], snapshot->q4_urad);
+
+    binary_frame_write_i32_le(&payload[28], snapshot->x_mm);
+    binary_frame_write_i32_le(&payload[32], snapshot->y_mm);
+    binary_frame_write_i32_le(&payload[36], snapshot->z_mm);
+
+    return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ARM_STATE,
+                               pi_comms_next_tx_seq(),
+                               0u,
+                               payload,
+                               sizeof(payload));
+}
+
 bool pi_comms_publish_start_sensor_event(uint8_t sensor_id,
                                          uint8_t event_type,
                                          uint16_t value) {

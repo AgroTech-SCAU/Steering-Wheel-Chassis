@@ -119,7 +119,7 @@ CRC_L    1 byte   CRC16 low byte
 | MSG_ID | 名称 | payload 长度 | 语义 |
 |---:|---|---:|---|
 | `0x10` | `PC_HEARTBEAT` | 0 | PC 心跳 |
-| `0x11` | `PC_MASTER_JOINTS` | 24 | 主臂关节角 |
+| `0x11` | `PC_MASTER_JOINTS` | 25 | 主臂关节角 + 末端开关 |
 
 ### 5.2 MCU -> Pi
 
@@ -131,6 +131,7 @@ CRC_L    1 byte   CRC16 low byte
 | `0x24` | `MCU_FAULT_EVENT` | 8 | 故障事件，当前预留 |
 | `0x25` | `MCU_IMU` | 48 | IMU 周期帧，100Hz |
 | `0x26` | `MCU_ODOM` | 32 | 底盘局部里程计周期帧，50Hz |
+| `0x27` | `MCU_ARM_STATE` | 40 | 机械臂当前关节角与正解末端位置，50Hz |
 
 ### 5.3 Pi -> MCU
 
@@ -187,7 +188,7 @@ PC -> MCU
 payload 长度：
 
 ```text
-24 bytes
+25 bytes
 ```
 
 payload 偏移：
@@ -200,12 +201,14 @@ payload 偏移：
 | 12 | 4 | `int32_t` | `q2_urad` | `urad` |
 | 16 | 4 | `int32_t` | `q3_urad` | `urad` |
 | 20 | 4 | `int32_t` | `q4_urad` | `urad` |
+| 24 | 1 | `uint8_t` | `end_switch` | `0` 未触发，`1` 触发 |
 
 语义：
 
 1. 使用小端读取
 2. 将 `urad` 转换为 `float rad` 后写入 `FiveDofArmJointArray`
 3. 更新主臂关节角缓存和本地 fresh 时间戳
+4. `end_switch` 来自 PC 主臂 ID7，`pc_comms` 只解析并缓存，不直接执行业务逻辑
 
 权限约束：
 
@@ -563,7 +566,58 @@ payload 长度：
 2. `vx_mm_s / vy_mm_s / wz_urad_s` 属于 base_link 坐标系下的底盘速度
 3. `yaw_urad` 同样使用融合后的 `angle.z`，Pi 端不需要再拼接 odom yaw
 
-### 8.3 MCU_STATUS
+### 8.3 MCU_ARM_STATE
+
+方向：
+```text
+MCU -> Pi
+```
+
+`MSG_ID = 0x27`
+
+建议频率：
+```text
+50Hz
+```
+
+payload 长度：
+```text
+40 bytes
+```
+
+说明：
+1. 周期发送机械臂当前关节角和当前末端位置
+2. `q0 ~ q4` 来自 `arm.get_current_joints()`
+3. `x / y / z` 来自 `arm.get_current_pose().position`
+4. `x / y / z` 是当前关节角正运动学结果
+5. 该帧是周期状态帧，不使用 `ACK`
+6. Pi 端根据 `status_flags` 判断字段是否有效
+
+payload 偏移：
+
+| payload 偏移 | 长度 | 类型 | 字段 | 单位 / 说明 |
+|---:|---:|---|---|---|
+| 0 | 4 | `uint32_t` | `stamp_ms` | `ms` |
+| 4 | 2 | `uint16_t` | `status_flags` | 状态有效位 |
+| 6 | 2 | `uint16_t` | `sequence_count` | 递增计数 |
+| 8 | 4 | `int32_t` | `q0_urad` | `urad` |
+| 12 | 4 | `int32_t` | `q1_urad` | `urad` |
+| 16 | 4 | `int32_t` | `q2_urad` | `urad` |
+| 20 | 4 | `int32_t` | `q3_urad` | `urad` |
+| 24 | 4 | `int32_t` | `q4_urad` | `urad` |
+| 28 | 4 | `int32_t` | `x_mm` | `mm` |
+| 32 | 4 | `int32_t` | `y_mm` | `mm` |
+| 36 | 4 | `int32_t` | `z_mm` | `mm` |
+
+`status_flags`：
+
+| bit | 名称 | 说明 |
+|---:|---|---|
+| bit0 | `arm_ready` | 机械臂服务已初始化 |
+| bit1 | `joint_valid` | `q0 ~ q4` 有效 |
+| bit2 | `fk_valid` | `x / y / z` 正解结果有效 |
+
+### 8.4 MCU_STATUS
 
 方向：
 
@@ -620,7 +674,7 @@ payload 偏移：
 | bit3 | `has_fault` |
 | bit4 | `estop` |
 
-### 8.4 MCU_START_SENSOR_EVENT
+### 8.5 MCU_START_SENSOR_EVENT
 
 方向：
 
@@ -656,7 +710,7 @@ payload 偏移：
 3. 收到匹配 `PI_ACK` 后清除 pending
 4. ACK 超时不会阻塞主循环，不会卡死系统
 
-### 8.5 MCU_ACK
+### 8.6 MCU_ACK
 
 方向：
 
@@ -684,7 +738,7 @@ payload 偏移：
 
 用于确认 Pi 的一次性动作或事件；当前阶段主要预留统一 ACK 格式和发送接口
 
-### 8.6 MCU_FAULT_EVENT
+### 8.7 MCU_FAULT_EVENT
 
 方向：
 
@@ -801,6 +855,7 @@ payload 偏移：
 | `PI_CONTROL` | 20Hz ~ 50Hz |
 | `MCU_IMU` | 100Hz |
 | `MCU_ODOM` | 50Hz |
+| `MCU_ARM_STATE` | 50Hz |
 | `MCU_STATUS` | 5Hz ~ 10Hz |
 | `MCU_START_SENSOR_EVENT` pending retry | 100ms |
 
@@ -821,6 +876,8 @@ payload 偏移：
 6. 离开对应状态时再统一调用 clear 接口清除普通控制缓存
 7. `pi_comms_clear_controls()` 只能清普通控制和普通一次性动作，不能清 pending EStop
 8. `PI_ESTOP` 只能由 `pi_comms_take_estop()` 消费
+9. `MCU_ARM_STATE` 由 `app_status` 组装快照，`pi_comms` 只负责打包发送
+10. `arm.refresh_current_state()` 仍由 `entry.h` 的 50Hz slot 调度，`app_status` 只读取 `arm.get_current_joints()` 和 `arm.get_current_pose()` 缓存
 
 ## 15. 后续扩展规则
 
