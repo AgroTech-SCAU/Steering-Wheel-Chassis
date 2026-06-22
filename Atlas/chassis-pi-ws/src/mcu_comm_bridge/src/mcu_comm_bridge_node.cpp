@@ -17,8 +17,11 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp" // IWYU pragma: keep
+#include "geometry_msgs/msg/point_stamped.hpp" // IWYU pragma: keep
+#include "geometry_msgs/msg/twist.hpp" // IWYU pragma: keep
 #include "nav_msgs/msg/odometry.hpp" // IWYU pragma: keep
 #include "sensor_msgs/msg/imu.hpp" // IWYU pragma: keep
+#include "sensor_msgs/msg/joint_state.hpp" // IWYU pragma: keep
 #include "mcu_comm_bridge/srv/estop.hpp" // IWYU pragma: keep
 #include "mcu_comm_bridge/srv/set_yaw_target.hpp" // IWYU pragma: keep
 #include "std_srvs/srv/set_bool.hpp" // IWYU pragma: keep
@@ -87,6 +90,27 @@ struct OdomState {
 };
 
 /**
+ * @brief MCU_ARM_STATE 解析后的机械臂状态
+ *
+ * q0~q4 为当前机械臂关节角，xyz 为 MCU 根据当前关节角正解得到的末端位置
+ */
+struct ArmState {
+    uint32_t stamp_ms = 0;          /**< MCU 时间戳，ms */
+    uint16_t status_flags = 0;      /**< 机械臂状态有效位 */
+    uint16_t sequence_count = 0;    /**< 机械臂状态计数 */
+
+    int32_t q0_urad = 0;            /**< q0，urad */
+    int32_t q1_urad = 0;            /**< q1，urad */
+    int32_t q2_urad = 0;            /**< q2，urad */
+    int32_t q3_urad = 0;            /**< q3，urad */
+    int32_t q4_urad = 0;            /**< q4，urad */
+
+    int32_t x_mm = 0;               /**< 末端 x，mm */
+    int32_t y_mm = 0;               /**< 末端 y，mm */
+    int32_t z_mm = 0;               /**< 末端 z，mm */
+};
+
+/**
  * @brief MCU_STATUS 解析后的状态快照
  */
 struct McuStatus {
@@ -138,6 +162,7 @@ struct CmdVelCache {
 struct BridgeStats {
     std::atomic<uint64_t> rx_imu{ 0 };
     std::atomic<uint64_t> rx_odom{ 0 };
+    std::atomic<uint64_t> rx_arm_state{ 0 };
     std::atomic<uint64_t> rx_status{ 0 };
     std::atomic<uint64_t> rx_start_sensor_event{ 0 };
     std::atomic<uint64_t> rx_mcu_ack{ 0 };
@@ -216,7 +241,7 @@ int32_t rad_to_urad_i32(double value) {
  * @brief ROS2 节点：MCU 通信桥接
  *
  * 节点面向 Atlas/navigation_system：
- * 1. 读取 MCU_IMU / MCU_ODOM，发布 /imu 与 /odom，并可发布 odom -> base_footprint TF
+ * 1. 读取 MCU_IMU / MCU_ODOM / MCU_ARM_STATE，发布 /imu、/odom、机械臂关节角与末端位置，并可发布 odom -> base_footprint TF
  * 2. 订阅 competition_fsm 输出的 /motor_cmd_vel，周期性打包为 PI_CONTROL 下发给 MCU
  * 3. 提供底盘一次性服务：刹车、急停、yaw hold、yaw target
  * 4. 继续维护 Pi 心跳、START_SENSOR_EVENT ACK、串口解析统计
@@ -285,6 +310,8 @@ private:
 
         odom_topic_ = declare_parameter<std::string>("odom_topic", "/odom");
         imu_topic_ = declare_parameter<std::string>("imu_topic", "/imu");
+        arm_joint_state_topic_ = declare_parameter<std::string>("arm_joint_state_topic", "/arm/joint_states");
+        arm_fk_topic_ = declare_parameter<std::string>("arm_fk_topic", "/arm/fk_position");
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
@@ -294,6 +321,7 @@ private:
         odom_frame_id_ = declare_parameter<std::string>("odom_frame_id", "odom");
         base_frame_id_ = declare_parameter<std::string>("base_frame_id", "base_footprint");
         imu_frame_id_ = declare_parameter<std::string>("imu_frame_id", "imu_link");
+        arm_frame_id_ = declare_parameter<std::string>("arm_frame_id", "arm_base_link");
         publish_tf_ = declare_parameter<bool>("publish_tf", true);
 
         cmd_vel_timeout_ms_ = declare_parameter<int>("cmd_vel_timeout_ms", 200);
@@ -310,6 +338,8 @@ private:
     void create_ros_interfaces() {
         odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(odom_topic_, rclcpp::QoS(20));
         imu_pub_ = create_publisher<sensor_msgs::msg::Imu>(imu_topic_, rclcpp::SensorDataQoS());
+        arm_joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>(arm_joint_state_topic_, rclcpp::QoS(20));
+        arm_fk_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(arm_fk_topic_, rclcpp::QoS(20));
 
         if(publish_tf_) {
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -404,6 +434,9 @@ private:
                 case MSG_MCU_ODOM:
                     handle_odom(frame);
                     break;
+                case MSG_MCU_ARM_STATE:
+                    handle_arm_state(frame);
+                    break;
                 case MSG_MCU_STATUS:
                     handle_status(frame);
                     break;
@@ -493,6 +526,38 @@ private:
 
         publish_odom(odom);
         stats_.rx_odom++;
+    }
+
+    /**
+     * @brief 处理 MCU_ARM_STATE 并发布机械臂关节角和末端位置
+     */
+    void handle_arm_state(const Frame& frame) {
+        if(frame.payload.size() != PAYLOAD_MCU_ARM_STATE_LEN) {
+            stats_.rx_bad_payload_len++;
+            return;
+        }
+
+        ArmState arm_state;
+        arm_state.stamp_ms = read_u32_le(frame.payload, 0);
+        arm_state.status_flags = read_u16_le(frame.payload, 4);
+        arm_state.sequence_count = read_u16_le(frame.payload, 6);
+        arm_state.q0_urad = read_i32_le(frame.payload, 8);
+        arm_state.q1_urad = read_i32_le(frame.payload, 12);
+        arm_state.q2_urad = read_i32_le(frame.payload, 16);
+        arm_state.q3_urad = read_i32_le(frame.payload, 20);
+        arm_state.q4_urad = read_i32_le(frame.payload, 24);
+        arm_state.x_mm = read_i32_le(frame.payload, 28);
+        arm_state.y_mm = read_i32_le(frame.payload, 32);
+        arm_state.z_mm = read_i32_le(frame.payload, 36);
+
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            latest_arm_state_ = arm_state;
+            has_arm_state_ = true;
+        }
+
+        publish_arm_state(arm_state);
+        stats_.rx_arm_state++;
     }
 
     /**
@@ -673,6 +738,41 @@ private:
             tf_msg.transform.translation.z = 0.0;
             tf_msg.transform.rotation = msg.pose.pose.orientation;
             tf_broadcaster_->sendTransform(tf_msg);
+        }
+    }
+
+    /**
+     * @brief 将 MCU_ARM_STATE 转为 ROS 标准消息并发布
+     *
+     * q0~q4 发布为 sensor_msgs/JointState，末端 xyz 发布为 geometry_msgs/PointStamped
+     * 如果状态标志显示字段无效，则不发布对应消息，但仍缓存原始帧
+     */
+    void publish_arm_state(const ArmState& arm_state) {
+        const rclcpp::Time stamp = now();
+
+        if((arm_state.status_flags & ARM_STATE_FLAG_JOINT_VALID) != 0u) {
+            sensor_msgs::msg::JointState joint_msg;
+            joint_msg.header.stamp = stamp;
+            joint_msg.header.frame_id = arm_frame_id_;
+            joint_msg.name = { "q0", "q1", "q2", "q3", "q4" };
+            joint_msg.position = {
+                urad_to_rad(arm_state.q0_urad),
+                urad_to_rad(arm_state.q1_urad),
+                urad_to_rad(arm_state.q2_urad),
+                urad_to_rad(arm_state.q3_urad),
+                urad_to_rad(arm_state.q4_urad),
+            };
+            arm_joint_state_pub_->publish(joint_msg);
+        }
+
+        if((arm_state.status_flags & ARM_STATE_FLAG_FK_VALID) != 0u) {
+            geometry_msgs::msg::PointStamped point_msg;
+            point_msg.header.stamp = stamp;
+            point_msg.header.frame_id = arm_frame_id_;
+            point_msg.point.x = mm_to_m(arm_state.x_mm);
+            point_msg.point.y = mm_to_m(arm_state.y_mm);
+            point_msg.point.z = mm_to_m(arm_state.z_mm);
+            arm_fk_pub_->publish(point_msg);
         }
     }
 
@@ -933,12 +1033,12 @@ private:
 
         RCLCPP_INFO(
             get_logger(),
-            "stats: imu=%" PRIu64 " odom=%" PRIu64 " status=%" PRIu64
+            "stats: imu=%" PRIu64 " odom=%" PRIu64 " arm=%" PRIu64 " status=%" PRIu64
             " start_evt=%" PRIu64 " ack_rx=%" PRIu64 " fault=%" PRIu64
             " unknown=%" PRIu64 " bad_len=%" PRIu64 " tx_hb=%" PRIu64
             " tx_ack=%" PRIu64 " tx_ctrl=%" PRIu64 " tx_yaw=%" PRIu64 " tx_estop=%" PRIu64 " tx_fail=%" PRIu64
             " parser_frames=%" PRIu64 " crc_err=%" PRIu64 " len_err=%" PRIu64 " ver_err=%" PRIu64,
-            stats_.rx_imu.load(), stats_.rx_odom.load(), stats_.rx_status.load(),
+            stats_.rx_imu.load(), stats_.rx_odom.load(), stats_.rx_arm_state.load(), stats_.rx_status.load(),
             stats_.rx_start_sensor_event.load(), stats_.rx_mcu_ack.load(), stats_.rx_fault_event.load(),
             stats_.rx_unknown.load(), stats_.rx_bad_payload_len.load(), stats_.tx_heartbeat.load(),
             stats_.tx_pi_ack.load(), stats_.tx_control.load(), stats_.tx_yaw_action.load(), stats_.tx_estop.load(), stats_.tx_fail.load(),
@@ -982,6 +1082,23 @@ private:
                 latest_odom_.reset_counter);
         }
 
+        if(has_arm_state_) {
+            RCLCPP_INFO(
+                get_logger(),
+                "latest arm: stamp=%u q=[%.3f %.3f %.3f %.3f %.3f] xyz=[%.3f %.3f %.3f] flags=0x%04X seq=%u",
+                latest_arm_state_.stamp_ms,
+                urad_to_rad(latest_arm_state_.q0_urad),
+                urad_to_rad(latest_arm_state_.q1_urad),
+                urad_to_rad(latest_arm_state_.q2_urad),
+                urad_to_rad(latest_arm_state_.q3_urad),
+                urad_to_rad(latest_arm_state_.q4_urad),
+                mm_to_m(latest_arm_state_.x_mm),
+                mm_to_m(latest_arm_state_.y_mm),
+                mm_to_m(latest_arm_state_.z_mm),
+                latest_arm_state_.status_flags,
+                latest_arm_state_.sequence_count);
+        }
+
         if(has_status_) {
             RCLCPP_INFO(
                 get_logger(),
@@ -1009,6 +1126,8 @@ private:
 
     std::string odom_topic_ = "/odom";
     std::string imu_topic_ = "/imu";
+    std::string arm_joint_state_topic_ = "/arm/joint_states";
+    std::string arm_fk_topic_ = "/arm/fk_position";
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
     std::string estop_service_ = "/mcu/estop";
@@ -1017,6 +1136,7 @@ private:
     std::string odom_frame_id_ = "odom";
     std::string base_frame_id_ = "base_footprint";
     std::string imu_frame_id_ = "imu_link";
+    std::string arm_frame_id_ = "arm_base_link";
     bool publish_tf_ = true;
 
     int cmd_vel_timeout_ms_ = 200;
@@ -1038,9 +1158,11 @@ private:
     std::mutex data_mutex_;
     bool has_imu_ = false;
     bool has_odom_ = false;
+    bool has_arm_state_ = false;
     bool has_status_ = false;
     ImuSample latest_imu_;
     OdomState latest_odom_;
+    ArmState latest_arm_state_;
     McuStatus latest_status_;
 
     std::mutex control_mutex_;
@@ -1049,6 +1171,8 @@ private:
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr arm_joint_state_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_fk_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr yaw_hold_srv_;

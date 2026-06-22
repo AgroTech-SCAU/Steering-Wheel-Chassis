@@ -11,9 +11,16 @@ mcu_comm_bridge_node:
     odom_topic: "/odom"
     imu_topic: "/imu"
 
+    # 机械臂当前关节角，来源 MCU_ARM_STATE(0x27)，类型 sensor_msgs/msg/JointState
+    arm_joint_state_topic: "/arm/joint_states"
+
+    # 机械臂当前正解末端位置，来源 MCU_ARM_STATE(0x27)，类型 geometry_msgs/msg/PointStamped
+    arm_fk_topic: "/arm/fk_position"
+
     odom_frame_id: "odom"
     base_frame_id: "base_footprint"
     imu_frame_id: "imu_link"
+    arm_frame_id: "arm_base_link"
 
     publish_tf: true
 

@@ -19,6 +19,7 @@ constexpr uint8_t MSG_MCU_ACK = 0x23u;                      /**< MCU -> PI: ACK 
 constexpr uint8_t MSG_MCU_FAULT_EVENT = 0x24u;              /**< MCU -> PI: 故障事件 */
 constexpr uint8_t MSG_MCU_IMU = 0x25u;                      /**< MCU -> PI: IMU 数据 */
 constexpr uint8_t MSG_MCU_ODOM = 0x26u;                     /**< MCU -> PI: 里程计 */
+constexpr uint8_t MSG_MCU_ARM_STATE = 0x27u;                /**< MCU -> PI: 机械臂状态 */
 
 constexpr uint8_t MSG_PI_HEARTBEAT = 0x30u;                 /**< PI -> MCU: 心跳 */
 constexpr uint8_t MSG_PI_CONTROL = 0x31u;                   /**< PI -> MCU: 自动模式连续控制 */
@@ -34,10 +35,15 @@ constexpr uint16_t PAYLOAD_MCU_ACK_LEN = 4u;                /**< MCU ACK 负载�
 constexpr uint16_t PAYLOAD_MCU_FAULT_EVENT_LEN = 8u;        /**< FAULT_EVENT 负载长度 */
 constexpr uint16_t PAYLOAD_MCU_IMU_LEN = 48u;               /**< IMU 负载长度 */
 constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;              /**< ODOM 负载长度 */
+constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 40u;         /**< ARM_STATE 负载长度 */
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;            /**< PI_CONTROL 负载长度 */
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;         /**< PI_YAW_ACTION 负载长度 */
 constexpr uint16_t PAYLOAD_PI_ESTOP_LEN = 8u;               /**< PI_ESTOP 负载长度 */
 constexpr uint16_t PAYLOAD_PI_ACK_LEN = 4u;                 /**< PI ACK 负载长度 */
+
+constexpr uint16_t ARM_STATE_FLAG_ARM_READY = 0x0001u;      /**< ARM_STATE: 机械臂服务已就绪 */
+constexpr uint16_t ARM_STATE_FLAG_JOINT_VALID = 0x0002u;    /**< ARM_STATE: q0~q4 有效 */
+constexpr uint16_t ARM_STATE_FLAG_FK_VALID = 0x0004u;       /**< ARM_STATE: 正解 xyz 有效 */
 
 // ! ========================= 类 型 声 明 ========================= ! //
 
