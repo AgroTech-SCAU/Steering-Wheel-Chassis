@@ -1,0 +1,6 @@
+# 急停原因码，直接映射到 PI_ESTOP.reason
+uint8 reason
+---
+# true 表示至少一帧 PI_ESTOP 已成功写入串口
+bool success
+string message

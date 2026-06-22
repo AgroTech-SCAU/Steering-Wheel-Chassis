@@ -1,0 +1,61 @@
+mcu_comm_bridge_node:
+  ros__parameters:
+    # ! ========================= 串 口 配 置 ========================= ! #
+    port: "/dev/ttyACM0"
+    baudrate: 921600
+
+    # 解析器允许的最大 body 长度，body = VER + MSG_ID + SEQ + FLAGS + PAYLOAD
+    max_body_len: 256
+
+    # ! ========================= MCU -> ROS 话题 ========================= ! #
+    odom_topic: "/odom"
+    imu_topic: "/imu"
+
+    odom_frame_id: "odom"
+    base_frame_id: "base_footprint"
+    imu_frame_id: "imu_link"
+
+    publish_tf: true
+
+    # ! ========================= ROS -> MCU 控制话题 ========================= ! #
+    cmd_vel_topic: "/motor_cmd_vel"
+
+    # 刹车服务: true 锁存刹车，false 解除刹车锁存
+    brake_service: "/mcu/set_brake"
+
+    # 偏航角保持服务: true 开启 yaw hold，false 关闭 yaw hold
+    yaw_hold_service: "/mcu/set_yaw_hold"
+
+    # 偏航角保持目标设置服务: yaw_rad 单位 rad
+    yaw_target_service: "/mcu/set_yaw_target"
+
+    # 错误锁死服务: reason 直接映射到 PI_ESTOP.reason
+    estop_service: "/mcu/estop"
+
+    # PI_CONTROL 频率
+    control_rate_hz: 50.0
+
+    # /motor_cmd_vel 超时后发送一次零速刹车
+    send_brake_on_cmd_timeout: true
+    cmd_vel_timeout_ms: 200
+
+    # Pi 端限幅只做上层保护，MCU 端仍必须保留底层限幅与状态机权限判断
+    max_vx_m_s: 1.5
+    max_vy_m_s: 1.5
+    max_wz_rad_s: 1.0
+
+    # 调用 estop_service 后立即重复发送 PI_ESTOP，提高一次性事件到达概率
+    repeat_estop_count: 3
+
+    # ! ========================= 心 跳 与 日 志 ========================= ! #
+    # Pi 心跳频率，对应 PI_HEARTBEAT，MSG_ID 0x30
+    heartbeat_rate_hz: 1.0
+
+    # 统计日志频率
+    stats_rate_hz: 1.0
+
+    # MCU_START_SENSOR_EVENT 带 NEED_ACK 时自动回 PI_ACK
+    auto_ack_start_sensor_event: true
+
+    # 是否在统计日志里打印最近一帧 IMU / ODOM / STATUS 的解析结果
+    log_latest_sample: true
