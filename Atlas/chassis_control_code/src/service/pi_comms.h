@@ -104,8 +104,8 @@ typedef struct {
 /**
  * @brief MCU -> Pi IMU 快照，100Hz 周期发送
  *
- * payload 内多字节字段统一按小端打包，roll/pitch/yaw 全部来自融合姿态 angle。
- * yaw 与 ODOM 帧保留同源副本，便于 Pi 端分别发布 IMU 与里程计话题。
+ * payload 内多字节字段统一按小端打包，roll/pitch/yaw 全部来自融合姿态 angle
+ * yaw 与 ODOM 帧保留同源副本，便于 Pi 端分别发布 IMU 与里程计话题
  */
 typedef struct {
     uint32_t stamp_ms;
@@ -126,8 +126,8 @@ typedef struct {
 /**
  * @brief MCU -> Pi 底盘局部里程计快照，50Hz 周期发送
  *
- * x/y/yaw 属于 odom 坐标系，vx/vy/wz 属于 base_link 坐标系。
- * yaw 同样来自融合后的 angle.z，不使用 odom.z 充当航向角。
+ * x/y/yaw 属于 odom 坐标系，vx/vy/wz 属于 base_link 坐标系
+ * yaw 同样来自融合后的 angle.z，不使用 odom.z 充当航向角
  */
 typedef struct {
     uint32_t stamp_ms;

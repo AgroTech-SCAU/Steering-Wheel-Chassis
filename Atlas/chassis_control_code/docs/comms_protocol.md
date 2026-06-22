@@ -535,9 +535,9 @@ payload 长度：
 ```
 
 说明：
-1. 周期发送完整 IMU 信息，包含三轴加速度、三轴角速度和三轴姿态角。
-2. `yaw_urad` 使用融合后的 `angle.z`，与 `MCU_ODOM.yaw_urad` 同源。
-3. 该帧是高频周期帧，不使用 `ACK`，避免阻塞主循环。
+1. 周期发送完整 IMU 信息，包含三轴加速度、三轴角速度和三轴姿态角
+2. `yaw_urad` 使用融合后的 `angle.z`，与 `MCU_ODOM.yaw_urad` 同源
+3. 该帧是高频周期帧，不使用 `ACK`，避免阻塞主循环
 
 ### 8.2 MCU_ODOM
 
@@ -559,9 +559,9 @@ payload 长度：
 ```
 
 说明：
-1. `x_mm / y_mm / yaw_urad` 属于 odom 坐标系下的局部位姿。
-2. `vx_mm_s / vy_mm_s / wz_urad_s` 属于 base_link 坐标系下的底盘速度。
-3. `yaw_urad` 同样使用融合后的 `angle.z`，Pi 端不需要再拼接 odom yaw。
+1. `x_mm / y_mm / yaw_urad` 属于 odom 坐标系下的局部位姿
+2. `vx_mm_s / vy_mm_s / wz_urad_s` 属于 base_link 坐标系下的底盘速度
+3. `yaw_urad` 同样使用融合后的 `angle.z`，Pi 端不需要再拼接 odom yaw
 
 ### 8.3 MCU_STATUS
 

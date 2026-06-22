@@ -1,7 +1,7 @@
 # AT Navigator — Nav2 参数配置
 # ================================
-# 标注 [HW_CONFIG] 的参数需要根据实际机器人硬件调整。
-# 重点关注：robot_radius、max_velocity、LiDAR topic/range、底盘坐标系名称。
+# 标注 [HW_CONFIG] 的参数需要根据实际机器人硬件调整
+# 重点关注：robot_radius、max_velocity、LiDAR topic/range、底盘坐标系名称
 #
 bt_navigator:
   ros__parameters:

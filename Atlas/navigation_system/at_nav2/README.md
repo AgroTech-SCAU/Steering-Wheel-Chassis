@@ -1,6 +1,6 @@
 # at_nav2 - 导航系统核心配置包
 
-> **定位：** Nav2 导航栈的一站式配置 / 启动 / 地图管理包。核心功能三件套：Cartographer 纯定位 + Nav2 导航栈 + 地图管理。
+> **定位：** Nav2 导航栈的一站式配置 / 启动 / 地图管理包；核心功能三件套：Cartographer 纯定位 + Nav2 导航栈 + 地图管理。
 > **核心依赖：** `nav2_bringup`, `nav2_planner`, `nav2_controller`, `nav2_costmap_2d`, `cartographer_ros`, `rviz2`
 
 ---
@@ -37,7 +37,7 @@
 
 ### 对 Nav2 启动架构的影响
 
-由于选择 Cartographer 而非 AMCL，本包**不启动 Nav2 自带的 AMCL 节点**。具体表现为：
+由于选择 Cartographer 而非 AMCL，本包**不启动 Nav2 自带的 AMCL 节点**；具体表现为：
 
 - **不使用** `nav2_bringup/launch/localization_launch.py`（该文件启动 AMCL + map_server）
 - 改为**独立启动** `map_server` 节点 + `lifecycle_manager_map`，保证静态地图加载
@@ -105,7 +105,7 @@ at_nav.launch.py (真机) / at_nav_gazebo.launch.py (仿真)
 
 ## 5. Nav2 参数详解
 
-所有参数集中在 `config/at_nav2_params.yaml`。以下按子系统分类说明。
+所有参数集中在 `config/at_nav2_params.yaml`；以下按子系统分类说明。
 
 ### 5.1 bt_navigator — 行为树导航器
 
@@ -187,10 +187,10 @@ DWB (Dynamic Window Approach) 是 Nav2 的本地规划器，负责生成满足�
 
 | 评价器 | Scale | 作用 |
 |--------|-------|------|
-| `RotateToGoal` | 32.0 | 奖励朝向目标方向的角速度。`slowing_factor=5.0` 控制接近目标时减速程度，`lookahead_time=-1.0` 禁用前瞻 |
+| `RotateToGoal` | 32.0 | 奖励朝向目标方向的角速度；`slowing_factor=5.0` 控制接近目标时减速程度，`lookahead_time=-1.0` 禁用前瞻 |
 | `BaseObstacle` | 0.02 | 惩罚与障碍物碰撞的轨迹 |
-| `PathAlign` | 32.0 | 奖励对齐全局路径的轨迹。`forward_point_distance=0.1` 定义前瞻距离 |
-| `GoalAlign` | 24.0 | 奖励对齐到目标点方向的轨迹。`forward_point_distance=0.1` |
+| `PathAlign` | 32.0 | 奖励对齐全局路径的轨迹；`forward_point_distance=0.1` 定义前瞻距离 |
+| `GoalAlign` | 24.0 | 奖励对齐到目标点方向的轨迹；`forward_point_distance=0.1` |
 | `PathDist` | 32.0 | 惩罚偏离全局路径的轨迹，值越大越靠近路径 |
 | `GoalDist` | 24.0 | 奖励接近目标点的轨迹 |
 | `Oscillation` | （默认） | 惩罚让机器人在原地振荡的轨迹，内置评价器无需额外 scale 配置 |
@@ -348,7 +348,7 @@ ros2 launch at_nav2 at_nav_gazebo.launch.py
 | Cartographer lua | `cartographer_localization.lua` | `cartographer_localization_gazebo.lua` |
 | RViz2 配置 | `rviz2/at_nav2.rviz`（可能不存在） | `rviz2/nav2_gazebo.rviz` |
 
-> **注意：** 真机 pbstream 文件 `maps/map.pbstream` 需要提前通过 `robot_cartographer_mapping` 包建图获得。目前仓库中真机 pbstream 未提交（文件较大），需运行前手动放置。
+> **注意：** 真机 pbstream 文件 `maps/map.pbstream` 需要提前通过 `robot_cartographer_mapping` 包建图获得；目前仓库中真机 pbstream 未提交（文件较大），需运行前手动放置。
 
 ---
 
@@ -428,7 +428,7 @@ MainTree (Sequence)
 └── FollowPath            # 路径跟踪：DWB 控制器沿路径行驶
 ```
 
-这是一个不包含恢复行为的简化行为树。恢复行为（Spin/BackUp/DriveOnHeading/Wait）由 `behavior_server` 以插件形式注册，当 Nav2 检测到机器人卡住时自动调用。如需在行为树中显式编排恢复逻辑，可修改 XML 加入 Recovery 子树。
+这是一个不包含恢复行为的简化行为树；恢复行为（Spin/BackUp/DriveOnHeading/Wait）由 `behavior_server` 以插件形式注册，当 Nav2 检测到机器人卡住时自动调用。如需在行为树中显式编排恢复逻辑，可修改 XML 加入 Recovery 子树。
 
 ---
 
