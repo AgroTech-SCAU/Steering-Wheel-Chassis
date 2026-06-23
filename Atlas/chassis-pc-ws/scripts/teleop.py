@@ -106,11 +106,11 @@ GRIPPER_GOAL_POSITION_ON_START = GRIPPER_OPEN_POS
 
 # q0 ~ q4 方向修正
 # 某个关节方向反了时，将对应位置改为 -1
-DEFAULT_JOINT_SIGNS = [1, 1, 1, 1, 1]
+DEFAULT_JOINT_SIGNS = [1, 1, -1, 1, 1]
 
 # q0 ~ q4 零位偏置，单位 rad
 # 读取角度后会执行：q = sign * q_raw + offset
-DEFAULT_JOINT_OFFSETS_RAD = [0, 0, 0, 0, 0]
+DEFAULT_JOINT_OFFSETS_RAD = [3.14, 1.57, 6.28, 3.14, 3.14]
 
 # Dynamixel 每圈编码 tick 数
 DEFAULT_TICKS_PER_REV = 4096
