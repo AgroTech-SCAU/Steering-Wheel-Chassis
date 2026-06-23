@@ -70,6 +70,19 @@ DEFAULT_PRINT_FREQ_HZ = 1.0
 # 不建议设置太大，避免 MCU 串口异常时阻塞主循环
 DEFAULT_WRITE_TIMEOUT_S = 0.02
 
+# 是否在同一 MCU 串口上读取并打印 MCU 日志
+# 当前无线串口同时承担 MCU 日志输出和 PC 遥操作输入，因此默认开启读取，替代 VOFA 串口监视
+DEFAULT_READ_MCU_LOG = True
+
+# MCU 日志解码方式
+DEFAULT_MCU_LOG_ENCODING = "utf-8"
+
+# MCU 日志打印前缀，便于和本脚本调试输出区分
+DEFAULT_MCU_LOG_PREFIX = "[MCU] "
+
+# MCU 日志接收缓存上限，防止异常情况下无换行数据无限增长
+DEFAULT_MCU_LOG_BUFFER_LIMIT = 8192
+
 # q0 ~ q4 对应的 Dynamixel ID
 # 当前协议只发送 5 个主臂关节角
 DEFAULT_JOINT_IDS = [1, 2, 3, 4, 5]
@@ -106,11 +119,11 @@ GRIPPER_GOAL_POSITION_ON_START = GRIPPER_OPEN_POS
 
 # q0 ~ q4 方向修正
 # 某个关节方向反了时，将对应位置改为 -1
-DEFAULT_JOINT_SIGNS = [1, 1, -1, 1, 1]
+DEFAULT_JOINT_SIGNS = [-1, 1, -1, -1, 1]
 
 # q0 ~ q4 零位偏置，单位 rad
 # 读取角度后会执行：q = sign * q_raw + offset
-DEFAULT_JOINT_OFFSETS_RAD = [3.14, 1.57, 6.28, 3.14, 3.14]
+DEFAULT_JOINT_OFFSETS_RAD = [3.14, 1.57, 6.2647, 3.14, 3.14]
 
 # Dynamixel 每圈编码 tick 数
 DEFAULT_TICKS_PER_REV = 4096
@@ -826,11 +839,31 @@ class DynamixelLeader:
 
 
 class McuSerialSender:
-    """MCU 串口发送器"""
+    """MCU 串口收发器
 
-    def __init__(self, port: str, baudrate: int, write_timeout_s: float):
+    说明
+    ----
+    USART1 当前同时承担两类数据：
+    1. PC -> MCU 的二进制遥操作帧
+    2. MCU -> PC 的 ASCII 日志
+
+    因此这里不仅负责写入遥操作帧，也会非阻塞读取 MCU 日志并打印。
+    调试时不要再同时使用 VOFA、minicom 等程序打开同一个串口。
+    """
+
+    def __init__(
+        self,
+        port: str,
+        baudrate: int,
+        write_timeout_s: float,
+        read_log: bool = DEFAULT_READ_MCU_LOG,
+        log_encoding: str = DEFAULT_MCU_LOG_ENCODING,
+        log_prefix: str = DEFAULT_MCU_LOG_PREFIX,
+        exclusive: bool = True,
+        log_buffer_limit: int = DEFAULT_MCU_LOG_BUFFER_LIMIT,
+    ):
         """
-        初始化 MCU 串口发送器
+        初始化 MCU 串口收发器
 
         参数
         ----
@@ -840,11 +873,41 @@ class McuSerialSender:
             MCU 串口波特率
         write_timeout_s:
             串口写超时时间，单位 s
+        read_log:
+            是否读取并打印 MCU 串口返回的日志
+        log_encoding:
+            MCU 日志解码方式
+        log_prefix:
+            MCU 日志打印前缀
+        exclusive:
+            是否以独占方式打开串口
+            独占打开可以避免 VOFA / minicom / 其他脚本同时占用同一串口
+        log_buffer_limit:
+            日志接收缓存上限
         """
         self.port_name = port
         self.baudrate = baudrate
         self.write_timeout_s = write_timeout_s
+        self.read_log = bool(read_log)
+        self.log_encoding = log_encoding
+        self.log_prefix = log_prefix
+        self.exclusive = bool(exclusive)
+        self.log_buffer_limit = int(log_buffer_limit)
+
         self.ser: serial.Serial | None = None
+        self._rx_log_buffer = bytearray()
+        self._rx_bytes = 0
+        self._rx_lines = 0
+
+    @property
+    def rx_bytes(self) -> int:
+        """累计从 MCU 串口读到的字节数"""
+        return self._rx_bytes
+
+    @property
+    def rx_lines(self) -> int:
+        """累计从 MCU 串口解析到的日志行数"""
+        return self._rx_lines
 
     def connect(self) -> None:
         """
@@ -855,8 +918,9 @@ class McuSerialSender:
         8 数据位，无校验，1 停止位
         timeout = 0，表示读非阻塞
         write_timeout 用于避免写阻塞过久
+        exclusive = True 时，Linux 下会尽量避免多个进程同时打开同一串口
         """
-        self.ser = serial.Serial(
+        kwargs = dict(
             port=self.port_name,
             baudrate=self.baudrate,
             bytesize=serial.EIGHTBITS,
@@ -864,7 +928,28 @@ class McuSerialSender:
             stopbits=serial.STOPBITS_ONE,
             timeout=0.0,
             write_timeout=self.write_timeout_s,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False,
         )
+
+        try:
+            self.ser = serial.Serial(**kwargs, exclusive=self.exclusive)
+        except TypeError:
+            # 某些较旧 pyserial 版本不支持 exclusive 参数
+            self.ser = serial.Serial(**kwargs)
+
+        # 不使用硬件流控时，显式释放 RTS/DTR，减少部分无线串口模块被控制线影响的概率
+        try:
+            self.ser.rts = False
+            self.ser.dtr = False
+        except Exception:
+            pass
+
+        try:
+            self.ser.reset_input_buffer()
+        except Exception:
+            pass
 
     def write_frame(self, frame: bytes) -> None:
         """
@@ -888,6 +973,84 @@ class McuSerialSender:
         if written != len(frame):
             raise RuntimeError(f"MCU 串口写入不完整：{written}/{len(frame)} bytes")
 
+    def _decode_log_line(self, line: bytes) -> str:
+        """
+        将一行 MCU 日志字节解码为字符串
+
+        参数
+        ----
+        line:
+            不包含换行符的一行字节
+
+        返回
+        ----
+        str:
+            解码后的日志文本
+        """
+        return line.decode(self.log_encoding, errors="replace").rstrip("\r")
+
+    def read_log_lines(self) -> list[str]:
+        """
+        非阻塞读取 MCU 串口日志
+
+        返回
+        ----
+        list[str]:
+            本次读到的完整日志行
+
+        说明
+        ----
+        MCU 侧日志是普通文本，PC 侧遥操作帧是发往 MCU 的二进制数据。
+        这里仅读取 MCU -> PC 方向的数据，并按换行切分。
+        """
+        if not self.read_log:
+            return []
+
+        if self.ser is None or not self.ser.is_open:
+            return []
+
+        waiting = self.ser.in_waiting
+        if waiting <= 0:
+            return []
+
+        data = self.ser.read(waiting)
+        if not data:
+            return []
+
+        self._rx_bytes += len(data)
+        self._rx_log_buffer.extend(data)
+
+        lines: list[str] = []
+
+        while True:
+            try:
+                idx = self._rx_log_buffer.index(0x0A)
+            except ValueError:
+                break
+
+            raw_line = bytes(self._rx_log_buffer[:idx])
+            del self._rx_log_buffer[: idx + 1]
+
+            text = self._decode_log_line(raw_line)
+            if text:
+                lines.append(text)
+
+        if len(self._rx_log_buffer) > self.log_buffer_limit:
+            dropped = len(self._rx_log_buffer) - self.log_buffer_limit // 2
+            del self._rx_log_buffer[:dropped]
+            lines.append(
+                f"[RX_LOG_BUFFER_TRUNCATED] dropped={dropped} bytes, "
+                f"tail={self._decode_log_line(bytes(self._rx_log_buffer))}"
+            )
+
+        self._rx_lines += len(lines)
+        return lines
+
+    def poll_and_print_log(self) -> None:
+        """读取 MCU 日志并立即打印"""
+        for line in self.read_log_lines():
+            print(f"{self.log_prefix}{line}", flush=True)
+
     def close(self) -> None:
         """
         关闭 MCU 串口
@@ -897,6 +1060,11 @@ class McuSerialSender:
         如果串口未打开，本函数不会抛出异常
         """
         if self.ser is not None and self.ser.is_open:
+            try:
+                # 退出前尽量把残留日志打印出来
+                self.poll_and_print_log()
+            except Exception:
+                pass
             self.ser.close()
 
 
@@ -993,6 +1161,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="调试打印频率，0 表示关闭",
     )
     parser.add_argument(
+        "--no-read-mcu-log",
+        action="store_true",
+        help="不从 MCU 串口读取并打印日志",
+    )
+    parser.add_argument(
+        "--mcu-log-prefix",
+        default=DEFAULT_MCU_LOG_PREFIX,
+        help="MCU 日志打印前缀",
+    )
+    parser.add_argument(
+        "--mcu-log-encoding",
+        default=DEFAULT_MCU_LOG_ENCODING,
+        help="MCU 日志解码方式",
+    )
+    parser.add_argument(
+        "--no-exclusive",
+        action="store_true",
+        help="不以独占方式打开 MCU 串口",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="只读取主臂和打包协议，不打开 MCU 串口"
     )
 
@@ -1078,7 +1266,15 @@ def main() -> int:
         mapping=mapping,
         end_switch_threshold=args.end_switch_threshold,
     )
-    sender = McuSerialSender(args.mcu_port, args.mcu_baud, args.write_timeout)
+    sender = McuSerialSender(
+        port=args.mcu_port,
+        baudrate=args.mcu_baud,
+        write_timeout_s=args.write_timeout,
+        read_log=not args.no_read_mcu_log,
+        log_encoding=args.mcu_log_encoding,
+        log_prefix=args.mcu_log_prefix,
+        exclusive=not args.no_exclusive,
+    )
     packer = ProtocolPacker(args.crc_name)
 
     should_stop = False
@@ -1118,6 +1314,11 @@ def main() -> int:
         print("dry-run 模式：不打开 MCU 串口，只读取主臂并打包协议")
     else:
         print(f"打开 MCU 串口：{args.mcu_port} @ {args.mcu_baud}")
+        print(
+            "MCU 日志读取："
+            f"{'关闭' if args.no_read_mcu_log else '开启'}，"
+            f"exclusive={'关闭' if args.no_exclusive else '开启'}"
+        )
         sender.connect()
 
     period_s = 1.0 / args.freq
@@ -1136,6 +1337,9 @@ def main() -> int:
             loop_start = time.monotonic()
 
             try:
+                if not args.dry_run:
+                    sender.poll_and_print_log()
+
                 state = leader.read_state()
                 frame = packer.pack_master_joints(state.q_rad, state.end_switch)
 
@@ -1152,6 +1356,9 @@ def main() -> int:
 
                     heartbeat_sent += 1
 
+                if not args.dry_run:
+                    sender.poll_and_print_log()
+
                 if printer is not None and printer.ready(loop_start):
                     print(
                         f"q_rad={format_q(state.q_rad)} "
@@ -1160,6 +1367,8 @@ def main() -> int:
                         f"end_switch={state.end_switch} "
                         f"frames={frames_sent} "
                         f"heartbeat={heartbeat_sent} "
+                        f"rx_bytes={sender.rx_bytes if not args.dry_run else 0} "
+                        f"rx_lines={sender.rx_lines if not args.dry_run else 0} "
                         f"errors={errors}"
                     )
 
@@ -1170,6 +1379,12 @@ def main() -> int:
             ) as exc:
                 errors += 1
                 print(f"[警告] {exc}", file=sys.stderr)
+
+                if not args.dry_run:
+                    try:
+                        sender.poll_and_print_log()
+                    except Exception:
+                        pass
 
                 # 临时读写错误只丢弃当前周期，不阻塞太久，也不直接退出
                 time.sleep(min(period_s, 0.05))
