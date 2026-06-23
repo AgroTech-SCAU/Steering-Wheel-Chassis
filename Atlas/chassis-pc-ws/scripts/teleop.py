@@ -46,13 +46,13 @@ except ImportError as exc:
 DEFAULT_LEADER_PORT = "/dev/ttyUSB0"
 
 # MCU 串口
-DEFAULT_MCU_PORT = "/dev/ttyUSB1"
+DEFAULT_MCU_PORT = "/dev/ttyACM0"
 
 # 主臂 Dynamixel 波特率
-DEFAULT_LEADER_BAUD = 115200
+DEFAULT_LEADER_BAUD = 1000000
 
 # MCU 串口波特率
-DEFAULT_MCU_BAUD = 115200
+DEFAULT_MCU_BAUD = 921600
 
 # 主臂关节角发送频率
 # 协议建议 PC_MASTER_JOINTS 为 30Hz ~ 100Hz
