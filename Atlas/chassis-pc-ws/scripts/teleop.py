@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-独立版主臂遥操作发送脚本
+主从臂遥操作脚本
 
-用途
-----
+使用说明：
 1. 打开主臂 Dynamixel 串口，默认 /dev/ttyUSB0
 2. 启动时配置 ID7，并开启力矩，用作末端开关
 3. 周期读取 ID1 ~ ID5 的 Present_Position，映射为 q0 ~ q4
 4. 周期读取 ID7 的 Present_Position，按原双臂工程 gripper 逻辑映射为开关量
 5. 将 q0 ~ q4 从 rad 转为 urad
-6. 打开 MCU 串口，默认 /dev/ttyUSB1
+6. 打开 MCU 串口，默认 /dev/ttyACM0
 7. 按二进制协议持续发送 PC_MASTER_JOINTS 和 PC_HEARTBEAT
 
-依赖
-----
+依赖：
 pip install pyserial dynamixel-sdk crcmod
 
-说明
-----
-本脚本不依赖 LeRobot，只依赖 Python 串口库、Dynamixel SDK 和 CRC 校验库
 """
 
 from __future__ import annotations
@@ -137,7 +132,7 @@ DEFAULT_CRC_NAME = "crc-ccitt-false"
 # 通信协议常量
 # =============================================================================
 
-SOF = b"\xA5\x5A"
+SOF = b"\xa5\x5a"
 PROTOCOL_VER = 0x01
 FLAG_NONE = 0x00
 
@@ -313,7 +308,9 @@ class ProtocolPacker:
             MSG_ID = 0x11 的完整主臂关节角帧
         """
         if len(q_rad) != 5:
-            raise ValueError(f"PC_MASTER_JOINTS 需要 5 个关节角，实际得到 {len(q_rad)} 个")
+            raise ValueError(
+                f"PC_MASTER_JOINTS 需要 5 个关节角，实际得到 {len(q_rad)} 个"
+            )
 
         if end_switch not in (END_SWITCH_OPEN, END_SWITCH_CLOSED):
             raise ValueError(f"end_switch 只能为 0 或 1，实际得到 {end_switch}")
@@ -572,7 +569,9 @@ class DynamixelLeader:
             if not self.group_reader.addParam(dxl_id):
                 raise RuntimeError(f"无法将 Dynamixel ID {dxl_id} 加入同步读取组")
 
-    def _check_comm(self, result: int, dxl_error: int, action: str, dxl_id: int) -> None:
+    def _check_comm(
+        self, result: int, dxl_error: int, action: str, dxl_id: int
+    ) -> None:
         """
         检查 Dynamixel 读写通信结果
 
@@ -593,7 +592,9 @@ class DynamixelLeader:
 
         if dxl_error != 0:
             msg = self.packet_handler.getRxPacketError(dxl_error)
-            raise RuntimeError(f"Dynamixel {action} 返回包错误，ID={dxl_id}，原因：{msg}")
+            raise RuntimeError(
+                f"Dynamixel {action} 返回包错误，ID={dxl_id}，原因：{msg}"
+            )
 
     def write1(self, dxl_id: int, address: int, value: int, label: str) -> None:
         """
@@ -691,7 +692,12 @@ class DynamixelLeader:
         )
         self.write2(gid, ADDR_CURRENT_LIMIT, GRIPPER_CURRENT_LIMIT, "Current_Limit")
         self.write1(gid, ADDR_TORQUE_ENABLE, TORQUE_ENABLE, "Torque_Enable=1")
-        self.write4(gid, ADDR_GOAL_POSITION, GRIPPER_GOAL_POSITION_ON_START, "Goal_Position=open")
+        self.write4(
+            gid,
+            ADDR_GOAL_POSITION,
+            GRIPPER_GOAL_POSITION_ON_START,
+            "Goal_Position=open",
+        )
 
     @staticmethod
     def gripper_raw_to_norm(raw: int) -> float:
@@ -717,7 +723,9 @@ class DynamixelLeader:
         gripper_range = GRIPPER_OPEN_POS - GRIPPER_CLOSED_POS
 
         if gripper_range == 0:
-            raise RuntimeError("ID7 映射参数错误：GRIPPER_OPEN_POS 与 GRIPPER_CLOSED_POS 不能相等")
+            raise RuntimeError(
+                "ID7 映射参数错误：GRIPPER_OPEN_POS 与 GRIPPER_CLOSED_POS 不能相等"
+            )
 
         return 1.0 - (float(raw) - float(GRIPPER_CLOSED_POS)) / float(gripper_range)
 
@@ -736,7 +744,9 @@ class DynamixelLeader:
             0 表示未触发 / 打开
             1 表示触发 / 闭合
         """
-        return END_SWITCH_CLOSED if norm > self.end_switch_threshold else END_SWITCH_OPEN
+        return (
+            END_SWITCH_CLOSED if norm > self.end_switch_threshold else END_SWITCH_OPEN
+        )
 
     def read_state(self) -> LeaderState:
         """
@@ -779,7 +789,9 @@ class DynamixelLeader:
         )
 
         if not ok:
-            raise RuntimeError(f"Dynamixel ID {self.gripper_id} 的 Present_Position 不可用")
+            raise RuntimeError(
+                f"Dynamixel ID {self.gripper_id} 的 Present_Position 不可用"
+            )
 
         gripper_raw = int(
             self.group_reader.getData(
@@ -901,24 +913,88 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="读取 Dynamixel 主臂，并向 MCU 发送 PC_MASTER_JOINTS + 末端开关状态",
     )
 
-    parser.add_argument("--leader-port", default=DEFAULT_LEADER_PORT, help="主臂 Dynamixel 串口")
+    parser.add_argument(
+        "--leader-port", default=DEFAULT_LEADER_PORT, help="主臂 Dynamixel 串口"
+    )
     parser.add_argument("--mcu-port", default=DEFAULT_MCU_PORT, help="MCU 串口")
-    parser.add_argument("--leader-baud", type=int, default=DEFAULT_LEADER_BAUD, help="主臂 Dynamixel 波特率")
-    parser.add_argument("--mcu-baud", type=int, default=DEFAULT_MCU_BAUD, help="MCU 串口波特率")
-    parser.add_argument("--freq", type=float, default=DEFAULT_MASTER_SEND_FREQ_HZ, help="主臂关节角发送频率")
-    parser.add_argument("--heartbeat-rate", type=float, default=DEFAULT_HEARTBEAT_FREQ_HZ, help="PC 心跳发送频率")
-    parser.add_argument("--joint-ids", type=lambda s: parse_int_list(s, 5), default=DEFAULT_JOINT_IDS, help="q0~q4 对应的 5 个 Dynamixel ID")
-    parser.add_argument("--gripper-id", type=int, default=GRIPPER_ID, help="用作末端开关的 Dynamixel ID")
-    parser.add_argument("--end-switch-threshold", type=float, default=END_SWITCH_THRESHOLD, help="末端开关触发阈值")
-    parser.add_argument("--joint-signs", type=lambda s: parse_float_list(s, 5), default=DEFAULT_JOINT_SIGNS, help="q0~q4 方向修正")
-    parser.add_argument("--joint-offsets-rad", type=lambda s: parse_float_list(s, 5), default=DEFAULT_JOINT_OFFSETS_RAD, help="q0~q4 零位偏置，单位 rad")
-    parser.add_argument("--ticks-per-rev", type=int, default=DEFAULT_TICKS_PER_REV, help="Dynamixel 每圈 tick 数")
-    parser.add_argument("--no-wrap-ticks", action="store_true", help="不对 Present_Position 做一圈取模")
-    parser.add_argument("--signed-position", action="store_true", help="将 Present_Position 按 int32 有符号数解释")
+    parser.add_argument(
+        "--leader-baud",
+        type=int,
+        default=DEFAULT_LEADER_BAUD,
+        help="主臂 Dynamixel 波特率",
+    )
+    parser.add_argument(
+        "--mcu-baud", type=int, default=DEFAULT_MCU_BAUD, help="MCU 串口波特率"
+    )
+    parser.add_argument(
+        "--freq",
+        type=float,
+        default=DEFAULT_MASTER_SEND_FREQ_HZ,
+        help="主臂关节角发送频率",
+    )
+    parser.add_argument(
+        "--heartbeat-rate",
+        type=float,
+        default=DEFAULT_HEARTBEAT_FREQ_HZ,
+        help="PC 心跳发送频率",
+    )
+    parser.add_argument(
+        "--joint-ids",
+        type=lambda s: parse_int_list(s, 5),
+        default=DEFAULT_JOINT_IDS,
+        help="q0~q4 对应的 5 个 Dynamixel ID",
+    )
+    parser.add_argument(
+        "--gripper-id", type=int, default=GRIPPER_ID, help="用作末端开关的 Dynamixel ID"
+    )
+    parser.add_argument(
+        "--end-switch-threshold",
+        type=float,
+        default=END_SWITCH_THRESHOLD,
+        help="末端开关触发阈值",
+    )
+    parser.add_argument(
+        "--joint-signs",
+        type=lambda s: parse_float_list(s, 5),
+        default=DEFAULT_JOINT_SIGNS,
+        help="q0~q4 方向修正",
+    )
+    parser.add_argument(
+        "--joint-offsets-rad",
+        type=lambda s: parse_float_list(s, 5),
+        default=DEFAULT_JOINT_OFFSETS_RAD,
+        help="q0~q4 零位偏置，单位 rad",
+    )
+    parser.add_argument(
+        "--ticks-per-rev",
+        type=int,
+        default=DEFAULT_TICKS_PER_REV,
+        help="Dynamixel 每圈 tick 数",
+    )
+    parser.add_argument(
+        "--no-wrap-ticks", action="store_true", help="不对 Present_Position 做一圈取模"
+    )
+    parser.add_argument(
+        "--signed-position",
+        action="store_true",
+        help="将 Present_Position 按 int32 有符号数解释",
+    )
     parser.add_argument("--crc-name", default=DEFAULT_CRC_NAME, help="CRC 名称")
-    parser.add_argument("--write-timeout", type=float, default=DEFAULT_WRITE_TIMEOUT_S, help="MCU 串口写超时时间")
-    parser.add_argument("--print-rate", type=float, default=DEFAULT_PRINT_FREQ_HZ, help="调试打印频率，0 表示关闭")
-    parser.add_argument("--dry-run", action="store_true", help="只读取主臂和打包协议，不打开 MCU 串口")
+    parser.add_argument(
+        "--write-timeout",
+        type=float,
+        default=DEFAULT_WRITE_TIMEOUT_S,
+        help="MCU 串口写超时时间",
+    )
+    parser.add_argument(
+        "--print-rate",
+        type=float,
+        default=DEFAULT_PRINT_FREQ_HZ,
+        help="调试打印频率，0 表示关闭",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="只读取主臂和打包协议，不打开 MCU 串口"
+    )
 
     return parser
 
@@ -1087,7 +1163,11 @@ def main() -> int:
                         f"errors={errors}"
                     )
 
-            except (RuntimeError, serial.SerialException, serial.SerialTimeoutException) as exc:
+            except (
+                RuntimeError,
+                serial.SerialException,
+                serial.SerialTimeoutException,
+            ) as exc:
                 errors += 1
                 print(f"[警告] {exc}", file=sys.stderr)
 
