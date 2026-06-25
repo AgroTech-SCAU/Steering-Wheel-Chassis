@@ -847,8 +847,8 @@ class McuSerialSender:
     1. PC -> MCU 的二进制遥操作帧
     2. MCU -> PC 的 ASCII 日志
 
-    因此这里不仅负责写入遥操作帧，也会非阻塞读取 MCU 日志并打印。
-    调试时不要再同时使用 VOFA、minicom 等程序打开同一个串口。
+    因此这里不仅负责写入遥操作帧，也会非阻塞读取 MCU 日志并打印
+    调试时不要再同时使用 VOFA、minicom 等程序打开同一个串口
     """
 
     def __init__(
@@ -1000,8 +1000,8 @@ class McuSerialSender:
 
         说明
         ----
-        MCU 侧日志是普通文本，PC 侧遥操作帧是发往 MCU 的二进制数据。
-        这里仅读取 MCU -> PC 方向的数据，并按换行切分。
+        MCU 侧日志是普通文本，PC 侧遥操作帧是发往 MCU 的二进制数据
+        这里仅读取 MCU -> PC 方向的数据，并按换行切分
         """
         if not self.read_log:
             return []
