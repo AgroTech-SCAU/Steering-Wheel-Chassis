@@ -412,6 +412,271 @@ ros2 run tf2_ros tf2_echo odom base_footprint
 ros2 run tf2_tools view_frames
 ```
 
+
+### 14.4 日志字段说明与状态码约定
+
+节点启动后主要会看到三类日志：启动配置日志、周期统计日志、最近样本日志；`stats_rate_hz` 控制统计日志打印频率，`log_latest_sample=true` 时会在统计日志后继续打印最近一帧 IMU、ODOM、ARM、STATUS 的解析结果
+
+典型日志格式如下：
+
+```text
+serial opened: /dev/ttyACM0 @ 921600
+mcu_comm_bridge started: port=/dev/ttyACM0 baudrate=921600 odom_topic=/odom imu_topic=/imu cmd_vel_topic=/motor_cmd_vel
+stats: imu=... odom=... arm=... status=... start_evt=... ack_rx=... fault=... unknown=... bad_len=... tx_hb=... tx_ack=... tx_ctrl=... tx_yaw=... tx_estop=... tx_fail=... parser_frames=... crc_err=... len_err=... ver_err=...
+latest imu: stamp=... acc=[...]m/s2 gyro=[...]rad/s rpy=[...]rad flags=0x.... seq=...
+latest odom: stamp=... pose=[...] vel=[...] flags=0x.... reset=...
+latest arm: stamp=... q=[...] xyz=[...] flags=0x.... seq=...
+latest status: stamp=... app=... manual=... ready=0x.. online=0x.. fault_src=... fault_level=... fault_code=...
+```
+
+#### 启动配置日志
+
+| 字段 | 含义 | 正常判断 |
+|---|---|---|
+| `port` | Pi 与 MCU 通信使用的串口设备 | 应和实际设备一致，例如 `/dev/ttyACM0` 或 `/dev/mcu_uart` |
+| `baudrate` | 串口波特率 | 必须和 MCU 端一致，当前默认 `921600` |
+| `odom_topic` | MCU_ODOM 发布到 ROS2 的话题 | 默认 `/odom` |
+| `imu_topic` | MCU_IMU 发布到 ROS2 的话题 | 默认 `/imu` |
+| `cmd_vel_topic` | Pi 端订阅的底盘速度指令话题 | 正式系统默认 `/motor_cmd_vel`，单独调试可改为 `/cmd_vel` |
+
+#### `stats:` 周期统计字段
+
+这些字段都是从节点启动后累计的计数，用于判断“有没有收到帧、有没有发出帧、协议有没有错”
+
+| 字段 | 含义 | 异常判断 |
+|---|---|---|
+| `imu` | 成功解析并发布的 `MCU_IMU(0x25)` 数量 | 一直为 0：MCU 未发 IMU 或协议不匹配 |
+| `odom` | 成功解析并发布的 `MCU_ODOM(0x26)` 数量 | 一直为 0：MCU 未发里程计或 payload 长度不对 |
+| `arm` | 成功解析的 `MCU_ARM_STATE(0x27)` 数量 | 一直为 0：机械臂状态未上报 |
+| `status` | 成功解析的 `MCU_STATUS(0x21)` 数量 | 一直为 0：MCU 状态帧未上报，无法判断模式/故障 |
+| `start_evt` | 收到的 `MCU_START_SENSOR_EVENT(0x22)` 数量 | 持续增长：MCU 一直请求 Pi 启动传感器，可能 ACK 未匹配 |
+| `ack_rx` | 收到的 `MCU_ACK(0x23)` 数量 | 用于确认 Pi 一次性事件是否被 MCU 应答 |
+| `fault` | 收到的 `MCU_FAULT_EVENT(0x24)` 数量 | 非 0 表示 MCU 主动上报过故障事件 |
+| `unknown` | 收到未知 `MSG_ID` 的数量 | 非 0 通常表示三端协议版本不一致 |
+| `bad_len` | payload 长度不符合当前 Pi 端定义的数量 | 非 0 通常表示 MCU 发送的 payload 长度和 Pi 端代码不一致 |
+| `tx_hb` | Pi 已发送的 `PI_HEARTBEAT(0x30)` 数量 | 不增长：心跳定时器异常或串口发送失败 |
+| `tx_ack` | Pi 已发送的 `PI_ACK(0x44)` 数量 | 收到 `start_evt` 但不增长：`auto_ack_start_sensor_event` 可能关闭或事件未带 `NEED_ACK` |
+| `tx_ctrl` | Pi 已发送的 `PI_CONTROL(0x31)` 数量 | 发布 `/motor_cmd_vel` 后不增长：控制话题未收到、超时或节点未订阅正确话题 |
+| `tx_yaw` | Pi 已发送的 `PI_YAW_ACTION(0x41)` 数量 | 调 yaw 服务后不增长：服务未调用成功或串口写失败 |
+| `tx_estop` | Pi 已发送的 `PI_ESTOP(0x43)` 数量 | 调急停服务后应增长，默认会重复发送 `repeat_estop_count` 次 |
+| `tx_fail` | 串口写失败次数 | 非 0：检查串口断开、权限、线缆和 MCU 复位 |
+| `parser_frames` | 二进制解析器成功解析出的完整帧数 | 有串口字节但不增长：帧头、LEN、CRC 或版本不匹配 |
+| `crc_err` | CRC 校验失败次数 | 非 0：检查 CRC 算法、覆盖范围、字节序、串口干扰 |
+| `len_err` | 帧级 `LEN` 非法次数 | 非 0：检查 body 长度定义和 `max_body_len` |
+| `ver_err` | 协议版本不匹配次数 | 非 0：检查 `PROTOCOL_VERSION` 是否都是 `0x01` |
+
+#### `latest imu:` 字段
+
+| 字段 | 含义 | 单位 / 状态码 |
+|---|---|---|
+| `stamp` | MCU 端采样时间戳 | `ms`，来自 payload 的 `stamp_ms` |
+| `acc=[x y z]` | 三轴线加速度 | `m/s2`，由 `mm/s2` 换算 |
+| `gyro=[x y z]` | 三轴角速度 | `rad/s`，由 `urad/s` 换算 |
+| `rpy=[roll pitch yaw]` | MCU 融合姿态角 | `rad`，由 `urad` 换算 |
+| `flags` | IMU 状态标志 | 当前 Pi 端只打印不判定；建议见下表 |
+| `seq` | IMU 样本计数 | MCU 端递增，用于观察丢帧或停更 |
+
+建议的 `MCU_IMU.status_flags` 约定如下；当前 Pi 端不会因为这些位为 0 而停止发布 `/imu`，只用于日志诊断
+
+| bit | 名称 | 含义 |
+|---:|---|---|
+| bit0 | `imu_ready` | IMU 驱动/服务已初始化 |
+| bit1 | `acc_valid` | 加速度有效 |
+| bit2 | `gyro_valid` | 角速度有效 |
+| bit3 | `rpy_valid` | roll/pitch/yaw 姿态有效 |
+| bit4 | `yaw_fused_valid` | yaw 已融合底盘/里程计或可信航向源 |
+| bit15 | `imu_fault` | IMU 当前存在故障或数据不可用 |
+
+#### `latest odom:` 字段
+
+| 字段 | 含义 | 单位 / 状态码 |
+|---|---|---|
+| `stamp` | MCU 端里程计时间戳 | `ms` |
+| `pose=[x y yaw]` | odom 坐标系下的底盘局部位姿 | `x/y` 为 `m`，`yaw` 为 `rad` |
+| `vel=[vx vy wz]` | base_footprint 坐标系下的底盘速度 | `vx/vy` 为 `m/s`，`wz` 为 `rad/s` |
+| `flags` | ODOM 状态标志 | 当前 Pi 端只打印不判定；建议见下表 |
+| `reset` | 里程计重置计数 | 每发生一次 MCU 侧里程计清零/重置递增 |
+
+建议的 `MCU_ODOM.status_flags` 约定如下
+
+| bit | 名称 | 含义 |
+|---:|---|---|
+| bit0 | `odom_ready` | 里程计模块已初始化 |
+| bit1 | `pose_valid` | `x/y/yaw` 位姿有效 |
+| bit2 | `twist_valid` | `vx/vy/wz` 速度有效 |
+| bit3 | `yaw_valid` | yaw 角有效 |
+| bit4 | `odom_reset` | 本周期附近发生过里程计重置，配合 `reset` 判断 |
+| bit15 | `odom_fault` | 里程计模块故障或数据不可用 |
+
+#### `latest arm:` 字段
+
+| 字段 | 含义 | 单位 / 状态码 |
+|---|---|---|
+| `stamp` | MCU 端机械臂状态时间戳 | `ms` |
+| `q=[q0 q1 q2 q3 q4]` | 五个关节当前角度 | `rad`，由 `urad` 换算 |
+| `xyz=[x y z]` | MCU 正运动学计算的末端位置 | `m`，由 `mm` 换算 |
+| `flags` | 机械臂状态有效位 | Pi 端会根据 bit1/bit2 决定是否发布对应 ROS 话题 |
+| `seq` | 机械臂状态计数 | MCU 端递增 |
+
+`MCU_ARM_STATE.status_flags` 当前代码已经明确使用以下位：
+
+| bit | 名称 | 含义 | Pi 端行为 |
+|---:|---|---|---|
+| bit0 | `arm_ready` | 机械臂服务已初始化 | 仅用于诊断 |
+| bit1 | `joint_valid` | q0~q4 有效 | 为 1 才发布 `/arm/joint_states` |
+| bit2 | `fk_valid` | xyz 正解结果有效 | 为 1 才发布 `/arm/fk_position` |
+
+#### `latest status:` 字段
+
+| 字段 | 含义 | 状态码 / 判断方式 |
+|---|---|---|
+| `stamp` | MCU 状态帧时间戳 | `ms` |
+| `app` | MCU 应用状态机主状态 | 见 `app_state` 表 |
+| `manual` | MCU 手动子模式 | 见 `manual_mode` 表，仅在 `app=MANUAL` 时重点关注 |
+| `ready` | 各模块 ready 位图 | 见 `ready_flags` 表 |
+| `online` | 外部控制源/故障在线状态位图 | 见 `online_flags` 表 |
+| `fault_src` | 故障来源 | 见 `fault_source` 表 |
+| `fault_level` | 故障等级 | 见 `fault_level` 表 |
+| `fault_code` | 具体故障码 | `0` 表示无故障；非 0 需要结合 `fault_src/fault_level` 查 MCU 端 |
+
+`app_state` 建议固定为：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | `IDLE` | 空闲/待机，未进入手动或自动控制 |
+| 1 | `MANUAL` | 人工接管/遥控模式 |
+| 2 | `AUTO_PI` | Pi 自动控制模式，普通 `PI_CONTROL` 只应在该状态被 MCU 执行 |
+| 3 | `FAULT` | 可恢复故障状态 |
+| 4 | `ESTOP` | 急停锁死状态，不能用普通清故障恢复 |
+| 5 | `FINISHED` | 自动任务完成或结束态 |
+
+`manual_mode` 建议固定为：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | `NONE` | 非手动模式或无子模式 |
+| 1 | `CHASSIS_FS` | 遥控器控制底盘 |
+| 2 | `ARM_FS` | 遥控器控制机械臂 |
+| 3 | `CHASSIS_PC_ARM` | 遥控器控制底盘，PC 主臂关节角控制从臂 |
+
+`ready_flags`：
+
+| bit | 名称 | 含义 |
+|---:|---|---|
+| bit0 | `chassis_ready` | 底盘服务已初始化 |
+| bit1 | `arm_ready` | 机械臂服务已初始化 |
+| bit2 | `odom_ready` | 里程计服务已初始化 |
+| bit3 | `remote_ready` | 遥控器输入服务已初始化 |
+| bit4 | `pc_ready` | PC 通信服务已初始化 |
+| bit5 | `pi_ready` | Pi 通信服务已初始化 |
+
+`online_flags`：
+
+| bit | 名称 | 含义 |
+|---:|---|---|
+| bit0 | `remote_online` | 遥控器当前在线 |
+| bit1 | `pc_online` | PC 通信当前在线 |
+| bit2 | `pi_online` | Pi 心跳当前在线 |
+| bit3 | `has_fault` | 当前存在故障 |
+| bit4 | `estop` | 当前处于急停或急停锁存 |
+
+`fault_source` 建议固定为：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | `NONE` | 无故障来源 |
+| 1 | `CHASSIS` | 底盘执行、驱动、电机或运动学相关故障 |
+| 2 | `ARM` | 机械臂执行、舵机、电机或 IK/FK 相关故障 |
+| 3 | `ODOM_IMU` | 里程计或 IMU 数据异常 |
+| 4 | `REMOTE` | 遥控器离线或输入异常 |
+| 5 | `PC_COMMS` | PC 通信异常 |
+| 6 | `PI_COMMS` | Pi 通信异常，例如 AutoPi 下心跳超时 |
+| 7 | `APP_TASK` | 应用层任务流程异常 |
+| 8 | `SAFETY` | 安全策略触发 |
+| 255 | `UNKNOWN` | 未分类故障 |
+
+`fault_level` 建议固定为：
+
+| 值 | 名称 | 含义 | 是否通常进入 Fault/EStop |
+|---:|---|---|---|
+| 0 | `NONE` | 无故障 | 否 |
+| 1 | `INFO` | 提示信息，不影响控制 | 否 |
+| 2 | `WARN` | 可降级/可忽略警告 | 通常否 |
+| 3 | `ERROR` | 可恢复错误，需要进入 `FAULT` | 是，进入 `FAULT` |
+| 4 | `FATAL` | 严重安全错误 | 是，进入 `ESTOP` 或保持锁死 |
+
+`fault_code` 是 `int16_t`，建议按范围分配，避免不同模块重复：
+
+| 范围 | 建议归属 |
+|---:|---|
+| `0` | 无故障 |
+| `1 ~ 99` | 应用层/参数/状态机通用错误 |
+| `100 ~ 199` | 底盘相关错误 |
+| `200 ~ 299` | 机械臂相关错误 |
+| `300 ~ 399` | ODOM/IMU 相关错误 |
+| `400 ~ 499` | 遥控器相关错误 |
+| `500 ~ 599` | PC 通信相关错误 |
+| `600 ~ 699` | Pi 通信相关错误 |
+| `700 ~ 799` | 自动任务相关错误 |
+| `-1` | 未分类或临时错误 |
+
+#### `start sensor event:` 字段
+
+| 字段 | 含义 | 状态码 / 判断方式 |
+|---|---|---|
+| `stamp` | MCU 事件产生时间 | `ms` |
+| `sensor` | 传感器 ID | 见 `sensor_id` 表 |
+| `type` | 事件类型 | 见 `event_type` 表 |
+| `value` | 事件附加值 | 可作为序号、错误码或启动参数 |
+| `seq` | 该事件帧序号 | Pi 回 `PI_ACK` 时会带回该序号 |
+| `flags` | 帧标志位 | `0x01` 表示 `NEED_ACK`，Pi 会自动回 ACK |
+
+`sensor_id` 建议固定为：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | `ALL` | 所有 Pi 侧传感器 |
+| 1 | `LIDAR` | 激光雷达，例如 Livox MID360 |
+| 2 | `RGB_CAMERA` | RGB 工业相机 |
+| 3 | `DEPTH_CAMERA` | 深度相机，例如 Orbbec |
+| 4 | `IMU_EXTERNAL` | Pi 侧外接 IMU，若有 |
+
+`event_type` 建议固定为：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 1 | `START_REQUIRED` | MCU 请求 Pi 启动对应传感器 |
+| 2 | `STOP_REQUIRED` | MCU 请求 Pi 停止对应传感器 |
+| 3 | `RESTART_REQUIRED` | MCU 请求 Pi 重启对应传感器 |
+| 4 | `CHECK_REQUIRED` | MCU 请求 Pi 检查对应传感器状态 |
+
+#### `MCU_ACK:` 字段与 ACK 状态码
+
+| 字段 | 含义 |
+|---|---|
+| `ack_msg_id` | MCU 正在确认的 Pi 消息 ID，例如 `0x41` 表示确认 `PI_YAW_ACTION` |
+| `ack_seq` | 被确认消息的发送序号 |
+| `code` | MCU 执行或接收结果 |
+
+建议的 ACK `code`：
+
+| 值 | 名称 | 含义 |
+|---:|---|---|
+| 0 | `OK` | 已接收或已执行 |
+| 1 | `REJECTED` | MCU 拒绝执行，通常是权限或安全原因 |
+| 2 | `BUSY` | MCU 正忙，本次动作未执行 |
+| 3 | `BAD_STATE` | 当前状态不允许该命令，例如非 `AUTO_PI` 下收到普通自动控制动作 |
+| 4 | `BAD_PAYLOAD` | payload 参数非法或长度不匹配 |
+| 5 | `TIMEOUT` | MCU 等待内部执行结果超时 |
+| 6 | `UNSUPPORTED` | 当前固件不支持该命令 |
+| 7 | `INTERNAL_ERROR` | MCU 内部执行错误 |
+
+#### `fault event:` 字段
+
+`fault event` 是事件式故障通知，字段含义与 `latest status` 中的 `fault_src/fault_level/fault_code` 相同；区别是：`latest status` 是周期快照，`fault event` 是故障发生时的即时事件；调试时应优先看 `fault event` 发生的时间点，再用后续 `latest status` 判断故障是否仍然存在
+
+> 注意：当前 Pi 端代码只对 `MCU_ARM_STATE.status_flags` 的 bit0~bit2 有硬编码判断；`app_state/manual_mode/fault_source/fault_level/ACK code/sensor_id/event_type/IMU flags/ODOM flags` 应与 STM32 MCU 端宏定义保持一致；如果 MCU 端已经有不同枚举，应以 MCU 端宏定义为准，并同步修改本 README
+
 ---
 
 ## 15. 底盘控制测试
