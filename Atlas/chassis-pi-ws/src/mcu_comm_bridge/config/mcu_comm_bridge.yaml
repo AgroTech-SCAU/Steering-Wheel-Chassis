@@ -2,7 +2,7 @@ mcu_comm_bridge_node:
   ros__parameters:
     # ! ========================= 串 口 配 置 ========================= ! #
     port: "/dev/ttyUSB0"
-    baudrate: 921600
+    baudrate: 1000000
 
     # 解析器允许的最大 body 长度，body = VER + MSG_ID + SEQ + FLAGS + PAYLOAD
     max_body_len: 256
