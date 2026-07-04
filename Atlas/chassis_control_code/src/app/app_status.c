@@ -37,6 +37,7 @@ static ms_t s_log_timer = 0u;
 static ms_t s_heartbeat_timer = 0u;
 static uint32_t s_pi_tx_last_absolute_slot = 0u;
 static bool s_pi_tx_slot_initialized = false;
+static uint32_t s_pi_tx_last_log_ms = 0u;
 static AppLedState s_led_state = APP_LED_STATE_NOT_READY;
 static uint16_t s_pi_imu_sequence_count = 0u;
 static uint16_t s_pi_arm_state_sequence_count = 0u;
@@ -66,6 +67,7 @@ void app_status_init(void) {
     s_heartbeat_timer = 0u;
     s_pi_tx_last_absolute_slot = 0u;
     s_pi_tx_slot_initialized = false;
+    s_pi_tx_last_log_ms = 0u;
     s_led_state = APP_LED_STATE_NOT_READY;
     s_pi_imu_sequence_count = 0u;
     s_pi_arm_state_sequence_count = 0u;
@@ -392,6 +394,11 @@ static void app_status_log(void) {
     const AppFault* fault;
     static AppStatusPiStatsSnapshot last_snapshot = { 0 };
     AppStatusPiStatsSnapshot snapshot = { 0 };
+    uint32_t elapsed_ms;
+    float status_rate_hz;
+    float imu_rate_hz;
+    float odom_rate_hz;
+    float arm_rate_hz;
     uint32_t status_attempt_delta;
     uint32_t status_ok_delta;
     uint32_t status_fail_delta;
@@ -412,6 +419,11 @@ static void app_status_log(void) {
     }
 
     app_status_snapshot_pi_stats(&snapshot);
+    elapsed_ms = s_pi_tx_last_log_ms == 0u ? 1000u : (delay_now_ms() - s_pi_tx_last_log_ms);
+    s_pi_tx_last_log_ms = delay_now_ms();
+    if(elapsed_ms == 0u) {
+        elapsed_ms = 1u;
+    }
     status_attempt_delta = snapshot.stats.tx_status_attempt_count - last_snapshot.stats.tx_status_attempt_count;
     status_ok_delta = snapshot.stats.tx_status_ok_count - last_snapshot.stats.tx_status_ok_count;
     status_fail_delta = snapshot.stats.tx_status_fail_count - last_snapshot.stats.tx_status_fail_count;
@@ -426,6 +438,10 @@ static void app_status_log(void) {
     arm_fail_delta = snapshot.stats.tx_arm_state_fail_count - last_snapshot.stats.tx_arm_state_fail_count;
     total_ok_delta = snapshot.stats.tx_frame_count - last_snapshot.stats.tx_frame_count;
     total_fail_delta = snapshot.stats.tx_fail_count - last_snapshot.stats.tx_fail_count;
+    status_rate_hz = ((float)status_attempt_delta * 1000.0f) / (float)elapsed_ms;
+    imu_rate_hz = ((float)imu_attempt_delta * 1000.0f) / (float)elapsed_ms;
+    odom_rate_hz = ((float)odom_attempt_delta * 1000.0f) / (float)elapsed_ms;
+    arm_rate_hz = ((float)arm_attempt_delta * 1000.0f) / (float)elapsed_ms;
 
     fault = app_runtime_get_fault();
     log_info("Heartbeat state=%s manual=%s remote=%u pc=%u pi=%u fault=%u src=%u level=%u code=%ld",
@@ -438,7 +454,12 @@ static void app_status_log(void) {
              fault != NULL ? (unsigned int)fault->source : 0u,
              fault != NULL ? (unsigned int)fault->level : 0u,
              fault != NULL ? (long)fault->code : 0l);
-    log_info("PI_TX/Hz(attempt/hal_ok/hal_fail) status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu total_ok=%lu total_fail=%lu",
+    log_info("PI_TX rate_hz status=%.1f imu=%.1f odom=%.1f arm=%.1f",
+             (double)status_rate_hz,
+             (double)imu_rate_hz,
+             (double)odom_rate_hz,
+             (double)arm_rate_hz);
+    log_info("PI_TX result status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu",
              (unsigned long)status_attempt_delta,
              (unsigned long)status_ok_delta,
              (unsigned long)status_fail_delta,
@@ -450,7 +471,14 @@ static void app_status_log(void) {
              (unsigned long)odom_fail_delta,
              (unsigned long)arm_attempt_delta,
              (unsigned long)arm_ok_delta,
-             (unsigned long)arm_fail_delta,
+             (unsigned long)arm_fail_delta);
+    log_info("PI_TX error pack=%lu crc_pre=%lu crc_post=%lu hal_busy=%lu hal_timeout=%lu hal_error=%lu total_ok=%lu total_fail=%lu",
+             (unsigned long)(snapshot.stats.tx_pack_fail_count - last_snapshot.stats.tx_pack_fail_count),
+             (unsigned long)(snapshot.stats.tx_crc_precheck_fail_count - last_snapshot.stats.tx_crc_precheck_fail_count),
+             (unsigned long)(snapshot.stats.tx_crc_postcheck_fail_count - last_snapshot.stats.tx_crc_postcheck_fail_count),
+             (unsigned long)(snapshot.stats.tx_hal_busy_count - last_snapshot.stats.tx_hal_busy_count),
+             (unsigned long)(snapshot.stats.tx_hal_timeout_count - last_snapshot.stats.tx_hal_timeout_count),
+             (unsigned long)(snapshot.stats.tx_hal_error_count - last_snapshot.stats.tx_hal_error_count),
              (unsigned long)total_ok_delta,
              (unsigned long)total_fail_delta);
 

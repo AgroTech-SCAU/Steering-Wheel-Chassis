@@ -27,6 +27,7 @@ include_directories(include)
 add_executable(mcu_comm_bridge_node
   src/mcu_comm_bridge_node.cpp
   src/binary_frame.cpp
+  src/publish_scheduler.cpp
   src/serial_port.cpp
 )
 

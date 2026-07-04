@@ -12,6 +12,7 @@ static uint8_t s_pi_comms_rx_byte = 0u;
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 static bool assemble_pi_comms_write(const char* data, uint32_t len);
+static int assemble_pi_comms_last_tx_result(void);
 static uint32_t assemble_pi_comms_now_ms(void);
 static void assemble_pi_comms_on_rx_complete(void);
 static void assemble_pi_comms_on_error(void);
@@ -23,6 +24,7 @@ SystemStatus assemble_pi_comms(void) {
     PiCommsConfig config;
 
     config.port_ops.write = assemble_pi_comms_write;
+    config.port_ops.get_last_tx_result = assemble_pi_comms_last_tx_result;
     config.port_ops.now_ms = assemble_pi_comms_now_ms;
     if(pi_comms_init(&config) != PI_COMMS_STATUS_OK) {
         return SYSTEM_STATUS_ERROR;
@@ -39,6 +41,10 @@ SystemStatus assemble_pi_comms(void) {
 
 static bool assemble_pi_comms_write(const char* data, uint32_t len) {
     return uart10_write_blocking(data, len);
+}
+
+static int assemble_pi_comms_last_tx_result(void) {
+    return (int)uart10_get_last_tx_result();
 }
 
 static uint32_t assemble_pi_comms_now_ms(void) {

@@ -13,6 +13,13 @@
  */
 #define UART_TIMEOUT 100u
 
+typedef enum {
+    PI_TX_HAL_OK = 0,
+    PI_TX_HAL_BUSY,
+    PI_TX_HAL_TIMEOUT,
+    PI_TX_HAL_ERROR
+} PiTxHalResult;
+
 /**
  * @brief USART1 句柄
  * @details 同时用于日志发送和 PC 链路接收
@@ -70,6 +77,7 @@ bool uart7_write_blocking(const char* data, uint32_t len);
  * @return bool `true` 表示发送完成
  */
 bool uart10_write_blocking(const char* data, uint32_t len);
+PiTxHalResult uart10_get_last_tx_result(void);
 
 /**
  * @brief 启动 UART 中断接收

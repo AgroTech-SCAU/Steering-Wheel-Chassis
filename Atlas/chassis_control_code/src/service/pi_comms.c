@@ -8,6 +8,7 @@
 #include "binary_frame.h"
 #include "delay.h"
 #include "log.h"
+#include "stm32_hal_uart.h"
 #include "protocol_parser.h"
 
 #include <string.h>
@@ -64,6 +65,7 @@ static bool pi_comms_interval_due(uint32_t* last_ms, uint32_t interval_ms);
 static void pi_comms_warn_limited(const char* message);
 static uint8_t pi_comms_next_tx_seq(void);
 static bool pi_comms_write_bytes(const uint8_t* data, uint16_t len);
+static int pi_comms_get_last_tx_result(void);
 static uint32_t* pi_comms_msg_attempt_counter(uint8_t msg_id);
 static uint32_t* pi_comms_msg_ok_counter(uint8_t msg_id);
 static uint32_t* pi_comms_msg_fail_counter(uint8_t msg_id);
@@ -446,6 +448,14 @@ static bool pi_comms_write_bytes(const uint8_t* data, uint16_t len) {
     return s_pi_comms_config.port_ops.write((const char*)data, len);
 }
 
+static int pi_comms_get_last_tx_result(void) {
+    if(s_pi_comms_config.port_ops.get_last_tx_result != NULL) {
+        return s_pi_comms_config.port_ops.get_last_tx_result();
+    }
+
+    return PI_TX_HAL_ERROR;
+}
+
 static uint32_t* pi_comms_msg_attempt_counter(uint8_t msg_id) {
     switch(msg_id) {
         case BINARY_FRAME_MSG_MCU_STATUS:
@@ -509,9 +519,13 @@ static bool pi_comms_send_frame(uint8_t msg_id,
                                 const uint8_t* payload,
                                 uint16_t payload_len) {
     uint16_t frame_len = 0u;
+    uint16_t stored_crc = 0u;
+    uint16_t calculated_crc = 0u;
+    uint16_t after_crc = 0u;
     uint32_t* msg_attempt_count = NULL;
     uint32_t* msg_ok_count = NULL;
     uint32_t* msg_fail_count = NULL;
+    int hal_result = PI_TX_HAL_ERROR;
 
     s_pi_comms_stats.tx_attempt_count++;
     msg_attempt_count = pi_comms_msg_attempt_counter(msg_id);
@@ -529,6 +543,19 @@ static bool pi_comms_send_frame(uint8_t msg_id,
                           s_pi_comms_tx_frame_buf,
                           sizeof(s_pi_comms_tx_frame_buf),
                           &frame_len)) {
+        s_pi_comms_stats.tx_pack_fail_count++;
+        s_pi_comms_stats.tx_fail_count++;
+        if(msg_fail_count != NULL) {
+            (*msg_fail_count)++;
+        }
+        return false;
+    }
+
+    stored_crc = ((uint16_t)s_pi_comms_tx_frame_buf[frame_len - 2u] << 8) |
+                 (uint16_t)s_pi_comms_tx_frame_buf[frame_len - 1u];
+    calculated_crc = binary_frame_crc16_ccitt(s_pi_comms_tx_frame_buf, (uint16_t)(frame_len - 2u));
+    if(calculated_crc != stored_crc) {
+        s_pi_comms_stats.tx_crc_precheck_fail_count++;
         s_pi_comms_stats.tx_fail_count++;
         if(msg_fail_count != NULL) {
             (*msg_fail_count)++;
@@ -537,6 +564,28 @@ static bool pi_comms_send_frame(uint8_t msg_id,
     }
 
     if(!pi_comms_write_bytes(s_pi_comms_tx_frame_buf, frame_len)) {
+        hal_result = pi_comms_get_last_tx_result();
+        if(hal_result == PI_TX_HAL_BUSY) {
+            s_pi_comms_stats.tx_hal_busy_count++;
+        }
+        else if(hal_result == PI_TX_HAL_TIMEOUT) {
+            s_pi_comms_stats.tx_hal_timeout_count++;
+        }
+        else {
+            s_pi_comms_stats.tx_hal_error_count++;
+        }
+        s_pi_comms_stats.tx_fail_count++;
+        if(msg_fail_count != NULL) {
+            (*msg_fail_count)++;
+        }
+        return false;
+    }
+
+    after_crc = binary_frame_crc16_ccitt(s_pi_comms_tx_frame_buf, (uint16_t)(frame_len - 2u));
+    if(after_crc != stored_crc) {
+        /* This only verifies the TX buffer in local MCU RAM stayed intact during blocking send. */
+        s_pi_comms_stats.tx_crc_postcheck_fail_count++;
+        s_pi_comms_stats.tx_buffer_corruption_count++;
         s_pi_comms_stats.tx_fail_count++;
         if(msg_fail_count != NULL) {
             (*msg_fail_count)++;
@@ -545,6 +594,7 @@ static bool pi_comms_send_frame(uint8_t msg_id,
     }
 
     s_pi_comms_stats.tx_frame_count++;
+    s_pi_comms_stats.tx_ok_count++;
     if(msg_ok_count != NULL) {
         (*msg_ok_count)++;
     }

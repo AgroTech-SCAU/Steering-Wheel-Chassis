@@ -21,6 +21,7 @@ typedef enum {
 
 typedef struct {
     bool (*write)(const char* data, uint32_t len);
+    int (*get_last_tx_result)(void);
     uint32_t (*now_ms)(void);
 } PiCommsPortOps;
 
@@ -171,8 +172,16 @@ typedef struct {
     uint8_t rx_last_seq;
     uint32_t last_rx_ms;
     uint32_t tx_attempt_count;
+    uint32_t tx_ok_count;
     uint32_t tx_frame_count;
     uint32_t tx_fail_count;
+    uint32_t tx_pack_fail_count;
+    uint32_t tx_crc_precheck_fail_count;
+    uint32_t tx_crc_postcheck_fail_count;
+    uint32_t tx_buffer_corruption_count;
+    uint32_t tx_hal_busy_count;
+    uint32_t tx_hal_timeout_count;
+    uint32_t tx_hal_error_count;
     uint32_t tx_status_attempt_count;
     uint32_t tx_status_ok_count;
     uint32_t tx_status_fail_count;
