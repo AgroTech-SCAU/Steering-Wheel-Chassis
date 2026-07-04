@@ -1140,9 +1140,13 @@ private:
 
         last_stats_snapshot_ = snapshot;
 
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
+
         if(!log_latest_sample_) {
             return;
         }
+
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
 
         std::lock_guard<std::mutex> lock(data_mutex_);
         if(latest_imu_.has_value) {
