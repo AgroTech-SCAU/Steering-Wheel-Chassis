@@ -438,7 +438,7 @@ static void app_status_log(void) {
              fault != NULL ? (unsigned int)fault->source : 0u,
              fault != NULL ? (unsigned int)fault->level : 0u,
              fault != NULL ? (long)fault->code : 0l);
-    log_info("PI_TX/s status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu total_ok=%lu total_fail=%lu",
+    log_info("PI_TX/Hz(attempt/hal_ok/hal_fail) status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu total_ok=%lu total_fail=%lu",
              (unsigned long)status_attempt_delta,
              (unsigned long)status_ok_delta,
              (unsigned long)status_fail_delta,
