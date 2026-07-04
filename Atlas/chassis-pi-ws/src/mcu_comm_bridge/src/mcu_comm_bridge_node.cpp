@@ -420,6 +420,7 @@ private:
     }
 
     void open_serial() {
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
         try {
             serial_.open(port_, baudrate_);
             RCLCPP_INFO(get_logger(), "serial opened exclusively: %s @ %d", port_.c_str(), baudrate_);
@@ -428,6 +429,7 @@ private:
             RCLCPP_FATAL(get_logger(), "failed to open serial %s: %s", port_.c_str(), e.what());
             throw;
         }
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
     }
 
     void rx_loop() {
@@ -1084,6 +1086,7 @@ private:
             : std::chrono::duration<double>(now_tp - last_stats_time_).count();
         last_stats_time_ = now_tp;
 
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
         RCLCPP_INFO(
             get_logger(),
             "RAW rx_bytes_hz=%.1f read_calls_hz=%.1f read_zero_hz=%.1f read_error_hz=%.1f valid_frames_hz=%.1f queue_drop_hz=%.1f queue_depth=%" PRIu64 " max_batch=%" PRIu64,
@@ -1151,6 +1154,8 @@ private:
         if(has_status_) {
             RCLCPP_INFO(get_logger(), "latest status stamp_ms=%u fault=%d", latest_status_.stamp_ms, latest_status_.fault_code);
         }
+
+        RCLCPP_INFO(get_logger(), "--------------------------------------------------");
     }
 
     static void update_max_atomic(std::atomic<uint64_t>& target, uint64_t value) {

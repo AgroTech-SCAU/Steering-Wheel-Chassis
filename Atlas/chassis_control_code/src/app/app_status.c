@@ -444,6 +444,7 @@ static void app_status_log(void) {
     arm_rate_hz = ((float)arm_attempt_delta * 1000.0f) / (float)elapsed_ms;
 
     fault = app_runtime_get_fault();
+    log_info("--------------------------------------------------");
     log_info("Heartbeat state=%s manual=%s remote=%u pc=%u pi=%u fault=%u src=%u level=%u code=%ld",
              app_fsm_state_str(app_runtime_get_state()),
              app_fsm_manual_mode_str(app_runtime_get_manual_mode()),
@@ -459,7 +460,7 @@ static void app_status_log(void) {
              (double)imu_rate_hz,
              (double)odom_rate_hz,
              (double)arm_rate_hz);
-    log_info("PI_TX result status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu",
+    log_info("PI_TX result(attempt/ok/fail) status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu",
              (unsigned long)status_attempt_delta,
              (unsigned long)status_ok_delta,
              (unsigned long)status_fail_delta,
@@ -472,7 +473,7 @@ static void app_status_log(void) {
              (unsigned long)arm_attempt_delta,
              (unsigned long)arm_ok_delta,
              (unsigned long)arm_fail_delta);
-    log_info("PI_TX error pack=%lu crc_pre=%lu crc_post=%lu hal_busy=%lu hal_timeout=%lu hal_error=%lu total_ok=%lu total_fail=%lu",
+    log_info("PI_TX error(pack/fail) pack=%lu crc_pre=%lu crc_post=%lu hal_busy=%lu hal_timeout=%lu hal_error=%lu total_ok=%lu total_fail=%lu",
              (unsigned long)(snapshot.stats.tx_pack_fail_count - last_snapshot.stats.tx_pack_fail_count),
              (unsigned long)(snapshot.stats.tx_crc_precheck_fail_count - last_snapshot.stats.tx_crc_precheck_fail_count),
              (unsigned long)(snapshot.stats.tx_crc_postcheck_fail_count - last_snapshot.stats.tx_crc_postcheck_fail_count),
@@ -481,6 +482,7 @@ static void app_status_log(void) {
              (unsigned long)(snapshot.stats.tx_hal_error_count - last_snapshot.stats.tx_hal_error_count),
              (unsigned long)total_ok_delta,
              (unsigned long)total_fail_delta);
+    log_info("--------------------------------------------------");
 
     last_snapshot = snapshot;
 }
