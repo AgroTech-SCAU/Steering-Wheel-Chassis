@@ -7,7 +7,9 @@
 #include <chrono>
 #include <cmath>
 #include <cinttypes>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -42,6 +44,7 @@ constexpr uint8_t PI_ARM_MODE_NONE = 0u;                   /**< PI_CONTROL: 本�
 constexpr uint8_t PI_YAW_ACTION_HOLD_ENABLE = 1u;          /**< PI_YAW_ACTION: 开启 yaw hold */
 constexpr uint8_t PI_YAW_ACTION_HOLD_DISABLE = 2u;         /**< PI_YAW_ACTION: 关闭 yaw hold */
 constexpr uint8_t PI_YAW_ACTION_TARGET_SET = 3u;           /**< PI_YAW_ACTION: 设置目标 yaw */
+constexpr size_t RX_QUEUE_CAPACITY = 512u;
 
 // ! ========================= 数 据 结 构 ========================= ! //
 
@@ -175,6 +178,30 @@ struct BridgeStats {
     std::atomic<uint64_t> tx_yaw_action{ 0 };
     std::atomic<uint64_t> tx_estop{ 0 };
     std::atomic<uint64_t> tx_fail{ 0 };
+    std::atomic<uint64_t> rx_queue_drop{ 0 };
+    std::atomic<uint64_t> rx_queue_peak_depth{ 0 };
+};
+
+struct BridgeStatsSnapshot {
+    uint64_t rx_imu = 0;
+    uint64_t rx_odom = 0;
+    uint64_t rx_arm_state = 0;
+    uint64_t rx_status = 0;
+    uint64_t rx_start_sensor_event = 0;
+    uint64_t rx_mcu_ack = 0;
+    uint64_t rx_fault_event = 0;
+    uint64_t rx_unknown = 0;
+    uint64_t rx_bad_payload_len = 0;
+    uint64_t tx_heartbeat = 0;
+    uint64_t tx_pi_ack = 0;
+    uint64_t tx_control = 0;
+    uint64_t tx_yaw_action = 0;
+    uint64_t tx_estop = 0;
+    uint64_t tx_fail = 0;
+    uint64_t rx_queue_drop = 0;
+    uint64_t rx_queue_peak_depth = 0;
+    uint64_t rx_queue_depth = 0;
+    ParserStats parser{};
 };
 
 /**
@@ -260,6 +287,7 @@ public:
 
         running_.store(true);
         rx_thread_ = std::thread(&McuCommBridgeNode::rx_loop, this);
+        dispatch_thread_ = std::thread(&McuCommBridgeNode::dispatch_loop, this);
 
         const auto heartbeat_period = std::chrono::duration<double>(1.0 / heartbeat_rate_hz_);
         heartbeat_timer_ = create_wall_timer(
@@ -287,8 +315,12 @@ public:
      */
     ~McuCommBridgeNode() override {
         running_.store(false);
+        rx_queue_cv_.notify_all();
         if(rx_thread_.joinable()) {
             rx_thread_.join();
+        }
+        if(dispatch_thread_.joinable()) {
+            dispatch_thread_.join();
         }
         serial_.close();
     }
@@ -300,8 +332,8 @@ private:
      * @brief 读取 ROS 参数
      */
     void load_parameters() {
-        port_ = declare_parameter<std::string>("port", "/dev/mcu_uart");
-        baudrate_ = declare_parameter<int>("baudrate", 921600);
+        port_ = declare_parameter<std::string>("port", "/dev/ttyUSB0");
+        baudrate_ = declare_parameter<int>("baudrate", 1000000);
         heartbeat_rate_hz_ = declare_parameter<double>("heartbeat_rate_hz", 1.0);
         stats_rate_hz_ = declare_parameter<double>("stats_rate_hz", 1.0);
         control_rate_hz_ = declare_parameter<double>("control_rate_hz", 50.0);
@@ -392,6 +424,84 @@ private:
         }
     }
 
+    BridgeStatsSnapshot snapshot_stats() {
+        BridgeStatsSnapshot snapshot;
+        snapshot.rx_imu = stats_.rx_imu.load();
+        snapshot.rx_odom = stats_.rx_odom.load();
+        snapshot.rx_arm_state = stats_.rx_arm_state.load();
+        snapshot.rx_status = stats_.rx_status.load();
+        snapshot.rx_start_sensor_event = stats_.rx_start_sensor_event.load();
+        snapshot.rx_mcu_ack = stats_.rx_mcu_ack.load();
+        snapshot.rx_fault_event = stats_.rx_fault_event.load();
+        snapshot.rx_unknown = stats_.rx_unknown.load();
+        snapshot.rx_bad_payload_len = stats_.rx_bad_payload_len.load();
+        snapshot.tx_heartbeat = stats_.tx_heartbeat.load();
+        snapshot.tx_pi_ack = stats_.tx_pi_ack.load();
+        snapshot.tx_control = stats_.tx_control.load();
+        snapshot.tx_yaw_action = stats_.tx_yaw_action.load();
+        snapshot.tx_estop = stats_.tx_estop.load();
+        snapshot.tx_fail = stats_.tx_fail.load();
+        snapshot.rx_queue_drop = stats_.rx_queue_drop.load();
+        snapshot.rx_queue_peak_depth = stats_.rx_queue_peak_depth.load();
+        {
+            std::lock_guard<std::mutex> lock(parser_mutex_);
+            snapshot.parser = parser_.stats();
+        }
+        {
+            std::lock_guard<std::mutex> lock(rx_queue_mutex_);
+            snapshot.rx_queue_depth = rx_queue_.size();
+        }
+        return snapshot;
+    }
+
+    void enqueue_frame(Frame&& frame) {
+        bool dropped_oldest = false;
+        {
+            std::lock_guard<std::mutex> lock(rx_queue_mutex_);
+            if(rx_queue_.size() >= RX_QUEUE_CAPACITY) {
+                rx_queue_.pop_front();
+                stats_.rx_queue_drop++;
+                dropped_oldest = true;
+            }
+
+            rx_queue_.push_back(std::move(frame));
+            const uint64_t depth = rx_queue_.size();
+            uint64_t peak = stats_.rx_queue_peak_depth.load();
+            while(depth > peak &&
+                  !stats_.rx_queue_peak_depth.compare_exchange_weak(peak, depth)) {
+            }
+        }
+
+        if(dropped_oldest) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "rx queue full, dropping oldest frame");
+        }
+
+        rx_queue_cv_.notify_one();
+    }
+
+    void dispatch_loop() {
+        while(rclcpp::ok()) {
+            Frame frame;
+            {
+                std::unique_lock<std::mutex> lock(rx_queue_mutex_);
+                rx_queue_cv_.wait(lock, [this]() {
+                    return !running_.load() || !rx_queue_.empty();
+                });
+
+                if(!running_.load() && rx_queue_.empty()) {
+                    break;
+                }
+
+                frame = std::move(rx_queue_.front());
+                rx_queue_.pop_front();
+            }
+
+            handle_frame(frame);
+        }
+    }
+
     // ! ========================= 串 口 接 收 ========================= ! //
 
     /**
@@ -413,11 +523,20 @@ private:
                 continue;
             }
 
-            for(int i = 0; i < n; ++i) {
-                auto frame = parser_.feed(buf[static_cast<size_t>(i)]);
-                if(frame.has_value()) {
-                    handle_frame(frame.value());
+            std::vector<Frame> frames;
+            frames.reserve(4u);
+            {
+                std::lock_guard<std::mutex> lock(parser_mutex_);
+                for(int i = 0; i < n; ++i) {
+                    auto frame = parser_.feed(buf[static_cast<size_t>(i)]);
+                    if(frame.has_value()) {
+                        frames.push_back(std::move(frame.value()));
+                    }
                 }
+            }
+
+            for(Frame& frame : frames) {
+                enqueue_frame(std::move(frame));
             }
         }
     }
@@ -1029,7 +1148,22 @@ private:
      * @brief 周期性打印统计数据和最近样本
      */
     void print_stats() {
-        const ParserStats parser_stats = parser_.stats();
+        const BridgeStatsSnapshot snapshot = snapshot_stats();
+        const SteadyClock::time_point now_tp = SteadyClock::now();
+        double elapsed_sec = 0.0;
+
+        if(last_stats_time_.time_since_epoch().count() != 0) {
+            elapsed_sec = std::chrono::duration<double>(now_tp - last_stats_time_).count();
+        }
+        last_stats_time_ = now_tp;
+
+        const double imu_hz = elapsed_sec > 0.0 ? static_cast<double>(snapshot.rx_imu - last_stats_snapshot_.rx_imu) / elapsed_sec : 0.0;
+        const double odom_hz = elapsed_sec > 0.0 ? static_cast<double>(snapshot.rx_odom - last_stats_snapshot_.rx_odom) / elapsed_sec : 0.0;
+        const double arm_hz = elapsed_sec > 0.0 ? static_cast<double>(snapshot.rx_arm_state - last_stats_snapshot_.rx_arm_state) / elapsed_sec : 0.0;
+        const double status_hz = elapsed_sec > 0.0 ? static_cast<double>(snapshot.rx_status - last_stats_snapshot_.rx_status) / elapsed_sec : 0.0;
+        const double crc_err_per_sec = elapsed_sec > 0.0 ? static_cast<double>(snapshot.parser.crc_error - last_stats_snapshot_.parser.crc_error) / elapsed_sec : 0.0;
+        const double resync_per_sec = elapsed_sec > 0.0 ? static_cast<double>(snapshot.parser.resync - last_stats_snapshot_.parser.resync) / elapsed_sec : 0.0;
+        const double queue_drop_per_sec = elapsed_sec > 0.0 ? static_cast<double>(snapshot.rx_queue_drop - last_stats_snapshot_.rx_queue_drop) / elapsed_sec : 0.0;
 
         RCLCPP_INFO(
             get_logger(),
@@ -1037,12 +1171,18 @@ private:
             " start_evt=%" PRIu64 " ack_rx=%" PRIu64 " fault=%" PRIu64
             " unknown=%" PRIu64 " bad_len=%" PRIu64 " tx_hb=%" PRIu64
             " tx_ack=%" PRIu64 " tx_ctrl=%" PRIu64 " tx_yaw=%" PRIu64 " tx_estop=%" PRIu64 " tx_fail=%" PRIu64
-            " parser_frames=%" PRIu64 " crc_err=%" PRIu64 " len_err=%" PRIu64 " ver_err=%" PRIu64,
-            stats_.rx_imu.load(), stats_.rx_odom.load(), stats_.rx_arm_state.load(), stats_.rx_status.load(),
-            stats_.rx_start_sensor_event.load(), stats_.rx_mcu_ack.load(), stats_.rx_fault_event.load(),
-            stats_.rx_unknown.load(), stats_.rx_bad_payload_len.load(), stats_.tx_heartbeat.load(),
-            stats_.tx_pi_ack.load(), stats_.tx_control.load(), stats_.tx_yaw_action.load(), stats_.tx_estop.load(), stats_.tx_fail.load(),
-            parser_stats.rx_frames, parser_stats.crc_error, parser_stats.len_error, parser_stats.version_error);
+            " queue_depth=%" PRIu64 " queue_peak=%" PRIu64 " queue_drop=%" PRIu64
+            " parser_frames=%" PRIu64 " rx_bytes=%" PRIu64 " crc_err=%" PRIu64 " len_err=%" PRIu64 " ver_err=%" PRIu64 " resync=%" PRIu64
+            " imu_hz=%.1f odom_hz=%.1f arm_hz=%.1f status_hz=%.1f crc_err_s=%.1f resync_s=%.1f queue_drop_s=%.1f",
+            snapshot.rx_imu, snapshot.rx_odom, snapshot.rx_arm_state, snapshot.rx_status,
+            snapshot.rx_start_sensor_event, snapshot.rx_mcu_ack, snapshot.rx_fault_event,
+            snapshot.rx_unknown, snapshot.rx_bad_payload_len, snapshot.tx_heartbeat,
+            snapshot.tx_pi_ack, snapshot.tx_control, snapshot.tx_yaw_action, snapshot.tx_estop, snapshot.tx_fail,
+            snapshot.rx_queue_depth, snapshot.rx_queue_peak_depth, snapshot.rx_queue_drop,
+            snapshot.parser.rx_frames, snapshot.parser.rx_bytes, snapshot.parser.crc_error, snapshot.parser.len_error, snapshot.parser.version_error, snapshot.parser.resync,
+            imu_hz, odom_hz, arm_hz, status_hz, crc_err_per_sec, resync_per_sec, queue_drop_per_sec);
+
+        last_stats_snapshot_ = snapshot;
 
         if(!log_latest_sample_) {
             return;
@@ -1117,7 +1257,7 @@ private:
     // ! ========================= 成 员 变 量 ========================= ! //
 
     std::string port_;
-    int baudrate_ = 921600;
+    int baudrate_ = 1000000;
     double heartbeat_rate_hz_ = 1.0;
     double stats_rate_hz_ = 1.0;
     double control_rate_hz_ = 50.0;
@@ -1149,13 +1289,20 @@ private:
     SerialPort serial_;
     BinaryFrameParser parser_;
     BridgeStats stats_;
+    BridgeStatsSnapshot last_stats_snapshot_;
+    SteadyClock::time_point last_stats_time_{};
 
     std::atomic<bool> running_{ false };
     std::thread rx_thread_;
+    std::thread dispatch_thread_;
     std::atomic<uint8_t> tx_seq_{ 0 };
 
     std::mutex tx_mutex_;
+    std::mutex parser_mutex_;
     std::mutex data_mutex_;
+    std::mutex rx_queue_mutex_;
+    std::condition_variable rx_queue_cv_;
+    std::deque<Frame> rx_queue_;
     bool has_imu_ = false;
     bool has_odom_ = false;
     bool has_arm_state_ = false;

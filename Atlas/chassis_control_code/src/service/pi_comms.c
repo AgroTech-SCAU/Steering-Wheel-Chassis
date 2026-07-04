@@ -64,6 +64,9 @@ static bool pi_comms_interval_due(uint32_t* last_ms, uint32_t interval_ms);
 static void pi_comms_warn_limited(const char* message);
 static uint8_t pi_comms_next_tx_seq(void);
 static bool pi_comms_write_bytes(const uint8_t* data, uint16_t len);
+static uint32_t* pi_comms_msg_attempt_counter(uint8_t msg_id);
+static uint32_t* pi_comms_msg_ok_counter(uint8_t msg_id);
+static uint32_t* pi_comms_msg_fail_counter(uint8_t msg_id);
 static bool pi_comms_send_frame(uint8_t msg_id,
                                 uint8_t seq,
                                 uint8_t flags,
@@ -443,12 +446,80 @@ static bool pi_comms_write_bytes(const uint8_t* data, uint16_t len) {
     return s_pi_comms_config.port_ops.write((const char*)data, len);
 }
 
+static uint32_t* pi_comms_msg_attempt_counter(uint8_t msg_id) {
+    switch(msg_id) {
+        case BINARY_FRAME_MSG_MCU_STATUS:
+            return &s_pi_comms_stats.tx_status_attempt_count;
+
+        case BINARY_FRAME_MSG_MCU_IMU:
+            return &s_pi_comms_stats.tx_imu_attempt_count;
+
+        case BINARY_FRAME_MSG_MCU_ODOM:
+            return &s_pi_comms_stats.tx_odom_attempt_count;
+
+        case BINARY_FRAME_MSG_MCU_ARM_STATE:
+            return &s_pi_comms_stats.tx_arm_state_attempt_count;
+
+        default:
+            return NULL;
+    }
+}
+
+static uint32_t* pi_comms_msg_ok_counter(uint8_t msg_id) {
+    switch(msg_id) {
+        case BINARY_FRAME_MSG_MCU_STATUS:
+            return &s_pi_comms_stats.tx_status_ok_count;
+
+        case BINARY_FRAME_MSG_MCU_IMU:
+            return &s_pi_comms_stats.tx_imu_ok_count;
+
+        case BINARY_FRAME_MSG_MCU_ODOM:
+            return &s_pi_comms_stats.tx_odom_ok_count;
+
+        case BINARY_FRAME_MSG_MCU_ARM_STATE:
+            return &s_pi_comms_stats.tx_arm_state_ok_count;
+
+        default:
+            return NULL;
+    }
+}
+
+static uint32_t* pi_comms_msg_fail_counter(uint8_t msg_id) {
+    switch(msg_id) {
+        case BINARY_FRAME_MSG_MCU_STATUS:
+            return &s_pi_comms_stats.tx_status_fail_count;
+
+        case BINARY_FRAME_MSG_MCU_IMU:
+            return &s_pi_comms_stats.tx_imu_fail_count;
+
+        case BINARY_FRAME_MSG_MCU_ODOM:
+            return &s_pi_comms_stats.tx_odom_fail_count;
+
+        case BINARY_FRAME_MSG_MCU_ARM_STATE:
+            return &s_pi_comms_stats.tx_arm_state_fail_count;
+
+        default:
+            return NULL;
+    }
+}
+
 static bool pi_comms_send_frame(uint8_t msg_id,
                                 uint8_t seq,
                                 uint8_t flags,
                                 const uint8_t* payload,
                                 uint16_t payload_len) {
     uint16_t frame_len = 0u;
+    uint32_t* msg_attempt_count = NULL;
+    uint32_t* msg_ok_count = NULL;
+    uint32_t* msg_fail_count = NULL;
+
+    s_pi_comms_stats.tx_attempt_count++;
+    msg_attempt_count = pi_comms_msg_attempt_counter(msg_id);
+    msg_ok_count = pi_comms_msg_ok_counter(msg_id);
+    msg_fail_count = pi_comms_msg_fail_counter(msg_id);
+    if(msg_attempt_count != NULL) {
+        (*msg_attempt_count)++;
+    }
 
     if(!binary_frame_pack(msg_id,
                           seq,
@@ -458,14 +529,25 @@ static bool pi_comms_send_frame(uint8_t msg_id,
                           s_pi_comms_tx_frame_buf,
                           sizeof(s_pi_comms_tx_frame_buf),
                           &frame_len)) {
+        s_pi_comms_stats.tx_fail_count++;
+        if(msg_fail_count != NULL) {
+            (*msg_fail_count)++;
+        }
         return false;
     }
 
     if(!pi_comms_write_bytes(s_pi_comms_tx_frame_buf, frame_len)) {
+        s_pi_comms_stats.tx_fail_count++;
+        if(msg_fail_count != NULL) {
+            (*msg_fail_count)++;
+        }
         return false;
     }
 
     s_pi_comms_stats.tx_frame_count++;
+    if(msg_ok_count != NULL) {
+        (*msg_ok_count)++;
+    }
     return true;
 }
 

@@ -59,6 +59,32 @@ void BinaryFrameParser::reset() {
     buffer_.clear();
 }
 
+void BinaryFrameParser::recover_partial_sof(uint8_t last) {
+    reset();
+    if(last == SOF0) {
+        buffer_.push_back(SOF0);
+        state_ = State::WaitSof1;
+    }
+}
+
+void BinaryFrameParser::reset_and_recover(uint8_t prev, uint8_t last) {
+    reset();
+
+    if(prev == SOF0 && last == SOF1) {
+        buffer_.push_back(SOF0);
+        buffer_.push_back(SOF1);
+        state_ = State::LenHigh;
+        stats_.resync++;
+        return;
+    }
+
+    if(last == SOF0) {
+        buffer_.push_back(SOF0);
+        state_ = State::WaitSof1;
+        stats_.resync++;
+    }
+}
+
 /**
  * @brief 向解析器喂入一个字节并尝试解析帧
  *
@@ -84,11 +110,7 @@ std::optional<Frame> BinaryFrameParser::feed(uint8_t byte) {
             }
             else {
                 stats_.resync++;
-                reset();
-                if(byte == SOF0) {
-                    buffer_.push_back(byte);
-                    state_ = State::WaitSof1;
-                }
+                recover_partial_sof(byte);
             }
             return std::nullopt;
 
@@ -103,7 +125,7 @@ std::optional<Frame> BinaryFrameParser::feed(uint8_t byte) {
             buffer_.push_back(byte);
             if(body_len_ < BODY_PREFIX_LEN || body_len_ > max_body_len_) {
                 stats_.len_error++;
-                reset();
+                reset_and_recover(buffer_[2], buffer_[3]);
                 return std::nullopt;
             }
             body_read_ = 0u;
@@ -141,7 +163,7 @@ std::optional<Frame> BinaryFrameParser::finish_frame() {
     const uint16_t calc_crc = crc16_ccitt(buffer_.data(), buffer_.size());
     if(calc_crc != rx_crc_) {
         stats_.crc_error++;
-        reset();
+        reset_and_recover(static_cast<uint8_t>(rx_crc_ >> 8), static_cast<uint8_t>(rx_crc_ & 0xFFu));
         return std::nullopt;
     }
 

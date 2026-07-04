@@ -313,8 +313,8 @@ src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
 ```yaml
 mcu_comm_bridge_node:
   ros__parameters:
-    port: "/dev/mcu_uart"
-    baudrate: 921600
+    port: "/dev/ttyUSB0"
+    baudrate: 1000000
 
     odom_topic: "/odom"
     imu_topic: "/imu"
@@ -356,7 +356,7 @@ ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
 ```bash
 ros2 run mcu_comm_bridge mcu_comm_bridge_node --ros-args \
   -p port:=/dev/ttyUSB0 \
-  -p baudrate:=921600
+  -p baudrate:=1000000
 ```
 
 单独调试底盘时订阅 `/cmd_vel`：
@@ -420,8 +420,8 @@ ros2 run tf2_tools view_frames
 典型日志格式如下：
 
 ```text
-serial opened: /dev/ttyACM0 @ 921600
-mcu_comm_bridge started: port=/dev/ttyACM0 baudrate=921600 odom_topic=/odom imu_topic=/imu cmd_vel_topic=/motor_cmd_vel
+serial opened: /dev/ttyUSB0 @ 1000000
+mcu_comm_bridge started: port=/dev/ttyUSB0 baudrate=1000000 odom_topic=/odom imu_topic=/imu cmd_vel_topic=/motor_cmd_vel
 stats: imu=... odom=... arm=... status=... start_evt=... ack_rx=... fault=... unknown=... bad_len=... tx_hb=... tx_ack=... tx_ctrl=... tx_yaw=... tx_estop=... tx_fail=... parser_frames=... crc_err=... len_err=... ver_err=...
 latest imu: stamp=... acc=[...]m/s2 gyro=[...]rad/s rpy=[...]rad flags=0x.... seq=...
 latest odom: stamp=... pose=[...] vel=[...] flags=0x.... reset=...
@@ -434,7 +434,7 @@ latest status: stamp=... app=... manual=... ready=0x.. online=0x.. fault_src=...
 | 字段 | 含义 | 正常判断 |
 |---|---|---|
 | `port` | Pi 与 MCU 通信使用的串口设备 | 应和实际设备一致，例如 `/dev/ttyACM0` 或 `/dev/mcu_uart` |
-| `baudrate` | 串口波特率 | 必须和 MCU 端一致，当前默认 `921600` |
+| `baudrate` | 串口波特率 | 必须和 MCU 端一致，当前默认 `1000000` |
 | `odom_topic` | MCU_ODOM 发布到 ROS2 的话题 | 默认 `/odom` |
 | `imu_topic` | MCU_IMU 发布到 ROS2 的话题 | 默认 `/imu` |
 | `cmd_vel_topic` | Pi 端订阅的底盘速度指令话题 | 正式系统默认 `/motor_cmd_vel`，单独调试可改为 `/cmd_vel` |

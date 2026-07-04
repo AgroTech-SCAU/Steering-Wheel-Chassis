@@ -347,8 +347,8 @@ ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
 
 ```bash
 ros2 run mcu_comm_bridge mcu_comm_bridge_node --ros-args \
-  -p port:=/dev/ttyACM0 \
-  -p baudrate:=921600
+  -p port:=/dev/ttyUSB0 \
+  -p baudrate:=1000000
 ```
 
 推荐配置文件位置：
@@ -361,8 +361,8 @@ chassis-pi-ws/src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `port` | `/dev/ttyACM0` | MCU 串口设备 |
-| `baudrate` | `921600` | 串口波特率 |
+| `port` | `/dev/ttyUSB0` | MCU 串口设备 |
+| `baudrate` | `1000000` | 串口波特率 |
 | `odom_topic` | `/odom` | 里程计话题 |
 | `imu_topic` | `/imu` | IMU 话题 |
 | `cmd_vel_topic` | `/motor_cmd_vel` | 底盘速度输入话题 |

@@ -98,7 +98,7 @@ public:
     /**
      * @brief 获取解析器统计信息（只读）
      */
-    const ParserStats& stats() const { return stats_; }
+    ParserStats stats() const { return stats_; }
 
 private:
     enum class State {
@@ -112,6 +112,8 @@ private:
     };
 
     std::optional<Frame> finish_frame();
+    void reset_and_recover(uint8_t prev, uint8_t last);
+    void recover_partial_sof(uint8_t last);
 
     uint16_t max_body_len_ = 256u;
     State state_ = State::WaitSof0;

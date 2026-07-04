@@ -161,6 +161,9 @@ speed_t SerialPort::baud_to_speed(int baudrate) {
         case 921600: return B921600;
 #ifdef B1000000
         case 1000000: return B1000000;
+#else
+        case 1000000:
+            throw std::invalid_argument("baudrate 1000000 is not supported on this system: missing B1000000");
 #endif
 #ifdef B1500000
         case 1500000: return B1500000;

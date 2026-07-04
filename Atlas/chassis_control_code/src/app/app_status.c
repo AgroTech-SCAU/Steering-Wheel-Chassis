@@ -35,25 +35,28 @@ typedef enum {
 
 static ms_t s_log_timer = 0u;
 static ms_t s_heartbeat_timer = 0u;
-static ms_t s_pi_status_send_ms = 0u;
-static ms_t s_pi_imu_send_ms = 0u;
-static ms_t s_pi_odom_send_ms = 0u;
-static ms_t s_pi_arm_state_send_ms = 0u;
+static uint32_t s_pi_tx_last_absolute_slot = 0u;
+static bool s_pi_tx_slot_initialized = false;
 static AppLedState s_led_state = APP_LED_STATE_NOT_READY;
 static uint16_t s_pi_imu_sequence_count = 0u;
 static uint16_t s_pi_arm_state_sequence_count = 0u;
 
+typedef struct {
+    PiCommsStats stats;
+} AppStatusPiStatsSnapshot;
+
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 static void app_status_update_led(void);
-static bool app_status_interval_due(ms_t now_ms, ms_t* last_ms, ms_t interval_ms);
-static void app_status_send_pi_status(void);
-static void app_status_send_pi_imu(void);
-static void app_status_send_pi_odom(void);
-static void app_status_send_pi_arm_state(void);
+static void app_status_process_pi_tx_slot(void);
+static void app_status_send_pi_status_now(void);
+static void app_status_send_pi_imu_now(void);
+static void app_status_send_pi_odom_now(void);
+static void app_status_send_pi_arm_state_now(void);
 static void app_status_build_pi_imu_snapshot(PiCommsImuSnapshot* snapshot);
 static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot);
 static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snapshot);
+static void app_status_snapshot_pi_stats(AppStatusPiStatsSnapshot* snapshot);
 static void app_status_log(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
@@ -61,10 +64,8 @@ static void app_status_log(void);
 void app_status_init(void) {
     s_log_timer = 0u;
     s_heartbeat_timer = 0u;
-    s_pi_status_send_ms = 0u;
-    s_pi_imu_send_ms = 0u;
-    s_pi_odom_send_ms = 0u;
-    s_pi_arm_state_send_ms = 0u;
+    s_pi_tx_last_absolute_slot = 0u;
+    s_pi_tx_slot_initialized = false;
     s_led_state = APP_LED_STATE_NOT_READY;
     s_pi_imu_sequence_count = 0u;
     s_pi_arm_state_sequence_count = 0u;
@@ -72,32 +73,15 @@ void app_status_init(void) {
 
 void app_status_process(void) {
     app_status_update_led();
-    app_status_send_pi_status();
-    app_status_send_pi_imu();
-    app_status_send_pi_odom();
-    app_status_send_pi_arm_state();
+    app_status_process_pi_tx_slot();
     app_status_log();
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 /**
- * @brief 非阻塞周期判断
- * @details 周期状态帧使用 now_ms + last_send_ms 判定，避免在 500Hz 主循环里无节制发送
+ * @brief 非阻塞周期更新 LED 状态
  */
-static bool app_status_interval_due(ms_t now_ms, ms_t* last_ms, ms_t interval_ms) {
-    if(last_ms == NULL) {
-        return false;
-    }
-
-    if(*last_ms == 0u || (now_ms - *last_ms) >= interval_ms) {
-        *last_ms = now_ms;
-        return true;
-    }
-
-    return false;
-}
-
 static void app_status_update_led(void) {
     AppLedState target_state;
     const AppFsmStateId state = app_runtime_get_state();
@@ -171,7 +155,42 @@ static void app_status_update_led(void) {
     }
 }
 
-static void app_status_send_pi_status(void) {
+static void app_status_process_pi_tx_slot(void) {
+    const uint32_t absolute_slot = delay_now_ms() / 2u;
+    const uint32_t slot_mod = absolute_slot % 50u;
+
+    if(!s_pi_tx_slot_initialized) {
+        s_pi_tx_last_absolute_slot = absolute_slot;
+        s_pi_tx_slot_initialized = true;
+    }
+    else if(absolute_slot == s_pi_tx_last_absolute_slot) {
+        return;
+    }
+    else {
+        s_pi_tx_last_absolute_slot = absolute_slot;
+    }
+
+    if((slot_mod % 5u) == 0u) {
+        app_status_send_pi_imu_now();
+        return;
+    }
+
+    if((slot_mod % 10u) == 1u) {
+        app_status_send_pi_odom_now();
+        return;
+    }
+
+    if((slot_mod % 10u) == 3u) {
+        app_status_send_pi_arm_state_now();
+        return;
+    }
+
+    if(slot_mod == 4u) {
+        app_status_send_pi_status_now();
+    }
+}
+
+static void app_status_send_pi_status_now(void) {
     PiCommsStatusSnapshot status = { 0 };
     const AppFault* fault;
     uint8_t ready_flags = 0u;
@@ -182,10 +201,6 @@ static void app_status_send_pi_status(void) {
     const bool has_fault = app_runtime_has_fault();
     const bool estop = app_runtime_get_state() == APP_FSM_STATE_ESTOP;
     const ms_t now_ms = delay_now_ms();
-
-    if(!app_status_interval_due(now_ms, &s_pi_status_send_ms, 100u)) {
-        return;
-    }
 
     fault = app_runtime_get_fault();
     ready_flags |= chassis.is_ready() ? BINARY_FRAME_STATUS_READY_CHASSIS : 0u;
@@ -215,13 +230,8 @@ static void app_status_send_pi_status(void) {
 /**
  * @brief 按 100Hz 周期发送 MCU_IMU
  */
-static void app_status_send_pi_imu(void) {
+static void app_status_send_pi_imu_now(void) {
     PiCommsImuSnapshot snapshot = { 0 };
-    const ms_t now_ms = delay_now_ms();
-
-    if(!app_status_interval_due(now_ms, &s_pi_imu_send_ms, 10u)) {
-        return;
-    }
 
     app_status_build_pi_imu_snapshot(&snapshot);
     (void)pi_comms_send_imu(&snapshot);
@@ -230,13 +240,8 @@ static void app_status_send_pi_imu(void) {
 /**
  * @brief 按 50Hz 周期发送 MCU_ODOM
  */
-static void app_status_send_pi_odom(void) {
+static void app_status_send_pi_odom_now(void) {
     PiCommsOdomSnapshot snapshot = { 0 };
-    const ms_t now_ms = delay_now_ms();
-
-    if(!app_status_interval_due(now_ms, &s_pi_odom_send_ms, 20u)) {
-        return;
-    }
 
     app_status_build_pi_odom_snapshot(&snapshot);
     (void)pi_comms_send_odom(&snapshot);
@@ -245,13 +250,8 @@ static void app_status_send_pi_odom(void) {
 /**
  * @brief 按 50Hz 周期发送 MCU_ARM_STATE
  */
-static void app_status_send_pi_arm_state(void) {
+static void app_status_send_pi_arm_state_now(void) {
     PiCommsArmStateSnapshot snapshot = { 0 };
-    const ms_t now_ms = delay_now_ms();
-
-    if(!app_status_interval_due(now_ms, &s_pi_arm_state_send_ms, 20u)) {
-        return;
-    }
 
     app_status_build_pi_arm_state_snapshot(&snapshot);
     (void)pi_comms_send_arm_state(&snapshot);
@@ -380,12 +380,52 @@ static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snap
     snapshot->status_flags = status_flags;
 }
 
+static void app_status_snapshot_pi_stats(AppStatusPiStatsSnapshot* snapshot) {
+    if(snapshot == NULL) {
+        return;
+    }
+
+    (void)pi_comms_get_stats(&snapshot->stats);
+}
+
 static void app_status_log(void) {
     const AppFault* fault;
+    static AppStatusPiStatsSnapshot last_snapshot = { 0 };
+    AppStatusPiStatsSnapshot snapshot = { 0 };
+    uint32_t status_attempt_delta;
+    uint32_t status_ok_delta;
+    uint32_t status_fail_delta;
+    uint32_t imu_attempt_delta;
+    uint32_t imu_ok_delta;
+    uint32_t imu_fail_delta;
+    uint32_t odom_attempt_delta;
+    uint32_t odom_ok_delta;
+    uint32_t odom_fail_delta;
+    uint32_t arm_attempt_delta;
+    uint32_t arm_ok_delta;
+    uint32_t arm_fail_delta;
+    uint32_t total_ok_delta;
+    uint32_t total_fail_delta;
 
     if(!delay_nb_ms(&s_log_timer, 1000u)) {
         return;
     }
+
+    app_status_snapshot_pi_stats(&snapshot);
+    status_attempt_delta = snapshot.stats.tx_status_attempt_count - last_snapshot.stats.tx_status_attempt_count;
+    status_ok_delta = snapshot.stats.tx_status_ok_count - last_snapshot.stats.tx_status_ok_count;
+    status_fail_delta = snapshot.stats.tx_status_fail_count - last_snapshot.stats.tx_status_fail_count;
+    imu_attempt_delta = snapshot.stats.tx_imu_attempt_count - last_snapshot.stats.tx_imu_attempt_count;
+    imu_ok_delta = snapshot.stats.tx_imu_ok_count - last_snapshot.stats.tx_imu_ok_count;
+    imu_fail_delta = snapshot.stats.tx_imu_fail_count - last_snapshot.stats.tx_imu_fail_count;
+    odom_attempt_delta = snapshot.stats.tx_odom_attempt_count - last_snapshot.stats.tx_odom_attempt_count;
+    odom_ok_delta = snapshot.stats.tx_odom_ok_count - last_snapshot.stats.tx_odom_ok_count;
+    odom_fail_delta = snapshot.stats.tx_odom_fail_count - last_snapshot.stats.tx_odom_fail_count;
+    arm_attempt_delta = snapshot.stats.tx_arm_state_attempt_count - last_snapshot.stats.tx_arm_state_attempt_count;
+    arm_ok_delta = snapshot.stats.tx_arm_state_ok_count - last_snapshot.stats.tx_arm_state_ok_count;
+    arm_fail_delta = snapshot.stats.tx_arm_state_fail_count - last_snapshot.stats.tx_arm_state_fail_count;
+    total_ok_delta = snapshot.stats.tx_frame_count - last_snapshot.stats.tx_frame_count;
+    total_fail_delta = snapshot.stats.tx_fail_count - last_snapshot.stats.tx_fail_count;
 
     fault = app_runtime_get_fault();
     log_info("Heartbeat state=%s manual=%s remote=%u pc=%u pi=%u fault=%u src=%u level=%u code=%ld",
@@ -398,4 +438,21 @@ static void app_status_log(void) {
              fault != NULL ? (unsigned int)fault->source : 0u,
              fault != NULL ? (unsigned int)fault->level : 0u,
              fault != NULL ? (long)fault->code : 0l);
+    log_info("PI_TX/s status=%lu/%lu/%lu imu=%lu/%lu/%lu odom=%lu/%lu/%lu arm=%lu/%lu/%lu total_ok=%lu total_fail=%lu",
+             (unsigned long)status_attempt_delta,
+             (unsigned long)status_ok_delta,
+             (unsigned long)status_fail_delta,
+             (unsigned long)imu_attempt_delta,
+             (unsigned long)imu_ok_delta,
+             (unsigned long)imu_fail_delta,
+             (unsigned long)odom_attempt_delta,
+             (unsigned long)odom_ok_delta,
+             (unsigned long)odom_fail_delta,
+             (unsigned long)arm_attempt_delta,
+             (unsigned long)arm_ok_delta,
+             (unsigned long)arm_fail_delta,
+             (unsigned long)total_ok_delta,
+             (unsigned long)total_fail_delta);
+
+    last_snapshot = snapshot;
 }
