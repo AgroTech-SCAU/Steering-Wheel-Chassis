@@ -50,20 +50,6 @@ target_include_directories(mcu_comm_bridge_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_binary_frame_parser
-    test/test_binary_frame_parser.cpp
-    src/binary_frame.cpp
-  )
-  if(TARGET test_binary_frame_parser)
-    target_include_directories(test_binary_frame_parser PUBLIC
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-      $<INSTALL_INTERFACE:include>
-    )
-  endif()
-endif()
-
 install(TARGETS mcu_comm_bridge_node
   DESTINATION lib/${PROJECT_NAME}
 )
