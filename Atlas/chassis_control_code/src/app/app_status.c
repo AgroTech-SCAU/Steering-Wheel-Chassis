@@ -158,8 +158,8 @@ static void app_status_update_led(void) {
 }
 
 static void app_status_process_pi_tx_slot(void) {
-    const uint32_t absolute_slot = delay_now_ms() / 2u;
-    const uint32_t slot_mod = absolute_slot % 50u;
+    const uint32_t absolute_slot = delay_now_ms() / 2u; // 0~500
+    const uint32_t slot_mod = absolute_slot % 50u;      // 0~49
 
     if(!s_pi_tx_slot_initialized) {
         s_pi_tx_last_absolute_slot = absolute_slot;
@@ -172,17 +172,17 @@ static void app_status_process_pi_tx_slot(void) {
         s_pi_tx_last_absolute_slot = absolute_slot;
     }
 
-    if((slot_mod % 5u) == 0u) {
+    if((slot_mod % 5u) == 0u) { // 0,5,10,15,20,25,30,35,40,45
         app_status_send_pi_imu_now();
         return;
     }
 
-    if((slot_mod % 10u) == 1u) {
+    if((slot_mod % 10u) == 2u) { // 2,12,22,32,42
         app_status_send_pi_odom_now();
         return;
     }
 
-    if((slot_mod % 10u) == 3u) {
+    if((slot_mod % 10u) == 7u) { // 7,17,27,37,47
         app_status_send_pi_arm_state_now();
         return;
     }

@@ -583,7 +583,6 @@ static bool pi_comms_send_frame(uint8_t msg_id,
 
     after_crc = binary_frame_crc16_ccitt(s_pi_comms_tx_frame_buf, (uint16_t)(frame_len - 2u));
     if(after_crc != stored_crc) {
-        /* This only verifies the TX buffer in local MCU RAM stayed intact during blocking send. */
         s_pi_comms_stats.tx_crc_postcheck_fail_count++;
         s_pi_comms_stats.tx_buffer_corruption_count++;
         s_pi_comms_stats.tx_fail_count++;
