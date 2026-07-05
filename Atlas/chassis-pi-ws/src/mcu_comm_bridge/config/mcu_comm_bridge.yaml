@@ -19,7 +19,7 @@ mcu_comm_bridge_node:
     imu_topic: "/imu"
     arm_joint_state_topic: "/arm/joint_states"
     arm_pose_topic: "/arm/pose"
-    arm_pose_position_topic: "/arm/pose.position"
+    arm_pose_position_topic: "/arm/pose_position"
 
     odom_frame_id: "odom"
     base_frame_id: "base_footprint"

@@ -416,7 +416,7 @@ private:
         imu_topic_ = declare_parameter<std::string>("imu_topic", "/imu");
         arm_joint_state_topic_ = declare_parameter<std::string>("arm_joint_state_topic", "/arm/joint_states");
         arm_pose_topic_ = declare_parameter<std::string>("arm_pose_topic", "/arm/pose");
-        arm_pose_position_topic_ = declare_parameter<std::string>("arm_pose_position_topic", "/arm/pose.position");
+        arm_pose_position_topic_ = declare_parameter<std::string>("arm_pose_position_topic", "/arm/pose_position");
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
@@ -1555,7 +1555,7 @@ private:
     std::string imu_topic_ = "/imu";
     std::string arm_joint_state_topic_ = "/arm/joint_states";
     std::string arm_pose_topic_ = "/arm/pose";
-    std::string arm_pose_position_topic_ = "/arm/pose.position";
+    std::string arm_pose_position_topic_ = "/arm/pose_position";
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
     std::string estop_service_ = "/mcu/estop";

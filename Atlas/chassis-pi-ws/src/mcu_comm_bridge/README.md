@@ -5,7 +5,7 @@
 ## 功能
 
 - 解析 `MCU_IMU / MCU_ODOM / MCU_ARM_STATE / MCU_STATUS`
-- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose`、`/arm/pose.position`
+- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose`、`/arm/pose_position`
 - 订阅 `/motor_cmd_vel`，以 `50Hz` 连续发送 `PI_CONTROL`
 - 提供刹车、急停、yaw、机械臂目标等 ROS 2 服务
 - 对机械臂目标做本地排队与有限重发
@@ -86,7 +86,7 @@ mcu_comm_bridge_node:
     arm_command_repeat_count: 3
     arm_joint_state_topic: "/arm/joint_states"
     arm_pose_topic: "/arm/pose"
-    arm_pose_position_topic: "/arm/pose.position"
+    arm_pose_position_topic: "/arm/pose_position"
     brake_service: "/mcu/set_brake"
     arm_joints_service: "/mcu/set_arm_joints"
     arm_pose_service: "/mcu/set_arm_pose"
