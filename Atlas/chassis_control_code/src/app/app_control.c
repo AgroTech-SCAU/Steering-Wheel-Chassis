@@ -205,6 +205,27 @@ static bool app_control_arm_speed_valid(float speed_rad_s);
 static bool app_control_arm_joints_valid(const FiveDofArmJointArray* joints);
 
 /**
+ * @brief 判断机械臂位姿是否有效
+ * @param pose 待检查位姿
+ * @return bool `true` 表示位姿目标有效
+ */
+static bool app_control_arm_pose_5d_valid(const PiCommsArmPose5dTarget* target);
+
+/**
+ * @brief 判断机械臂笛卡尔位置是否有效
+ * @param target 待检查笛卡尔位置
+ * @return bool `true` 表示笛卡尔位置目标有效
+ */
+static bool app_control_arm_position_valid(const PiCommsArmPositionTarget* target);
+
+/**
+ * @brief 判断机械臂 2D 姿态是否有效
+ * @param target 待检查 2D 姿态
+ * @return bool `true` 表示 2D 姿态目标有效
+ */
+static bool app_control_arm_orientation_2d_valid(const PiCommsArmOrientation2dTarget* target);
+
+/**
  * @brief 判断指定时间间隔是否到期, 到期时更新最后触发时间
  * @param last_ms 上次触发时间
  * @param interval_ms 间隔
@@ -723,7 +744,8 @@ static AppControlResult app_control_apply_pi_yaw(void) {
 
 static AppControlResult app_control_apply_pi_arm(void) {
     PiCommsArmAction action;
-    PiCommsArmJointControl cmd;
+    PiCommsArmControl cmd;
+    float speed_rad_s;
 
     if(pi_comms_take_arm_action(&action)) {
         if(!arm.is_ready()) {
@@ -753,7 +775,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
         }
     }
 
-    if(!pi_comms_arm_joint_control_is_fresh(APP_CONTROL_PI_ARM_TIMEOUT_MS) || !pi_comms_get_arm_joint_control(&cmd)) {
+    if(!pi_comms_arm_control_is_fresh(APP_CONTROL_PI_ARM_TIMEOUT_MS) || !pi_comms_take_arm_control(&cmd)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
@@ -762,18 +784,58 @@ static AppControlResult app_control_apply_pi_arm(void) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    if(app_control_arm_joints_valid(&cmd.joints)) {
-        float speed_rad_s = cmd.speed_rad_s;
+    speed_rad_s = cmd.speed_rad_s;
+    if(!app_control_arm_speed_valid(speed_rad_s)) {
+        speed_rad_s = app_control_get_arm_default_speed();
+    }
 
-        if(!app_control_arm_speed_valid(speed_rad_s)) {
-            speed_rad_s = app_control_get_arm_default_speed();
-        }
+    switch(cmd.mode) {
+        case PI_COMMS_ARM_MODE_JOINTS:
+            if(app_control_arm_joints_valid(&cmd.target.joints)) {
+                return app_control_result_from_arm(arm.move_joints(&cmd.target.joints, speed_rad_s), "pi arm move_joints");
+            }
+            break;
 
-        return app_control_result_from_arm(arm.move_joints(&cmd.joints, speed_rad_s), "pi arm move_joints");
+        case PI_COMMS_ARM_MODE_POSE_5D:
+            if(app_control_arm_pose_5d_valid(&cmd.target.pose_5d)) {
+                return app_control_result_from_arm(arm.move_pose_5d(cmd.target.pose_5d.x,
+                                                                    cmd.target.pose_5d.y,
+                                                                    cmd.target.pose_5d.z,
+                                                                    cmd.target.pose_5d.pitch,
+                                                                    cmd.target.pose_5d.yaw,
+                                                                    speed_rad_s),
+                                                   "pi arm move_pose_5d");
+            }
+            break;
+
+        case PI_COMMS_ARM_MODE_POSITION:
+            if(app_control_arm_position_valid(&cmd.target.position)) {
+                return app_control_result_from_arm(arm.move_position(cmd.target.position.x,
+                                                                     cmd.target.position.y,
+                                                                     cmd.target.position.z,
+                                                                     speed_rad_s),
+                                                   "pi arm move_position");
+            }
+            break;
+
+        case PI_COMMS_ARM_MODE_ORIENTATION_2D:
+            if(app_control_arm_orientation_2d_valid(&cmd.target.orientation_2d)) {
+                return app_control_result_from_arm(arm.move_orientation_2d(cmd.target.orientation_2d.pitch,
+                                                                           cmd.target.orientation_2d.yaw,
+                                                                           speed_rad_s),
+                                                   "pi arm move_orientation_2d");
+            }
+            break;
+
+        case PI_COMMS_ARM_MODE_NONE:
+        default:
+            break;
     }
 
     if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
-        log_warn("APP_CONTROL pi arm rejected: invalid joint target");
+        log_warn("APP_CONTROL pi arm rejected: invalid target mode=%u seq=%u",
+                 (unsigned int)cmd.mode,
+                 (unsigned int)cmd.command_seq);
     }
     return APP_CONTROL_RESULT_REJECTED;
 }
@@ -821,6 +883,28 @@ static bool app_control_arm_joints_valid(const FiveDofArmJointArray* joints) {
     }
 
     return true;
+}
+
+static bool app_control_arm_pose_5d_valid(const PiCommsArmPose5dTarget* target) {
+    return target != NULL &&
+           isfinite(target->x) &&
+           isfinite(target->y) &&
+           isfinite(target->z) &&
+           isfinite(target->pitch) &&
+           isfinite(target->yaw);
+}
+
+static bool app_control_arm_position_valid(const PiCommsArmPositionTarget* target) {
+    return target != NULL &&
+           isfinite(target->x) &&
+           isfinite(target->y) &&
+           isfinite(target->z);
+}
+
+static bool app_control_arm_orientation_2d_valid(const PiCommsArmOrientation2dTarget* target) {
+    return target != NULL &&
+           isfinite(target->pitch) &&
+           isfinite(target->yaw);
 }
 
 static bool app_control_interval_due(ms_t* last_ms, uint32_t interval_ms) {

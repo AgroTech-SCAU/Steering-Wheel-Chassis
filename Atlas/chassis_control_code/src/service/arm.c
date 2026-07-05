@@ -46,7 +46,9 @@ const struct ArmInterface arm_interface = {
     .move_servo_zero = arm_move_servo_zero,
     .move_mdh_zero = arm_move_mdh_zero,
     .move_pose = arm_move_pose,
+    .move_pose_5d = arm_move_pose_5d,
     .move_position = arm_move_position,
+    .move_orientation_2d = arm_move_orientation_2d,
     .move_orientation = arm_move_orientation,
     .stop = arm_stop,
     .enable = arm_enable,
@@ -141,6 +143,14 @@ static ArmStatus s_get_reference_joints(FiveDofArmJointArray* joints);
  * @return ArmStatus 服务状态码
  */
 static ArmStatus s_get_reference_pose(FiveDofArmPose* pose);
+
+/**
+ * @brief 将位姿转换为 Roll-Pitch-Yaw 表示
+ * @param pose 输入位姿
+ * @param rpy 输出 Roll-Pitch-Yaw
+ * @return ArmStatus 服务状态码
+ */
+static ArmStatus s_pose_to_rpy(const FiveDofArmPose* pose, SerialArmRPY* rpy);
 /**
  * @brief 解析最终使用的运动速度
  * @param speed_rad_s 外部请求速度，单位 rad/s
@@ -334,6 +344,46 @@ ArmStatus arm_move_pose(const FiveDofArmPose* target, float speed_rad_s) {
 }
 
 /**
+ * @brief 按目标位姿求逆解并执行运动，仅使用 5D 约束
+ * @param x 目标 x，单位 m
+ * @param y 目标 y，单位 m
+ * @param z 目标 z，单位 m
+ * @param pitch 目标 pitch，单位 rad
+ * @param yaw 目标 yaw，单位 rad
+ * @param speed_rad_s 目标速度，单位 rad/s
+ * @return ArmStatus 服务状态码
+ */
+ArmStatus arm_move_pose_5d(float x, float y, float z, float pitch, float yaw, float speed_rad_s) {
+    FiveDofArmPose target;
+    SerialArmRPY reference_rpy;
+    FiveDofArmJointArray seed;
+    FiveDofArmJointArray joints;
+    SerialArmTaskInfo task = {
+        .task_dim = 5u,
+        .row = { 0u, 1u, 2u, 4u, 5u },
+    };
+    ArmStatus ik_ret;
+
+    if(s_arm.initialized == false)
+        return ARM_NOT_INITIALIZED;
+
+    if(s_get_reference_pose(&target) != ARM_OK)
+        return ARM_KINEMATICS_FAILED;
+    if(s_pose_to_rpy(&target, &reference_rpy) != ARM_OK)
+        return ARM_KINEMATICS_FAILED;
+    if(serial_arm.pose_from_xyz_rpy(x, y, z, reference_rpy.roll, pitch, yaw, &target) != SERIAL_ARM_STATUS_SUCCESS)
+        return ARM_KINEMATICS_FAILED;
+    if(s_get_reference_joints(&seed) != ARM_OK)
+        return ARM_KINEMATICS_FAILED;
+
+    ik_ret = s_ik_with_task(&target, &joints, &seed, &task);
+    if(ik_ret != ARM_OK)
+        return ik_ret;
+
+    return arm_move_joints(&joints, speed_rad_s);
+}
+
+/**
  * @brief 仅修改末端目标位置并保持当前姿态
  * @param x 目标 x，单位 m
  * @param y 目标 y，单位 m
@@ -369,6 +419,30 @@ ArmStatus arm_move_position(float x, float y, float z, float speed_rad_s) {
         return ik_ret;
 
     return arm_move_joints(&joints, speed_rad_s);
+}
+
+/**
+ * @brief 仅修改末端目标姿态并保持当前位置
+ * @param pitch 目标 pitch，单位 rad
+ * @param yaw 目标 yaw，单位 rad
+ * @param speed_rad_s 目标速度，单位 rad/s
+ * @return ArmStatus 服务状态码
+ */
+ArmStatus arm_move_orientation_2d(float pitch, float yaw, float speed_rad_s) {
+    FiveDofArmPose target;
+
+    if(s_arm.initialized == false)
+        return ARM_NOT_INITIALIZED;
+
+    if(s_get_reference_pose(&target) != ARM_OK)
+        return ARM_KINEMATICS_FAILED;
+
+    return arm_move_pose_5d(target.position.x,
+                            target.position.y,
+                            target.position.z,
+                            pitch,
+                            yaw,
+                            speed_rad_s);
 }
 
 /**
@@ -806,6 +880,15 @@ static ArmStatus s_get_reference_pose(FiveDofArmPose* pose) {
 /**
  * @brief 同步内部运行实例到对外只读快照
  */
+static ArmStatus s_pose_to_rpy(const FiveDofArmPose* pose, SerialArmRPY* rpy) {
+    if(pose == NULL || rpy == NULL)
+        return ARM_INVALID_PARAM;
+
+    return serial_arm.quat_to_rpy(pose->orientation, rpy) == SERIAL_ARM_STATUS_SUCCESS
+               ? ARM_OK
+               : ARM_KINEMATICS_FAILED;
+}
+
 static void s_sync_view(void) {
     s_arm_view = s_arm;
 }

@@ -63,3 +63,11 @@ InfraStatus infra_update(Infra* self);
 - moving average
 - error code table helper
 - unit test scaffold
+
+## 6. 与 Atlas 协议相关的当前约定
+
+- `binary_frame.h` 维护 Atlas 二进制协议常量
+- `PI_CONTROL` 当前固定为 `38 bytes`
+- `PI_CONTROL` 中 `control_mask` 与 `arm_mode` 为正交字段
+- Pi 机械臂目标共用 `PI_CONTROL(0x31)`，不新增独立目标消息类型
+- 机械臂单次消费语义只适用于 `AutoPi` 模式下的 `Pi -> MCU` 机械臂目标

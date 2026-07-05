@@ -11,6 +11,7 @@
 #include "stm32_hal_uart.h"
 #include "protocol_parser.h"
 
+#include <math.h>
 #include <string.h>
 
 // ! ========================= 宏 定 义 声 明 ========================= ! //
@@ -44,7 +45,12 @@ static uint32_t s_pi_comms_last_rx_ms = 0u;
 static PiCommsConfig s_pi_comms_config = { 0 };
 static PiCommsChassisControl s_pi_comms_chassis_control = { 0 };
 static PiCommsYawAction s_pi_comms_yaw_action = { 0 };
-static PiCommsArmJointControl s_pi_comms_arm_joint_control = { 0 };
+static PiCommsArmControl s_pi_comms_arm_control = { 0 };
+static uint32_t s_pi_comms_arm_control_rx_ms = 0u;
+static bool s_pi_comms_arm_control_pending = false;
+static bool s_pi_comms_arm_command_seq_valid = false;
+static bool s_pi_comms_arm_command_seq_consumed = false;
+static uint16_t s_pi_comms_arm_command_seq = 0u;
 static PiCommsArmAction s_pi_comms_arm_action = { 0 };
 static bool s_pi_comms_estop_pending = false;
 static PiCommsEstopEvent s_pi_comms_estop_event = { 0 };
@@ -83,6 +89,10 @@ static void pi_comms_handle_yaw_action(const BinaryFrameView* frame);
 static void pi_comms_handle_mission_event(const BinaryFrameView* frame);
 static void pi_comms_handle_estop(const BinaryFrameView* frame);
 static void pi_comms_handle_ack(const BinaryFrameView* frame);
+static void pi_comms_reset_arm_control_state(void);
+static void pi_comms_init_arm_control(PiCommsArmControl* control);
+static bool pi_comms_arm_mode_from_wire(uint8_t arm_mode, PiCommsArmMode* mode);
+static bool pi_comms_arm_control_is_finite(const PiCommsArmControl* control);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -103,13 +113,12 @@ PiCommsStatus pi_comms_init(const PiCommsConfig* config) {
 
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
-    memset(&s_pi_comms_arm_joint_control, 0, sizeof(s_pi_comms_arm_joint_control));
+    pi_comms_reset_arm_control_state();
     memset(&s_pi_comms_arm_action, 0, sizeof(s_pi_comms_arm_action));
     memset(&s_pi_comms_estop_event, 0, sizeof(s_pi_comms_estop_event));
     memset(&s_pi_comms_mission_event, 0, sizeof(s_pi_comms_mission_event));
     memset(&s_pi_comms_pending_start_sensor_event, 0, sizeof(s_pi_comms_pending_start_sensor_event));
     memset(&s_pi_comms_stats, 0, sizeof(s_pi_comms_stats));
-    s_pi_comms_arm_joint_control.joints.dof = FIVE_DOF_ARM_DOF;
     s_pi_comms_last_rx_ms = 0u;
     s_pi_comms_estop_pending = false;
     s_pi_comms_pending_start_sensor_valid = false;
@@ -175,7 +184,7 @@ bool pi_comms_is_online(void) {
 
 bool pi_comms_control_is_fresh(uint32_t timeout_ms) {
     return pi_comms_chassis_control_is_fresh(timeout_ms) ||
-           pi_comms_arm_joint_control_is_fresh(timeout_ms);
+           pi_comms_arm_control_is_fresh(timeout_ms);
 }
 
 bool pi_comms_get_control(PiCommsControl* control) {
@@ -184,11 +193,11 @@ bool pi_comms_get_control(PiCommsControl* control) {
     }
 
     memset(control, 0, sizeof(*control));
-    control->arm_joint.joints.dof = FIVE_DOF_ARM_DOF;
+    pi_comms_init_arm_control(&control->arm);
     control->chassis = s_pi_comms_chassis_control;
-    control->arm_joint = s_pi_comms_arm_joint_control;
+    control->arm = s_pi_comms_arm_control;
     return control->chassis.stamp_ms != 0u ||
-           control->arm_joint.stamp_ms != 0u;
+           control->arm.stamp_ms != 0u;
 }
 
 bool pi_comms_get_chassis_control(PiCommsChassisControl* control) {
@@ -200,12 +209,12 @@ bool pi_comms_get_chassis_control(PiCommsChassisControl* control) {
     return true;
 }
 
-bool pi_comms_get_arm_joint_control(PiCommsArmJointControl* control) {
-    if(control == NULL || s_pi_comms_arm_joint_control.stamp_ms == 0u) {
+bool pi_comms_get_arm_control(PiCommsArmControl* control) {
+    if(control == NULL || s_pi_comms_arm_control.stamp_ms == 0u) {
         return false;
     }
 
-    *control = s_pi_comms_arm_joint_control;
+    *control = s_pi_comms_arm_control;
     return true;
 }
 
@@ -214,9 +223,27 @@ bool pi_comms_chassis_control_is_fresh(uint32_t timeout_ms) {
            (pi_comms_now_ms() - s_pi_comms_chassis_control.stamp_ms) <= timeout_ms;
 }
 
-bool pi_comms_arm_joint_control_is_fresh(uint32_t timeout_ms) {
-    return s_pi_comms_arm_joint_control.stamp_ms != 0u &&
-           (pi_comms_now_ms() - s_pi_comms_arm_joint_control.stamp_ms) <= timeout_ms;
+bool pi_comms_arm_control_is_fresh(uint32_t timeout_ms) {
+    return s_pi_comms_arm_control.stamp_ms != 0u &&
+           (pi_comms_now_ms() - s_pi_comms_arm_control_rx_ms) <= timeout_ms;
+}
+
+bool pi_comms_take_arm_control(PiCommsArmControl* control) {
+    if(control == NULL || !s_pi_comms_arm_control_pending) {
+        return false;
+    }
+
+    *control = s_pi_comms_arm_control;
+    s_pi_comms_arm_control_pending = false;
+    s_pi_comms_arm_command_seq_consumed = true;
+    log_info("PI_COMMS arm control consumed: mode=%u seq=%u",
+             (unsigned int)control->mode,
+             (unsigned int)control->command_seq);
+    return true;
+}
+
+bool pi_comms_has_pending_arm_control(void) {
+    return s_pi_comms_arm_control_pending;
 }
 
 bool pi_comms_take_yaw_action(PiCommsYawAction* action) {
@@ -395,13 +422,96 @@ bool pi_comms_get_stats(PiCommsStats* stats) {
 void pi_comms_clear_controls(void) {
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
-    memset(&s_pi_comms_arm_joint_control, 0, sizeof(s_pi_comms_arm_joint_control));
+    pi_comms_reset_arm_control_state();
     memset(&s_pi_comms_arm_action, 0, sizeof(s_pi_comms_arm_action));
     memset(&s_pi_comms_mission_event, 0, sizeof(s_pi_comms_mission_event));
-    s_pi_comms_arm_joint_control.joints.dof = FIVE_DOF_ARM_DOF;
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
+
+static void pi_comms_reset_arm_control_state(void) {
+    memset(&s_pi_comms_arm_control, 0, sizeof(s_pi_comms_arm_control));
+    pi_comms_init_arm_control(&s_pi_comms_arm_control);
+    s_pi_comms_arm_control_rx_ms = 0u;
+    s_pi_comms_arm_control_pending = false;
+    s_pi_comms_arm_command_seq_valid = false;
+    s_pi_comms_arm_command_seq_consumed = false;
+    s_pi_comms_arm_command_seq = 0u;
+}
+
+static void pi_comms_init_arm_control(PiCommsArmControl* control) {
+    if(control == NULL) {
+        return;
+    }
+
+    memset(control, 0, sizeof(*control));
+    control->mode = PI_COMMS_ARM_MODE_NONE;
+    control->target.joints.dof = FIVE_DOF_ARM_DOF;
+}
+
+static bool pi_comms_arm_mode_from_wire(uint8_t arm_mode, PiCommsArmMode* mode) {
+    if(mode == NULL) {
+        return false;
+    }
+
+    switch(arm_mode) {
+        case BINARY_FRAME_PI_ARM_MODE_JOINTS:
+            *mode = PI_COMMS_ARM_MODE_JOINTS;
+            return true;
+
+        case BINARY_FRAME_PI_ARM_MODE_POSE_5D:
+            *mode = PI_COMMS_ARM_MODE_POSE_5D;
+            return true;
+
+        case BINARY_FRAME_PI_ARM_MODE_POSITION:
+            *mode = PI_COMMS_ARM_MODE_POSITION;
+            return true;
+
+        case BINARY_FRAME_PI_ARM_MODE_ORIENTATION_2D:
+            *mode = PI_COMMS_ARM_MODE_ORIENTATION_2D;
+            return true;
+
+        default:
+            *mode = PI_COMMS_ARM_MODE_NONE;
+            return false;
+    }
+}
+
+static bool pi_comms_arm_control_is_finite(const PiCommsArmControl* control) {
+    if(control == NULL || !isfinite(control->speed_rad_s)) {
+        return false;
+    }
+
+    switch(control->mode) {
+        case PI_COMMS_ARM_MODE_JOINTS:
+            for(uint8_t i = 0u; i < FIVE_DOF_ARM_DOF; i++) {
+                if(!isfinite(control->target.joints.q[i])) {
+                    return false;
+                }
+            }
+            return true;
+
+        case PI_COMMS_ARM_MODE_POSE_5D:
+            return isfinite(control->target.pose_5d.x) &&
+                   isfinite(control->target.pose_5d.y) &&
+                   isfinite(control->target.pose_5d.z) &&
+                   isfinite(control->target.pose_5d.pitch) &&
+                   isfinite(control->target.pose_5d.yaw);
+
+        case PI_COMMS_ARM_MODE_POSITION:
+            return isfinite(control->target.position.x) &&
+                   isfinite(control->target.position.y) &&
+                   isfinite(control->target.position.z);
+
+        case PI_COMMS_ARM_MODE_ORIENTATION_2D:
+            return isfinite(control->target.orientation_2d.pitch) &&
+                   isfinite(control->target.orientation_2d.yaw);
+
+        case PI_COMMS_ARM_MODE_NONE:
+        default:
+            return false;
+    }
+}
 
 static uint32_t pi_comms_now_ms(void) {
     if(s_pi_comms_config.port_ops.now_ms != NULL) {
@@ -699,8 +809,9 @@ static void pi_comms_handle_heartbeat(const BinaryFrameView* frame) {
 static void pi_comms_handle_control(const BinaryFrameView* frame) {
     const uint8_t* payload;
     uint8_t control_mask;
-    uint8_t arm_mode;
     uint32_t now_ms;
+    PiCommsArmControl parsed_arm;
+    bool arm_valid = false;
 
     if(frame == NULL || frame->payload_len != PI_COMMS_PAYLOAD_CONTROL_LEN) {
         s_pi_comms_stats.rx_bad_len_count++;
@@ -710,8 +821,8 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
 
     payload = frame->payload;
     control_mask = payload[4];
-    arm_mode = payload[5];
     now_ms = pi_comms_now_ms();
+    pi_comms_init_arm_control(&parsed_arm);
 
     if((control_mask & (BINARY_FRAME_PI_CONTROL_MASK_CHASSIS_VALID | BINARY_FRAME_PI_CONTROL_MASK_BRAKE_REQUEST)) != 0u) {
         s_pi_comms_chassis_control.vx = (control_mask & BINARY_FRAME_PI_CONTROL_MASK_CHASSIS_VALID) != 0u
@@ -727,21 +838,73 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
         s_pi_comms_chassis_control.stamp_ms = now_ms;
     }
 
-    if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_ARM_JOINT_VALID) != 0u &&
-       arm_mode == BINARY_FRAME_PI_ARM_MODE_JOINT_TARGET) {
-        s_pi_comms_arm_joint_control.joints.dof = FIVE_DOF_ARM_DOF;
-        s_pi_comms_arm_joint_control.joints.q[0] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[14]));
-        s_pi_comms_arm_joint_control.joints.q[1] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[18]));
-        s_pi_comms_arm_joint_control.joints.q[2] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[22]));
-        s_pi_comms_arm_joint_control.joints.q[3] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[26]));
-        s_pi_comms_arm_joint_control.joints.q[4] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[30]));
-        s_pi_comms_arm_joint_control.speed_rad_s = binary_frame_mrad_to_rad(binary_frame_read_u16_le(&payload[34]));
-        s_pi_comms_arm_joint_control.stamp_ms = now_ms;
+    if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_ARM_VALID) != 0u) {
+        if(!pi_comms_arm_mode_from_wire(payload[5], &parsed_arm.mode)) {
+            pi_comms_warn_limited("PI_COMMS control dropped: unsupported arm mode");
+        }
+        else {
+            parsed_arm.command_seq = binary_frame_read_u16_le(&payload[6]);
+            parsed_arm.stamp_ms = binary_frame_read_u32_le(&payload[0]);
+            parsed_arm.speed_rad_s = binary_frame_mrad_to_rad(binary_frame_read_u16_le(&payload[34]));
+
+            switch(parsed_arm.mode) {
+                case PI_COMMS_ARM_MODE_JOINTS:
+                    parsed_arm.target.joints.q[0] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[14]));
+                    parsed_arm.target.joints.q[1] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[18]));
+                    parsed_arm.target.joints.q[2] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[22]));
+                    parsed_arm.target.joints.q[3] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[26]));
+                    parsed_arm.target.joints.q[4] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[30]));
+                    break;
+
+                case PI_COMMS_ARM_MODE_POSE_5D:
+                    parsed_arm.target.pose_5d.x = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[14]));
+                    parsed_arm.target.pose_5d.y = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[18]));
+                    parsed_arm.target.pose_5d.z = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[22]));
+                    parsed_arm.target.pose_5d.pitch = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[26]));
+                    parsed_arm.target.pose_5d.yaw = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[30]));
+                    break;
+
+                case PI_COMMS_ARM_MODE_POSITION:
+                    parsed_arm.target.position.x = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[14]));
+                    parsed_arm.target.position.y = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[18]));
+                    parsed_arm.target.position.z = binary_frame_mm_to_m(binary_frame_read_i32_le(&payload[22]));
+                    break;
+
+                case PI_COMMS_ARM_MODE_ORIENTATION_2D:
+                    parsed_arm.target.orientation_2d.pitch = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[14]));
+                    parsed_arm.target.orientation_2d.yaw = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[18]));
+                    break;
+
+                case PI_COMMS_ARM_MODE_NONE:
+                default:
+                    break;
+            }
+
+            arm_valid = pi_comms_arm_control_is_finite(&parsed_arm);
+            if(!arm_valid) {
+                pi_comms_warn_limited("PI_COMMS control dropped: invalid arm target");
+            }
+            else {
+                s_pi_comms_arm_control = parsed_arm;
+                s_pi_comms_arm_control_rx_ms = now_ms;
+                if(!s_pi_comms_arm_command_seq_valid || s_pi_comms_arm_command_seq != parsed_arm.command_seq) {
+                    s_pi_comms_arm_command_seq_valid = true;
+                    s_pi_comms_arm_command_seq = parsed_arm.command_seq;
+                    s_pi_comms_arm_command_seq_consumed = false;
+                    s_pi_comms_arm_control_pending = true;
+                    log_info("PI_COMMS arm control received: mode=%u seq=%u",
+                             (unsigned int)parsed_arm.mode,
+                             (unsigned int)parsed_arm.command_seq);
+                }
+                else if(!s_pi_comms_arm_command_seq_consumed) {
+                    s_pi_comms_arm_control_pending = true;
+                }
+            }
+        }
     }
 
     s_pi_comms_last_rx_ms = now_ms;
     s_pi_comms_stats.last_rx_ms = now_ms;
-    (void)binary_frame_read_u32_le(&payload[0]);
 }
 
 static void pi_comms_handle_arm_action(const BinaryFrameView* frame) {

@@ -37,15 +37,49 @@ typedef struct {
     uint32_t stamp_ms;
 } PiCommsChassisControl;
 
+typedef enum {
+    PI_COMMS_ARM_MODE_NONE = 0,
+    PI_COMMS_ARM_MODE_JOINTS,
+    PI_COMMS_ARM_MODE_POSE_5D,
+    PI_COMMS_ARM_MODE_POSITION,
+    PI_COMMS_ARM_MODE_ORIENTATION_2D
+} PiCommsArmMode;
+
 typedef struct {
-    FiveDofArmJointArray joints;
+    float x;
+    float y;
+    float z;
+    float pitch;
+    float yaw;
+} PiCommsArmPose5dTarget;
+
+typedef struct {
+    float x;
+    float y;
+    float z;
+} PiCommsArmPositionTarget;
+
+typedef struct {
+    float pitch;
+    float yaw;
+} PiCommsArmOrientation2dTarget;
+
+typedef struct {
+    PiCommsArmMode mode;
+    union {
+        FiveDofArmJointArray joints;
+        PiCommsArmPose5dTarget pose_5d;
+        PiCommsArmPositionTarget position;
+        PiCommsArmOrientation2dTarget orientation_2d;
+    } target;
     float speed_rad_s;
+    uint16_t command_seq;
     uint32_t stamp_ms;
-} PiCommsArmJointControl;
+} PiCommsArmControl;
 
 typedef struct {
     PiCommsChassisControl chassis;
-    PiCommsArmJointControl arm_joint;
+    PiCommsArmControl arm;
 } PiCommsControl;
 
 typedef enum {
@@ -204,25 +238,25 @@ typedef struct {
 #define PI_COMMS_PAYLOAD_ODOM_LEN 32u
 #define PI_COMMS_PAYLOAD_ARM_STATE_LEN 40u
 
-#define PI_COMMS_IMU_STATUS_IMU_READY              0x0001u
-#define PI_COMMS_IMU_STATUS_ACC_VALID              0x0002u
-#define PI_COMMS_IMU_STATUS_GYRO_VALID             0x0004u
-#define PI_COMMS_IMU_STATUS_ANGLE_VALID            0x0008u
+#define PI_COMMS_IMU_STATUS_IMU_READY 0x0001u
+#define PI_COMMS_IMU_STATUS_ACC_VALID 0x0002u
+#define PI_COMMS_IMU_STATUS_GYRO_VALID 0x0004u
+#define PI_COMMS_IMU_STATUS_ANGLE_VALID 0x0008u
 #define PI_COMMS_IMU_STATUS_YAW_FUSED_WITH_CHASSIS 0x0010u
-#define PI_COMMS_IMU_STATUS_BIAS_CORRECTED         0x0020u
+#define PI_COMMS_IMU_STATUS_BIAS_CORRECTED 0x0020u
 
-#define PI_COMMS_ODOM_STATUS_ODOM_READY      0x0001u
-#define PI_COMMS_ODOM_STATUS_POSE_VALID      0x0002u
-#define PI_COMMS_ODOM_STATUS_TWIST_VALID     0x0004u
-#define PI_COMMS_ODOM_STATUS_IMU_FUSED       0x0008u
-#define PI_COMMS_ODOM_STATUS_WHEEL_FUSED     0x0010u
+#define PI_COMMS_ODOM_STATUS_ODOM_READY 0x0001u
+#define PI_COMMS_ODOM_STATUS_POSE_VALID 0x0002u
+#define PI_COMMS_ODOM_STATUS_TWIST_VALID 0x0004u
+#define PI_COMMS_ODOM_STATUS_IMU_FUSED 0x0008u
+#define PI_COMMS_ODOM_STATUS_WHEEL_FUSED 0x0010u
 #define PI_COMMS_ODOM_STATUS_STATIC_DETECTED 0x0020u
-#define PI_COMMS_ODOM_STATUS_SLIP_SUSPECTED  0x0040u
-#define PI_COMMS_ODOM_STATUS_ODOM_RESET      0x0080u
+#define PI_COMMS_ODOM_STATUS_SLIP_SUSPECTED 0x0040u
+#define PI_COMMS_ODOM_STATUS_ODOM_RESET 0x0080u
 
-#define PI_COMMS_ARM_STATE_STATUS_ARM_READY    0x0001u
-#define PI_COMMS_ARM_STATE_STATUS_JOINT_VALID  0x0002u
-#define PI_COMMS_ARM_STATE_STATUS_FK_VALID     0x0004u
+#define PI_COMMS_ARM_STATE_STATUS_ARM_READY 0x0001u
+#define PI_COMMS_ARM_STATE_STATUS_JOINT_VALID 0x0002u
+#define PI_COMMS_ARM_STATE_STATUS_FK_VALID 0x0004u
 
 PiCommsStatus pi_comms_init(const PiCommsConfig* config);
 void pi_comms_on_rx_byte(uint8_t data);
@@ -231,9 +265,11 @@ bool pi_comms_is_online(void);
 bool pi_comms_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_get_control(PiCommsControl* control);
 bool pi_comms_get_chassis_control(PiCommsChassisControl* control);
-bool pi_comms_get_arm_joint_control(PiCommsArmJointControl* control);
+bool pi_comms_get_arm_control(PiCommsArmControl* control);
 bool pi_comms_chassis_control_is_fresh(uint32_t timeout_ms);
-bool pi_comms_arm_joint_control_is_fresh(uint32_t timeout_ms);
+bool pi_comms_arm_control_is_fresh(uint32_t timeout_ms);
+bool pi_comms_take_arm_control(PiCommsArmControl* control);
+bool pi_comms_has_pending_arm_control(void);
 bool pi_comms_take_yaw_action(PiCommsYawAction* action);
 bool pi_comms_take_arm_action(PiCommsArmAction* action);
 bool pi_comms_has_pending_arm_action(void);

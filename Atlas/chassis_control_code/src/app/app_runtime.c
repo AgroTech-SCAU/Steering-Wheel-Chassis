@@ -143,6 +143,9 @@ static void app_runtime_update_mode(void) {
         if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
             app_runtime_leave_manual_chassis_pc_arm();
         }
+        if(app_fsm_get_state() != APP_FSM_STATE_AUTO_PI) {
+            pi_comms_clear_controls();
+        }
         (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI);
         return;
     }
@@ -296,17 +299,11 @@ static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel le
 }
 
 static bool app_runtime_pi_arm_cmd_pending(void) {
-    PiCommsArmJointControl cmd;
-
     if(pi_comms_has_pending_arm_action()) {
         return true;
     }
 
-    if(!pi_comms_arm_joint_control_is_fresh(200u) || !pi_comms_get_arm_joint_control(&cmd)) {
-        return false;
-    }
-
-    return cmd.stamp_ms != 0u;
+    return pi_comms_has_pending_arm_control();
 }
 
 static bool app_runtime_remote_clear_fault_requested(void) {

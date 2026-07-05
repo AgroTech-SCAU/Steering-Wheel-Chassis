@@ -165,6 +165,17 @@ extern const struct ArmInterface {
      */
     ArmStatus (*move_pose)(const FiveDofArmPose* target, float speed_rad_s);
     /**
+     * @brief 按目标位姿求逆解并执行运动，仅使用 5D 约束
+     * @param x 目标 x，单位 m
+     * @param y 目标 y，单位 m
+     * @param z 目标 z，单位 m
+     * @param pitch 目标 pitch，单位 rad
+     * @param yaw 目标 yaw，单位 rad
+     * @param speed_rad_s 目标速度，单位 rad/s
+     * @return ArmStatus 服务状态码
+     */
+    ArmStatus (*move_pose_5d)(float x, float y, float z, float pitch, float yaw, float speed_rad_s);
+    /**
      * @brief 仅修改末端目标位置并保持当前姿态
      * @param x 目标 x，单位 m
      * @param y 目标 y，单位 m
@@ -173,6 +184,7 @@ extern const struct ArmInterface {
      * @return ArmStatus 服务状态码
      */
     ArmStatus (*move_position)(float x, float y, float z, float speed_rad_s);
+    ArmStatus (*move_orientation_2d)(float pitch, float yaw, float speed_rad_s);
     /**
      * @brief 运动到目标末端姿态，保持当前末端位置
      * @param roll 目标 roll，单位 rad
@@ -288,6 +300,7 @@ ArmStatus arm_move_mdh_zero(float speed_rad_s);
  * @return ArmStatus 服务状态码
  */
 ArmStatus arm_move_pose(const FiveDofArmPose* target, float speed_rad_s);
+ArmStatus arm_move_pose_5d(float x, float y, float z, float pitch, float yaw, float speed_rad_s);
 /**
  * @brief 仅修改末端目标位置并保持当前姿态
  * @param x 目标 x，单位 m
@@ -297,6 +310,7 @@ ArmStatus arm_move_pose(const FiveDofArmPose* target, float speed_rad_s);
  * @return ArmStatus 服务状态码
  */
 ArmStatus arm_move_position(float x, float y, float z, float speed_rad_s);
+ArmStatus arm_move_orientation_2d(float pitch, float yaw, float speed_rad_s);
 
 /**
  * @brief 运动到目标末端姿态，保持当前末端位置
