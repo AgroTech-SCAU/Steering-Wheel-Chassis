@@ -33,6 +33,10 @@
 #include "tf2_ros/transform_broadcaster.h"
 
 #include "mcu_comm_bridge/srv/estop.hpp"
+#include "mcu_comm_bridge/srv/set_arm_joints.hpp"
+#include "mcu_comm_bridge/srv/set_arm_orientation.hpp"
+#include "mcu_comm_bridge/srv/set_arm_pose.hpp"
+#include "mcu_comm_bridge/srv/set_arm_position.hpp"
 #include "mcu_comm_bridge/srv/set_yaw_target.hpp"
 
 namespace mcu_comm_bridge {
@@ -41,8 +45,13 @@ namespace {
 using SteadyClock = std::chrono::steady_clock;
 
 constexpr uint8_t PI_CONTROL_MASK_CHASSIS_VALID = 1u << 0;
+constexpr uint8_t PI_CONTROL_MASK_ARM_VALID = 1u << 1;
 constexpr uint8_t PI_CONTROL_MASK_BRAKE_REQUEST = 1u << 3;
 constexpr uint8_t PI_ARM_MODE_NONE = 0u;
+constexpr uint8_t PI_ARM_MODE_JOINTS = 1u;
+constexpr uint8_t PI_ARM_MODE_POSE_5D = 2u;
+constexpr uint8_t PI_ARM_MODE_POSITION = 3u;
+constexpr uint8_t PI_ARM_MODE_ORIENTATION_2D = 4u;
 constexpr uint8_t PI_YAW_ACTION_HOLD_ENABLE = 1u;
 constexpr uint8_t PI_YAW_ACTION_HOLD_DISABLE = 2u;
 constexpr uint8_t PI_YAW_ACTION_TARGET_SET = 3u;
@@ -111,6 +120,15 @@ struct CmdVelCache {
     bool timeout_brake_sent = false;
 };
 
+struct ArmCommandCache {
+    uint8_t arm_mode = PI_ARM_MODE_NONE;
+    std::array<int32_t, 5> arm_target{ 0, 0, 0, 0, 0 };
+    uint16_t arm_speed_mrad_s = 0u;
+    uint16_t command_seq = 0u;
+    int repeats_remaining = 0;
+    bool has_command = false;
+};
+
 template <typename T>
 struct LatestValidCache {
     T sample{};
@@ -153,8 +171,12 @@ struct BridgeStats {
     std::atomic<uint64_t> tx_heartbeat{ 0 };
     std::atomic<uint64_t> tx_pi_ack{ 0 };
     std::atomic<uint64_t> tx_control{ 0 };
+    std::atomic<uint64_t> tx_arm_command{ 0 };
+    std::atomic<uint64_t> tx_arm_command_retry{ 0 };
     std::atomic<uint64_t> tx_yaw_action{ 0 };
     std::atomic<uint64_t> tx_estop{ 0 };
+    std::atomic<uint64_t> arm_service_accepted{ 0 };
+    std::atomic<uint64_t> arm_service_rejected{ 0 };
     std::atomic<uint64_t> tx_fail{ 0 };
 };
 
@@ -188,8 +210,12 @@ struct BridgeStatsSnapshot {
     uint64_t tx_heartbeat = 0;
     uint64_t tx_pi_ack = 0;
     uint64_t tx_control = 0;
+    uint64_t tx_arm_command = 0;
+    uint64_t tx_arm_command_retry = 0;
     uint64_t tx_yaw_action = 0;
     uint64_t tx_estop = 0;
+    uint64_t arm_service_accepted = 0;
+    uint64_t arm_service_rejected = 0;
     uint64_t tx_fail = 0;
     ParserStats parser{};
 };
@@ -234,6 +260,52 @@ int32_t rad_to_urad_i32(double value) {
     return clamp_to_i32(value * 1000000.0);
 }
 
+bool finite_non_negative(double value) {
+    return std::isfinite(value) && value >= 0.0;
+}
+
+bool try_m_to_mm_i32(double value, int32_t* out) {
+    const double scaled = value * 1000.0;
+    if(!std::isfinite(value) || !std::isfinite(scaled)) {
+        return false;
+    }
+    if(scaled < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+       scaled > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+        return false;
+    }
+    if(out != nullptr) {
+        *out = static_cast<int32_t>(std::llround(scaled));
+    }
+    return true;
+}
+
+bool try_rad_to_urad_i32(double value, int32_t* out) {
+    const double scaled = value * 1000000.0;
+    if(!std::isfinite(value) || !std::isfinite(scaled)) {
+        return false;
+    }
+    if(scaled < static_cast<double>(std::numeric_limits<int32_t>::min()) ||
+       scaled > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+        return false;
+    }
+    if(out != nullptr) {
+        *out = static_cast<int32_t>(std::llround(scaled));
+    }
+    return true;
+}
+
+bool try_rad_s_to_mrad_s_u16(double value, uint16_t* out) {
+    const double scaled = value * 1000.0;
+    if(!std::isfinite(value) || !std::isfinite(scaled) || scaled < 0.0 ||
+       scaled > static_cast<double>(std::numeric_limits<uint16_t>::max())) {
+        return false;
+    }
+    if(out != nullptr) {
+        *out = static_cast<uint16_t>(std::llround(scaled));
+    }
+    return true;
+}
+
 double safe_rate(uint64_t delta, double elapsed_sec) {
     return elapsed_sec > 0.0 ? static_cast<double>(delta) / elapsed_sec : 0.0;
 }
@@ -253,6 +325,7 @@ public:
           imu_publish_scheduler_(100),
           odom_publish_scheduler_(200) {
         load_parameters();
+        next_arm_command_seq_ = static_cast<uint16_t>(steady_now_ms() & 0xFFFFu);
         parser_.set_max_body_len(static_cast<uint16_t>(max_body_len_));
         parser_.set_raw_buffer_capacity(parser_raw_buffer_capacity_);
         imu_publish_scheduler_.set_max_reuse_age_ms(imu_max_reuse_age_ms_);
@@ -336,6 +409,10 @@ private:
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
+        arm_joints_service_ = declare_parameter<std::string>("arm_joints_service", "/mcu/set_arm_joints");
+        arm_pose_service_ = declare_parameter<std::string>("arm_pose_service", "/mcu/set_arm_pose");
+        arm_position_service_ = declare_parameter<std::string>("arm_position_service", "/mcu/set_arm_position");
+        arm_orientation_service_ = declare_parameter<std::string>("arm_orientation_service", "/mcu/set_arm_orientation");
         yaw_hold_service_ = declare_parameter<std::string>("yaw_hold_service", "/mcu/set_yaw_hold");
         yaw_target_service_ = declare_parameter<std::string>("yaw_target_service", "/mcu/set_yaw_target");
 
@@ -350,6 +427,7 @@ private:
         max_vx_m_s_ = declare_parameter<double>("max_vx_m_s", 1.5);
         max_vy_m_s_ = declare_parameter<double>("max_vy_m_s", 1.5);
         max_wz_rad_s_ = declare_parameter<double>("max_wz_rad_s", 1.0);
+        arm_command_repeat_count_ = declare_parameter<int>("arm_command_repeat_count", 3);
         repeat_estop_count_ = declare_parameter<int>("repeat_estop_count", 3);
     }
 
@@ -395,6 +473,34 @@ private:
             [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
                 handle_set_brake(request, response);
+            });
+
+        arm_joints_srv_ = create_service<::mcu_comm_bridge::srv::SetArmJoints>(
+            arm_joints_service_,
+            [this](const std::shared_ptr<::mcu_comm_bridge::srv::SetArmJoints::Request> request,
+                    std::shared_ptr<::mcu_comm_bridge::srv::SetArmJoints::Response> response) {
+                handle_set_arm_joints(request, response);
+            });
+
+        arm_pose_srv_ = create_service<::mcu_comm_bridge::srv::SetArmPose>(
+            arm_pose_service_,
+            [this](const std::shared_ptr<::mcu_comm_bridge::srv::SetArmPose::Request> request,
+                    std::shared_ptr<::mcu_comm_bridge::srv::SetArmPose::Response> response) {
+                handle_set_arm_pose(request, response);
+            });
+
+        arm_position_srv_ = create_service<::mcu_comm_bridge::srv::SetArmPosition>(
+            arm_position_service_,
+            [this](const std::shared_ptr<::mcu_comm_bridge::srv::SetArmPosition::Request> request,
+                    std::shared_ptr<::mcu_comm_bridge::srv::SetArmPosition::Response> response) {
+                handle_set_arm_position(request, response);
+            });
+
+        arm_orientation_srv_ = create_service<::mcu_comm_bridge::srv::SetArmOrientation>(
+            arm_orientation_service_,
+            [this](const std::shared_ptr<::mcu_comm_bridge::srv::SetArmOrientation::Request> request,
+                    std::shared_ptr<::mcu_comm_bridge::srv::SetArmOrientation::Response> response) {
+                handle_set_arm_orientation(request, response);
             });
 
         yaw_hold_srv_ = create_service<std_srvs::srv::SetBool>(
@@ -827,13 +933,136 @@ private:
 
         if(request->data) {
             geometry_msgs::msg::Twist zero;
-            response->success = send_pi_control(zero, true);
+            response->success = send_pi_control(&zero, nullptr, true);
             response->message = response->success ? "brake latch enabled" : "failed to send brake frame";
             return;
         }
 
         response->success = true;
         response->message = "brake latch disabled";
+    }
+
+    uint16_t allocate_arm_command_seq() {
+        const uint16_t seq = next_arm_command_seq_;
+        next_arm_command_seq_ = static_cast<uint16_t>(next_arm_command_seq_ + 1u);
+        return seq;
+    }
+
+    bool queue_arm_command(uint8_t arm_mode,
+                           const std::array<int32_t, 5>& arm_target,
+                           uint16_t arm_speed_mrad_s,
+                           uint16_t command_seq) {
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        arm_command_cache_.arm_mode = arm_mode;
+        arm_command_cache_.arm_target = arm_target;
+        arm_command_cache_.arm_speed_mrad_s = arm_speed_mrad_s;
+        arm_command_cache_.command_seq = command_seq;
+        arm_command_cache_.repeats_remaining = std::max(1, arm_command_repeat_count_);
+        arm_command_cache_.has_command = true;
+        return true;
+    }
+
+    void handle_set_arm_joints(
+        const std::shared_ptr<::mcu_comm_bridge::srv::SetArmJoints::Request> request,
+        std::shared_ptr<::mcu_comm_bridge::srv::SetArmJoints::Response> response) {
+        std::array<int32_t, 5> target{ 0, 0, 0, 0, 0 };
+        uint16_t speed_mrad_s = 0u;
+
+        for(size_t i = 0; i < target.size(); ++i) {
+            if(!try_rad_to_urad_i32(request->joints_rad[i], &target[i])) {
+                response->success = false;
+                response->message = "joint target out of protocol range";
+                stats_.arm_service_rejected++;
+                return;
+            }
+        }
+
+        if(!finite_non_negative(request->speed_rad_s) ||
+           (request->speed_rad_s > 0.0 && !try_rad_s_to_mrad_s_u16(request->speed_rad_s, &speed_mrad_s))) {
+            response->success = false;
+            response->message = "invalid arm speed";
+            stats_.arm_service_rejected++;
+            return;
+        }
+
+        response->command_seq = allocate_arm_command_seq();
+        queue_arm_command(PI_ARM_MODE_JOINTS, target, speed_mrad_s, response->command_seq);
+        response->success = true;
+        response->message = "arm joints command queued for transmission";
+        stats_.arm_service_accepted++;
+    }
+
+    void handle_set_arm_pose(
+        const std::shared_ptr<::mcu_comm_bridge::srv::SetArmPose::Request> request,
+        std::shared_ptr<::mcu_comm_bridge::srv::SetArmPose::Response> response) {
+        std::array<int32_t, 5> target{ 0, 0, 0, 0, 0 };
+        uint16_t speed_mrad_s = 0u;
+
+        if(!try_m_to_mm_i32(request->x_m, &target[0]) ||
+           !try_m_to_mm_i32(request->y_m, &target[1]) ||
+           !try_m_to_mm_i32(request->z_m, &target[2]) ||
+           !try_rad_to_urad_i32(request->pitch_rad, &target[3]) ||
+           !try_rad_to_urad_i32(request->yaw_rad, &target[4]) ||
+           !finite_non_negative(request->speed_rad_s) ||
+           (request->speed_rad_s > 0.0 && !try_rad_s_to_mrad_s_u16(request->speed_rad_s, &speed_mrad_s))) {
+            response->success = false;
+            response->message = "arm pose request out of protocol range";
+            stats_.arm_service_rejected++;
+            return;
+        }
+
+        response->command_seq = allocate_arm_command_seq();
+        queue_arm_command(PI_ARM_MODE_POSE_5D, target, speed_mrad_s, response->command_seq);
+        response->success = true;
+        response->message = "arm pose command queued for transmission";
+        stats_.arm_service_accepted++;
+    }
+
+    void handle_set_arm_position(
+        const std::shared_ptr<::mcu_comm_bridge::srv::SetArmPosition::Request> request,
+        std::shared_ptr<::mcu_comm_bridge::srv::SetArmPosition::Response> response) {
+        std::array<int32_t, 5> target{ 0, 0, 0, 0, 0 };
+        uint16_t speed_mrad_s = 0u;
+
+        if(!try_m_to_mm_i32(request->x_m, &target[0]) ||
+           !try_m_to_mm_i32(request->y_m, &target[1]) ||
+           !try_m_to_mm_i32(request->z_m, &target[2]) ||
+           !finite_non_negative(request->speed_rad_s) ||
+           (request->speed_rad_s > 0.0 && !try_rad_s_to_mrad_s_u16(request->speed_rad_s, &speed_mrad_s))) {
+            response->success = false;
+            response->message = "arm position request out of protocol range";
+            stats_.arm_service_rejected++;
+            return;
+        }
+
+        response->command_seq = allocate_arm_command_seq();
+        queue_arm_command(PI_ARM_MODE_POSITION, target, speed_mrad_s, response->command_seq);
+        response->success = true;
+        response->message = "arm position command queued for transmission";
+        stats_.arm_service_accepted++;
+    }
+
+    void handle_set_arm_orientation(
+        const std::shared_ptr<::mcu_comm_bridge::srv::SetArmOrientation::Request> request,
+        std::shared_ptr<::mcu_comm_bridge::srv::SetArmOrientation::Response> response) {
+        std::array<int32_t, 5> target{ 0, 0, 0, 0, 0 };
+        uint16_t speed_mrad_s = 0u;
+
+        if(!try_rad_to_urad_i32(request->pitch_rad, &target[0]) ||
+           !try_rad_to_urad_i32(request->yaw_rad, &target[1]) ||
+           !finite_non_negative(request->speed_rad_s) ||
+           (request->speed_rad_s > 0.0 && !try_rad_s_to_mrad_s_u16(request->speed_rad_s, &speed_mrad_s))) {
+            response->success = false;
+            response->message = "arm orientation request out of protocol range";
+            stats_.arm_service_rejected++;
+            return;
+        }
+
+        response->command_seq = allocate_arm_command_seq();
+        queue_arm_command(PI_ARM_MODE_ORIENTATION_2D, target, speed_mrad_s, response->command_seq);
+        response->success = true;
+        response->message = "arm orientation command queued for transmission";
+        stats_.arm_service_accepted++;
     }
 
     void handle_set_yaw_hold(
@@ -867,47 +1096,66 @@ private:
 
     void control_timer_callback() {
         geometry_msgs::msg::Twist cmd;
-        bool send_control = false;
         bool brake = false;
+        bool has_chassis = false;
+        ArmCommandCache arm_snapshot;
+        bool has_arm = false;
 
         {
             std::lock_guard<std::mutex> lock(control_mutex_);
             if(brake_request_) {
                 brake = true;
-                send_control = true;
+                has_chassis = true;
             }
             else if(cmd_vel_cache_.has_cmd) {
                 const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     SteadyClock::now() - cmd_vel_cache_.last_update).count();
                 if(elapsed_ms <= cmd_vel_timeout_ms_) {
                     cmd = cmd_vel_cache_.twist;
-                    send_control = true;
+                    has_chassis = true;
                     cmd_vel_cache_.timeout_brake_sent = false;
                 }
                 else if(send_brake_on_cmd_timeout_ && !cmd_vel_cache_.timeout_brake_sent) {
                     brake = true;
-                    send_control = true;
+                    has_chassis = true;
                     cmd_vel_cache_.timeout_brake_sent = true;
                 }
             }
+
+            if(arm_command_cache_.has_command && arm_command_cache_.repeats_remaining > 0) {
+                arm_snapshot = arm_command_cache_;
+                has_arm = true;
+            }
         }
 
-        if(!send_control) {
+        if(!has_chassis && !has_arm) {
             return;
         }
 
-        if(brake) {
+        if(has_chassis && brake) {
             cmd.linear.x = 0.0;
             cmd.linear.y = 0.0;
             cmd.angular.z = 0.0;
         }
-        else {
+        else if(has_chassis) {
             cmd.linear.x = std::clamp(cmd.linear.x, -max_vx_m_s_, max_vx_m_s_);
             cmd.linear.y = std::clamp(cmd.linear.y, -max_vy_m_s_, max_vy_m_s_);
             cmd.angular.z = std::clamp(cmd.angular.z, -max_wz_rad_s_, max_wz_rad_s_);
         }
 
-        (void)send_pi_control(cmd, brake);
+        if(send_pi_control(has_chassis ? &cmd : nullptr, has_arm ? &arm_snapshot : nullptr, brake)) {
+            if(has_arm) {
+                std::lock_guard<std::mutex> lock(control_mutex_);
+                if(arm_command_cache_.has_command &&
+                   arm_command_cache_.command_seq == arm_snapshot.command_seq &&
+                   arm_command_cache_.repeats_remaining > 0) {
+                    arm_command_cache_.repeats_remaining--;
+                    if(arm_command_cache_.repeats_remaining <= 0) {
+                        arm_command_cache_.has_command = false;
+                    }
+                }
+            }
+        }
     }
 
     void send_heartbeat() {
@@ -916,21 +1164,43 @@ private:
         }
     }
 
-    bool send_pi_control(const geometry_msgs::msg::Twist& cmd, bool brake_request) {
+    bool send_pi_control(const geometry_msgs::msg::Twist* cmd,
+                         const ArmCommandCache* arm_command,
+                         bool brake_request) {
         std::vector<uint8_t> payload(PAYLOAD_PI_CONTROL_LEN, 0u);
         write_u32_le(payload, 0, ros_now_ms_u32());
-        payload[4] = PI_CONTROL_MASK_CHASSIS_VALID;
+
+        if(cmd != nullptr) {
+            payload[4] |= PI_CONTROL_MASK_CHASSIS_VALID;
+            write_i16_le(payload, 8, m_s_to_mm_s_i16(cmd->linear.x));
+            write_i16_le(payload, 10, m_s_to_mm_s_i16(cmd->linear.y));
+            write_i16_le(payload, 12, rad_s_to_mrad_s_i16(cmd->angular.z));
+        }
         if(brake_request) {
             payload[4] |= PI_CONTROL_MASK_BRAKE_REQUEST;
         }
+
         payload[5] = PI_ARM_MODE_NONE;
         write_u16_le(payload, 6, 0u);
-        write_i16_le(payload, 8, m_s_to_mm_s_i16(cmd.linear.x));
-        write_i16_le(payload, 10, m_s_to_mm_s_i16(cmd.linear.y));
-        write_i16_le(payload, 12, rad_s_to_mrad_s_i16(cmd.angular.z));
+        if(arm_command != nullptr && arm_command->has_command && arm_command->repeats_remaining > 0) {
+            payload[4] |= PI_CONTROL_MASK_ARM_VALID;
+            payload[5] = arm_command->arm_mode;
+            write_u16_le(payload, 6, arm_command->command_seq);
+            for(size_t i = 0; i < arm_command->arm_target.size(); ++i) {
+                write_i32_le(payload, 14u + static_cast<size_t>(i * 4u), arm_command->arm_target[i]);
+            }
+            write_u16_le(payload, 34, arm_command->arm_speed_mrad_s);
+        }
+        write_u16_le(payload, 36, 0u);
 
         if(send_frame(MSG_PI_CONTROL, 0u, payload)) {
             stats_.tx_control++;
+            if(arm_command != nullptr && arm_command->has_command && arm_command->repeats_remaining > 0) {
+                stats_.tx_arm_command++;
+                if(arm_command->repeats_remaining < std::max(1, arm_command_repeat_count_)) {
+                    stats_.tx_arm_command_retry++;
+                }
+            }
             return true;
         }
         return false;
@@ -1063,8 +1333,12 @@ private:
         snapshot.tx_heartbeat = stats_.tx_heartbeat.load();
         snapshot.tx_pi_ack = stats_.tx_pi_ack.load();
         snapshot.tx_control = stats_.tx_control.load();
+        snapshot.tx_arm_command = stats_.tx_arm_command.load();
+        snapshot.tx_arm_command_retry = stats_.tx_arm_command_retry.load();
         snapshot.tx_yaw_action = stats_.tx_yaw_action.load();
         snapshot.tx_estop = stats_.tx_estop.load();
+        snapshot.arm_service_accepted = stats_.arm_service_accepted.load();
+        snapshot.arm_service_rejected = stats_.arm_service_rejected.load();
         snapshot.tx_fail = stats_.tx_fail.load();
 
         {
@@ -1138,6 +1412,18 @@ private:
             safe_rate(snapshot.odom_publish_stale_drop - last_stats_snapshot_.odom_publish_stale_drop, elapsed_sec),
             safe_rate(snapshot.odom_publish_no_valid_data - last_stats_snapshot_.odom_publish_no_valid_data, elapsed_sec));
 
+        RCLCPP_INFO(
+            get_logger(),
+            "TX ctrl=%.1f arm=%.1f arm_retry=%.1f arm_accept=%.1f arm_reject=%.1f yaw=%.1f estop=%.1f fail=%.1f",
+            safe_rate(snapshot.tx_control - last_stats_snapshot_.tx_control, elapsed_sec),
+            safe_rate(snapshot.tx_arm_command - last_stats_snapshot_.tx_arm_command, elapsed_sec),
+            safe_rate(snapshot.tx_arm_command_retry - last_stats_snapshot_.tx_arm_command_retry, elapsed_sec),
+            safe_rate(snapshot.arm_service_accepted - last_stats_snapshot_.arm_service_accepted, elapsed_sec),
+            safe_rate(snapshot.arm_service_rejected - last_stats_snapshot_.arm_service_rejected, elapsed_sec),
+            safe_rate(snapshot.tx_yaw_action - last_stats_snapshot_.tx_yaw_action, elapsed_sec),
+            safe_rate(snapshot.tx_estop - last_stats_snapshot_.tx_estop, elapsed_sec),
+            safe_rate(snapshot.tx_fail - last_stats_snapshot_.tx_fail, elapsed_sec));
+
         last_stats_snapshot_ = snapshot;
 
         RCLCPP_INFO(get_logger(), "--------------------------------------------------");
@@ -1192,6 +1478,10 @@ private:
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
     std::string estop_service_ = "/mcu/estop";
+    std::string arm_joints_service_ = "/mcu/set_arm_joints";
+    std::string arm_pose_service_ = "/mcu/set_arm_pose";
+    std::string arm_position_service_ = "/mcu/set_arm_position";
+    std::string arm_orientation_service_ = "/mcu/set_arm_orientation";
     std::string yaw_hold_service_ = "/mcu/set_yaw_hold";
     std::string yaw_target_service_ = "/mcu/set_yaw_target";
     std::string odom_frame_id_ = "odom";
@@ -1205,6 +1495,7 @@ private:
     double max_vx_m_s_ = 1.5;
     double max_vy_m_s_ = 1.5;
     double max_wz_rad_s_ = 1.0;
+    int arm_command_repeat_count_ = 3;
     int repeat_estop_count_ = 3;
 
     SerialPort serial_;
@@ -1236,6 +1527,8 @@ private:
     std::mutex control_mutex_;
     CmdVelCache cmd_vel_cache_;
     bool brake_request_ = false;
+    ArmCommandCache arm_command_cache_;
+    uint16_t next_arm_command_seq_ = 0u;
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
@@ -1243,6 +1536,10 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_fk_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;
+    rclcpp::Service<::mcu_comm_bridge::srv::SetArmJoints>::SharedPtr arm_joints_srv_;
+    rclcpp::Service<::mcu_comm_bridge::srv::SetArmPose>::SharedPtr arm_pose_srv_;
+    rclcpp::Service<::mcu_comm_bridge::srv::SetArmPosition>::SharedPtr arm_position_srv_;
+    rclcpp::Service<::mcu_comm_bridge::srv::SetArmOrientation>::SharedPtr arm_orientation_srv_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr yaw_hold_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetYawTarget>::SharedPtr yaw_target_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::Estop>::SharedPtr estop_srv_;

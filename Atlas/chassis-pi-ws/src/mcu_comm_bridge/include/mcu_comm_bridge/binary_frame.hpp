@@ -22,7 +22,9 @@ constexpr uint8_t MSG_MCU_ARM_STATE = 0x27u;
 
 constexpr uint8_t MSG_PI_HEARTBEAT = 0x30u;
 constexpr uint8_t MSG_PI_CONTROL = 0x31u;
+constexpr uint8_t MSG_PI_ARM_ACTION = 0x40u;
 constexpr uint8_t MSG_PI_YAW_ACTION = 0x41u;
+constexpr uint8_t MSG_PI_MISSION_EVENT = 0x42u;
 constexpr uint8_t MSG_PI_ESTOP = 0x43u;
 constexpr uint8_t MSG_PI_ACK = 0x44u;
 

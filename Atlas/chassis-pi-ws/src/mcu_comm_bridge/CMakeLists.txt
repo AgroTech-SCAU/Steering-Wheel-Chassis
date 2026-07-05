@@ -19,6 +19,10 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/Estop.srv"
+  "srv/SetArmJoints.srv"
+  "srv/SetArmOrientation.srv"
+  "srv/SetArmPose.srv"
+  "srv/SetArmPosition.srv"
   "srv/SetYawTarget.srv"
 )
 

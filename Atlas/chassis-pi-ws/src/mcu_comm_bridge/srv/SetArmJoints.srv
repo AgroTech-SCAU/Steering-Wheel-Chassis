@@ -1,0 +1,6 @@
+float64[5] joints_rad
+float64 speed_rad_s
+---
+bool success
+string message
+uint16 command_seq

@@ -28,6 +28,10 @@ mcu_comm_bridge_node:
 
     cmd_vel_topic: "/motor_cmd_vel"
     brake_service: "/mcu/set_brake"
+    arm_joints_service: "/mcu/set_arm_joints"
+    arm_pose_service: "/mcu/set_arm_pose"
+    arm_position_service: "/mcu/set_arm_position"
+    arm_orientation_service: "/mcu/set_arm_orientation"
     yaw_hold_service: "/mcu/set_yaw_hold"
     yaw_target_service: "/mcu/set_yaw_target"
     estop_service: "/mcu/estop"
@@ -38,6 +42,7 @@ mcu_comm_bridge_node:
     max_vx_m_s: 1.5
     max_vy_m_s: 1.5
     max_wz_rad_s: 1.0
+    arm_command_repeat_count: 3
     repeat_estop_count: 3
 
     heartbeat_rate_hz: 1.0

@@ -1,0 +1,7 @@
+float64 pitch_rad
+float64 yaw_rad
+float64 speed_rad_s
+---
+bool success
+string message
+uint16 command_seq
