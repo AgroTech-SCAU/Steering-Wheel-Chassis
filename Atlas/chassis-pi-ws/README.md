@@ -51,6 +51,10 @@ chassis-pi-ws/
         mcu_comm_bridge_node.cpp
       srv/
         Estop.srv
+        SetArmJoints.srv
+        SetArmOrientation.srv
+        SetArmPose.srv
+        SetArmPosition.srv
         SetYawTarget.srv
 ```
 
@@ -165,12 +169,24 @@ MCU
 
 | 服务 | 类型 | 协议帧 | 说明 |
 |---|---|---|---|
-| `/mcu/set_brake` | `std_srvs/srv/SetBool` | `PI_CONTROL(0x31)` | 设置或解除刹车锁存 |
+| `/mcu/set_brake` | `std_srvs/srv/SetBool` | `PI_CONTROL(0x31)` | 设置或解除 Pi 侧刹车锁存 |
+| `/mcu/set_arm_joints` | `mcu_comm_bridge/srv/SetArmJoints` | `PI_CONTROL(0x31)` | 设置五关节目标角 |
+| `/mcu/set_arm_pose` | `mcu_comm_bridge/srv/SetArmPose` | `PI_CONTROL(0x31)` | 设置五维末端目标 `x/y/z/pitch/yaw` |
+| `/mcu/set_arm_position` | `mcu_comm_bridge/srv/SetArmPosition` | `PI_CONTROL(0x31)` | 只设置末端位置 `x/y/z` |
+| `/mcu/set_arm_orientation` | `mcu_comm_bridge/srv/SetArmOrientation` | `PI_CONTROL(0x31)` | 保持当前位置，设置 `pitch/yaw` |
 | `/mcu/set_yaw_hold` | `std_srvs/srv/SetBool` | `PI_YAW_ACTION(0x41)` | 开启或关闭 MCU 侧 yaw hold |
 | `/mcu/set_yaw_target` | `mcu_comm_bridge/srv/SetYawTarget` | `PI_YAW_ACTION(0x41)` | 设置目标 yaw，单位 rad |
 | `/mcu/estop` | `mcu_comm_bridge/srv/Estop` | `PI_ESTOP(0x43)` | 发送急停事件 |
 
-服务返回成功只表示 Pi 端已经把协议帧写入串口，不代表 MCU 已经执行完成；最终是否执行由 MCU 状态机、AutoPi 状态和安全逻辑决定
+机械臂服务只在 MCU 处于 `AutoPi` 模式时允许执行；四个机械臂服务会把目标放入 bridge 本地待发送缓存，默认使用同一个 `arm_command_seq` 重发 3 次；MCU 对同一个序号只消费一次
+
+服务返回 `success=true` 的含义需要区分：
+
+- 机械臂服务：命令已经进入 bridge 本地发送队列；不表示 MCU 已收到、IK 已成功或机械臂已到位；
+- yaw、急停服务：至少一帧已经成功写入 Pi 串口；不表示 MCU 已完成动作；
+- 解除刹车：只解除 bridge 的刹车锁存，不会主动让底盘运动，后续仍需新的 `/motor_cmd_vel`
+
+`/mcu_comm_bridge_node/get_parameters` 等服务是 ROS 2 节点自动提供的参数管理接口，不是底盘或机械臂业务控制接口
 
 ---
 
@@ -181,7 +197,7 @@ Pi 端向 MCU 发送：
 | 消息 | MSG_ID | 推荐频率 / 触发方式 | 用途 |
 |---|---:|---|---|
 | `PI_HEARTBEAT` | `0x30` | 1Hz | Pi 在线状态 |
-| `PI_CONTROL` | `0x31` | 20Hz ~ 50Hz | 底盘速度、机械臂关节目标、刹车请求 |
+| `PI_CONTROL` | `0x31` | 20Hz ~ 50Hz | 底盘速度、机械臂 joints/pose/position/orientation 目标、刹车请求 |
 | `PI_ARM_ACTION` | `0x40` | service / 任务触发 | 一次性机械臂动作 |
 | `PI_YAW_ACTION` | `0x41` | service / 任务触发 | yaw hold、yaw target |
 | `PI_MISSION_EVENT` | `0x42` | 任务触发 | 任务完成/失败事件 |
@@ -706,41 +722,205 @@ ros2 topic pub /motor_cmd_vel geometry_msgs/msg/Twist \
 
 ## 16. 服务调用示例
 
-开启刹车：
+调用前先加载工作区环境并确认服务类型：
 
 ```bash
-ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: true}"
+cd ~/chassis-pi-ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 service list
+ros2 service type /mcu/set_arm_joints
+ros2 interface show mcu_comm_bridge/srv/SetArmJoints
 ```
 
-解除刹车：
+### 16.1 使用前提
+
+1. `mcu_comm_bridge_node` 已启动并成功打开 MCU 串口；
+2. MCU 日志中的 `pi=1`，表示 Pi 心跳在线；
+3. 机械臂目标只在 MCU 的 `AutoPi` 模式下执行；
+4. 机械臂服务使用 SI 单位：位置为 `m`，角度为 `rad`，速度为 `rad/s`；
+5. `speed_rad_s: 0.0` 表示使用 MCU 默认速度，负速度会被拒绝；
+6. `success=true` 只表示命令已经排队或协议帧已经写入串口，不表示机械臂已经到位
+
+### 16.2 机械臂关节角控制
+
+五个关节按 `q0 ~ q4` 顺序给出，单位为 rad：
 
 ```bash
-ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: false}"
+ros2 service call /mcu/set_arm_joints \
+  mcu_comm_bridge/srv/SetArmJoints \
+  "{joints_rad: [0.0, 0.20, -0.30, 0.10, 0.0], speed_rad_s: 1.5}"
 ```
+
+返回示例：
+
+```text
+success: true
+message: arm joints command queued for transmission
+command_seq: 123
+```
+
+`command_seq` 是本次离散机械臂目标的序号；bridge 默认重发 3 帧，但 MCU 对同一个序号只执行一次
+
+使用 MCU 默认速度：
+
+```bash
+ros2 service call /mcu/set_arm_joints \
+  mcu_comm_bridge/srv/SetArmJoints \
+  "{joints_rad: [0.0, 0.20, -0.30, 0.10, 0.0], speed_rad_s: 0.0}"
+```
+
+### 16.3 机械臂五维 Pose 控制
+
+Pose 固定定义为：
+
+```text
+x、y、z、pitch、yaw
+```
+
+其中位置单位为 m，姿态角单位为 rad，参考坐标系为 MCU 机械臂基坐标系：
+
+```bash
+ros2 service call /mcu/set_arm_pose \
+  mcu_comm_bridge/srv/SetArmPose \
+  "{x_m: 0.35, y_m: 0.00, z_m: 0.22, pitch_rad: 0.30, yaw_rad: 0.00, speed_rad_s: 1.2}"
+```
+
+该接口是五自由度目标，不包含独立 roll 控制；目标是否可达由 MCU 端 IK、关节限位和机械臂状态决定
+
+### 16.4 机械臂位置控制
+
+只修改末端 `x/y/z`，单位为 m：
+
+```bash
+ros2 service call /mcu/set_arm_position \
+  mcu_comm_bridge/srv/SetArmPosition \
+  "{x_m: 0.30, y_m: 0.05, z_m: 0.18, speed_rad_s: 1.0}"
+```
+
+### 16.5 机械臂姿态控制
+
+保持当前末端位置，设置 `pitch/yaw`，单位为 rad：
+
+```bash
+ros2 service call /mcu/set_arm_orientation \
+  mcu_comm_bridge/srv/SetArmOrientation \
+  "{pitch_rad: 0.20, yaw_rad: -0.10, speed_rad_s: 0.8}"
+```
+
+该接口不是完整三轴 RPY 控制，只控制当前五自由度机械臂可表达的 `pitch/yaw`
+
+### 16.6 刹车控制
+
+开启刹车锁存：
+
+```bash
+ros2 service call /mcu/set_brake \
+  std_srvs/srv/SetBool \
+  "{data: true}"
+```
+
+开启后，bridge 的 50 Hz 控制定时器会持续发送零速度和 `BRAKE_REQUEST`
+
+解除刹车锁存：
+
+```bash
+ros2 service call /mcu/set_brake \
+  std_srvs/srv/SetBool \
+  "{data: false}"
+```
+
+解除刹车不会自动产生运动指令；需要重新发布 `/motor_cmd_vel` 才会驱动底盘
+
+### 16.7 Yaw hold
 
 开启 yaw hold：
 
 ```bash
-ros2 service call /mcu/set_yaw_hold std_srvs/srv/SetBool "{data: true}"
+ros2 service call /mcu/set_yaw_hold \
+  std_srvs/srv/SetBool \
+  "{data: true}"
 ```
 
 关闭 yaw hold：
 
 ```bash
-ros2 service call /mcu/set_yaw_hold std_srvs/srv/SetBool "{data: false}"
+ros2 service call /mcu/set_yaw_hold \
+  std_srvs/srv/SetBool \
+  "{data: false}"
 ```
 
-设置目标 yaw：
+### 16.8 设置目标 Yaw
+
+目标单位为 rad，例如约 90°：
 
 ```bash
-ros2 service call /mcu/set_yaw_target mcu_comm_bridge/srv/SetYawTarget "{yaw_rad: 1.57}"
+ros2 service call /mcu/set_yaw_target \
+  mcu_comm_bridge/srv/SetYawTarget \
+  "{yaw_rad: 1.5708}"
 ```
 
-发送急停：
+是否需要先开启 yaw hold，以 MCU 端控制逻辑为准
+
+### 16.9 急停
+
+发送急停，`reason` 是 `uint8` 原因码：
 
 ```bash
-ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
+ros2 service call /mcu/estop \
+  mcu_comm_bridge/srv/Estop \
+  "{reason: 1}"
 ```
+
+节点默认按 `repeat_estop_count=3` 连续写入 3 帧急停消息；急停是锁存安全状态，不能通过 `/mcu/set_brake false` 解除；恢复方式由 MCU 的故障/急停状态机决定
+
+### 16.10 检查服务定义和调用结果
+
+查看任意服务的类型：
+
+```bash
+ros2 service type /mcu/set_arm_pose
+```
+
+查看请求和响应字段：
+
+```bash
+ros2 interface show mcu_comm_bridge/srv/SetArmPose
+ros2 interface show mcu_comm_bridge/srv/SetArmPosition
+ros2 interface show mcu_comm_bridge/srv/SetArmOrientation
+ros2 interface show mcu_comm_bridge/srv/SetYawTarget
+ros2 interface show mcu_comm_bridge/srv/Estop
+ros2 interface show std_srvs/srv/SetBool
+```
+
+检查 bridge 的发送统计：
+
+```bash
+ros2 topic echo /arm/joint_states
+ros2 topic echo /arm/fk_position
+```
+
+同时观察节点日志中的：
+
+```text
+TX ctrl
+TX arm
+TX arm_retry
+arm_accept
+arm_reject
+tx_yaw
+tx_estop
+tx_fail
+```
+
+机械臂服务返回成功但机械臂未动作时，依次检查：
+
+1. MCU 是否处于 `AutoPi`；
+2. MCU 是否收到新的 `arm_command_seq`；
+3. 机械臂是否 ready；
+4. 目标是否超出工作空间或关节限位；
+5. MCU 是否报告 IK 无解或执行错误
 
 ---
 
@@ -751,9 +931,10 @@ ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
 3. 检查 `/imu`、`/odom`、`/arm/joint_states`、`/arm/fk_position`
 4. 检查 `odom -> base_footprint` TF
 5. 发布 `/motor_cmd_vel` 验证 `PI_CONTROL`
-6. 调用 `/mcu/set_brake`、`/mcu/set_yaw_hold`、`/mcu/set_yaw_target`、`/mcu/estop`
-7. 启动 competition_fsm
-8. 启动完整导航系统
+6. 切换到 `AutoPi` 后，依次测试 `/mcu/set_arm_joints`、`/mcu/set_arm_position`、`/mcu/set_arm_pose`、`/mcu/set_arm_orientation`
+7. 调用 `/mcu/set_brake`、`/mcu/set_yaw_hold`、`/mcu/set_yaw_target`、`/mcu/estop`
+8. 启动 competition_fsm
+9. 启动完整导航系统
 
 ---
 
