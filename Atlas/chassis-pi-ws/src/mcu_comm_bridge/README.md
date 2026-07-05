@@ -5,7 +5,7 @@
 ## 功能
 
 - 解析 `MCU_IMU / MCU_ODOM / MCU_ARM_STATE / MCU_STATUS`
-- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/fk_position`
+- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose`、`/arm/pose.position`
 - 订阅 `/motor_cmd_vel`，以 `50Hz` 连续发送 `PI_CONTROL`
 - 提供刹车、急停、yaw、机械臂目标等 ROS 2 服务
 - 对机械臂目标做本地排队与有限重发
@@ -84,6 +84,9 @@ mcu_comm_bridge_node:
     control_rate_hz: 50.0
     cmd_vel_timeout_ms: 200
     arm_command_repeat_count: 3
+    arm_joint_state_topic: "/arm/joint_states"
+    arm_pose_topic: "/arm/pose"
+    arm_pose_position_topic: "/arm/pose.position"
     brake_service: "/mcu/set_brake"
     arm_joints_service: "/mcu/set_arm_joints"
     arm_pose_service: "/mcu/set_arm_pose"
@@ -110,6 +113,8 @@ colcon test-result --verbose
 - `ARM_VALID=0` 的语义是不更新机械臂目标，不是停止
 - 停止机械臂仍通过 `PI_ARM_ACTION_STOP`
 - 机械臂命令只允许在 MCU 的 `AutoPi` 模式中执行
+- `MCU_ARM_STATE` payload 固定为 `56 bytes`，完整帧长为 `66 bytes`
+- `POSE_VALID` 只在位置和四元数都来自同一帧有效 FK 且四元数通过桥接侧校验后才发布 `/arm/pose`
 
 ## 机械臂服务故障诊断日志
 

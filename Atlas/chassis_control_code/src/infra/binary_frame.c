@@ -2,10 +2,13 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <limits.h>
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
 static uint16_t binary_frame_crc16_update(uint16_t crc, uint8_t data);
+static int32_t binary_frame_round_clamp_i32(float value);
+static int16_t binary_frame_round_clamp_i16(float value);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -125,7 +128,7 @@ float binary_frame_urad_to_rad(int32_t urad) {
 }
 
 int32_t binary_frame_rad_to_urad(float rad) {
-    return (int32_t)lroundf(rad * 1000000.0f);
+    return binary_frame_round_clamp_i32(rad * 1000000.0f);
 }
 
 float binary_frame_mrad_to_rad(int32_t mrad) {
@@ -133,7 +136,7 @@ float binary_frame_mrad_to_rad(int32_t mrad) {
 }
 
 int16_t binary_frame_rad_to_mrad_i16(float rad) {
-    return (int16_t)lroundf(rad * 1000.0f);
+    return binary_frame_round_clamp_i16(rad * 1000.0f);
 }
 
 float binary_frame_mm_to_m(int32_t mm) {
@@ -141,11 +144,15 @@ float binary_frame_mm_to_m(int32_t mm) {
 }
 
 int16_t binary_frame_m_to_mm_i16(float m) {
-    return (int16_t)lroundf(m * 1000.0f);
+    return binary_frame_round_clamp_i16(m * 1000.0f);
 }
 
 int32_t binary_frame_m_to_mm_i32(float m) {
-    return (int32_t)lroundf(m * 1000.0f);
+    return binary_frame_round_clamp_i32(m * 1000.0f);
+}
+
+int32_t binary_frame_unit_to_e6_i32(float value) {
+    return binary_frame_round_clamp_i32(value * 1000000.0f);
 }
 
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
@@ -156,4 +163,30 @@ static uint16_t binary_frame_crc16_update(uint16_t crc, uint8_t data) {
         crc = (crc & 0x8000u) ? (uint16_t)((crc << 1) ^ 0x1021u) : (uint16_t)(crc << 1);
     }
     return crc;
+}
+
+static int32_t binary_frame_round_clamp_i32(float value) {
+    if(!isfinite(value)) {
+        return 0;
+    }
+    if(value >= (float)INT32_MAX) {
+        return INT32_MAX;
+    }
+    if(value <= (float)INT32_MIN) {
+        return INT32_MIN;
+    }
+    return (int32_t)lroundf(value);
+}
+
+static int16_t binary_frame_round_clamp_i16(float value) {
+    if(!isfinite(value)) {
+        return 0;
+    }
+    if(value >= (float)INT16_MAX) {
+        return INT16_MAX;
+    }
+    if(value <= (float)INT16_MIN) {
+        return INT16_MIN;
+    }
+    return (int16_t)lroundf(value);
 }

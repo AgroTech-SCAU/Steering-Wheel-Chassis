@@ -120,5 +120,6 @@ int16_t binary_frame_rad_to_mrad_i16(float rad);
 float binary_frame_mm_to_m(int32_t mm);
 int16_t binary_frame_m_to_mm_i16(float m);
 int32_t binary_frame_m_to_mm_i32(float m);
+int32_t binary_frame_unit_to_e6_i32(float value);
 
 #endif

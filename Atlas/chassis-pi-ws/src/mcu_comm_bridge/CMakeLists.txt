@@ -28,9 +28,18 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 include_directories(include)
 
+add_library(mcu_comm_bridge_codec
+  src/binary_frame.cpp
+  src/arm_state_codec.cpp
+)
+
+target_include_directories(mcu_comm_bridge_codec PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 add_executable(mcu_comm_bridge_node
   src/mcu_comm_bridge_node.cpp
-  src/binary_frame.cpp
   src/publish_scheduler.cpp
   src/serial_port.cpp
 )
@@ -42,6 +51,10 @@ ament_target_dependencies(mcu_comm_bridge_node
   sensor_msgs
   std_srvs
   tf2_ros
+)
+
+target_link_libraries(mcu_comm_bridge_node
+  mcu_comm_bridge_codec
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target
@@ -59,9 +72,27 @@ install(TARGETS mcu_comm_bridge_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(TARGETS mcu_comm_bridge_codec
+  DESTINATION lib
+)
+
 install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_arm_state_codec
+    test/test_arm_state_codec.cpp
+  )
+  if(TARGET test_arm_state_codec)
+    target_link_libraries(test_arm_state_codec mcu_comm_bridge_codec)
+    target_include_directories(test_arm_state_codec PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+  endif()
+endif()
 
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()

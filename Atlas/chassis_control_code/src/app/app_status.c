@@ -18,6 +18,7 @@
 #include "remote.h"
 #include "rgb_led/rgb_led.h"
 
+#include <math.h>
 #include <stddef.h>
 
 // ! ========================= 类 型 声 明 ========================= ! //
@@ -59,6 +60,8 @@ static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot);
 static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snapshot);
 static void app_status_snapshot_pi_stats(AppStatusPiStatsSnapshot* snapshot);
 static void app_status_log(void);
+static bool app_status_pose_has_finite_position(const FiveDofArmPose* pose);
+static bool app_status_try_normalize_quaternion(const SerialArmQuaternion* in, SerialArmQuaternion* out);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -348,6 +351,7 @@ static void app_status_build_pi_odom_snapshot(PiCommsOdomSnapshot* snapshot) {
 static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snapshot) {
     const FiveDofArmJointArray* joints;
     const FiveDofArmPose* pose;
+    SerialArmQuaternion normalized_quat = { 0 };
     uint16_t status_flags = 0u;
 
     if(snapshot == NULL) {
@@ -373,10 +377,30 @@ static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snap
 
     pose = arm.get_current_pose();
     if(pose != NULL) {
-        status_flags |= PI_COMMS_ARM_STATE_STATUS_FK_VALID;
         snapshot->x_mm = binary_frame_m_to_mm_i32(pose->position.x);
         snapshot->y_mm = binary_frame_m_to_mm_i32(pose->position.y);
         snapshot->z_mm = binary_frame_m_to_mm_i32(pose->position.z);
+
+        if(app_status_pose_has_finite_position(pose) &&
+           app_status_try_normalize_quaternion(&pose->orientation, &normalized_quat)) {
+            status_flags |= PI_COMMS_ARM_STATE_STATUS_POSE_VALID;
+            snapshot->quat_x_e6 = binary_frame_unit_to_e6_i32(normalized_quat.x);
+            snapshot->quat_y_e6 = binary_frame_unit_to_e6_i32(normalized_quat.y);
+            snapshot->quat_z_e6 = binary_frame_unit_to_e6_i32(normalized_quat.z);
+            snapshot->quat_w_e6 = binary_frame_unit_to_e6_i32(normalized_quat.w);
+        }
+        else {
+            snapshot->quat_x_e6 = 0;
+            snapshot->quat_y_e6 = 0;
+            snapshot->quat_z_e6 = 0;
+            snapshot->quat_w_e6 = 1000000;
+        }
+    }
+    else {
+        snapshot->quat_x_e6 = 0;
+        snapshot->quat_y_e6 = 0;
+        snapshot->quat_z_e6 = 0;
+        snapshot->quat_w_e6 = 1000000;
     }
 
     snapshot->status_flags = status_flags;
@@ -485,4 +509,43 @@ static void app_status_log(void) {
     log_info("--------------------------------------------------");
 
     last_snapshot = snapshot;
+}
+
+static bool app_status_pose_has_finite_position(const FiveDofArmPose* pose) {
+    return pose != NULL &&
+           isfinite(pose->position.x) &&
+           isfinite(pose->position.y) &&
+           isfinite(pose->position.z);
+}
+
+static bool app_status_try_normalize_quaternion(const SerialArmQuaternion* in, SerialArmQuaternion* out) {
+    const float max_component = 1.000001f;
+    float norm;
+
+    if(in == NULL || out == NULL) {
+        return false;
+    }
+    if(!isfinite(in->x) || !isfinite(in->y) || !isfinite(in->z) || !isfinite(in->w)) {
+        return false;
+    }
+    if(in->x < -max_component || in->x > max_component ||
+       in->y < -max_component || in->y > max_component ||
+       in->z < -max_component || in->z > max_component ||
+       in->w < -max_component || in->w > max_component) {
+        return false;
+    }
+
+    norm = sqrtf(in->x * in->x +
+                 in->y * in->y +
+                 in->z * in->z +
+                 in->w * in->w);
+    if(!isfinite(norm) || norm <= 1e-6f) {
+        return false;
+    }
+
+    out->x = in->x / norm;
+    out->y = in->y / norm;
+    out->z = in->z / norm;
+    out->w = in->w / norm;
+    return isfinite(out->x) && isfinite(out->y) && isfinite(out->z) && isfinite(out->w);
 }

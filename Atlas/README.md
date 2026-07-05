@@ -93,7 +93,7 @@ Atlas/
 MCU_STATUS      0x21   5~10Hz   app_state / ready_flags / online_flags / fault
 MCU_IMU         0x25   100Hz    acc_x/y/z + gyro_x/y/z + roll/pitch/yaw
 MCU_ODOM        0x26   50Hz     x/y/yaw + vx/vy/wz
-MCU_ARM_STATE   0x27   50Hz     q0~q4 + fk xyz + status_flags
+MCU_ARM_STATE   0x27   50Hz     q0~q4 + pose(xyz + quat xyzw) + status_flags
 ```
 
 当前关键上位机 -> MCU 控制帧：
@@ -122,7 +122,7 @@ PI_ACK           0x44
 - 解析 MCU 二进制协议帧
 - 将 `MCU_ODOM` 发布为 `/odom`
 - 将 `MCU_IMU` 发布为 `/imu`
-- 将 `MCU_ARM_STATE` 发布为 `/arm/joint_states` 与 `/arm/fk_position`
+- 将 `MCU_ARM_STATE` 发布为 `/arm/joint_states`、`/arm/pose` 与 `/arm/pose.position`
 - 根据 MCU 里程计发布 `odom -> base_footprint` TF
 - 订阅状态机仲裁后的 `/motor_cmd_vel`
 - 将 `/motor_cmd_vel` 转换为 `PI_CONTROL` 并周期性下发给 MCU
@@ -135,7 +135,8 @@ Pi 端对外提供的主要 ROS2 接口：
 | `/odom` | `nav_msgs/msg/Odometry` | 发布 | 底盘局部里程计，供 Cartographer 和 Nav2 使用 |
 | `/imu` | `sensor_msgs/msg/Imu` | 发布 | MCU IMU 与融合姿态数据 |
 | `/arm/joint_states` | `sensor_msgs/msg/JointState` | 发布 | 机械臂 q0~q4 当前关节角 |
-| `/arm/fk_position` | `geometry_msgs/msg/PointStamped` | 发布 | MCU 正运动学求得的末端位置 |
+| `/arm/pose` | `geometry_msgs/msg/PoseStamped` | 发布 | MCU 正运动学求得的末端位姿，四元数顺序为 `x/y/z/w` |
+| `/arm/pose.position` | `geometry_msgs/msg/PointStamped` | 发布 | 机械臂末端位置话题，与 `/arm/pose` 的 `pose.position` 同源 |
 | `odom -> base_footprint` | TF | 发布 | 底盘局部 TF |
 | `/motor_cmd_vel` | `geometry_msgs/msg/Twist` | 订阅 | 状态机仲裁后的底盘速度指令 |
 | `/mcu/set_brake` | `std_srvs/srv/SetBool` | service | 设置或解除底盘刹车 |
@@ -367,7 +368,8 @@ chassis-pi-ws/src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
 | `imu_topic` | `/imu` | IMU 话题 |
 | `cmd_vel_topic` | `/motor_cmd_vel` | 底盘速度输入话题 |
 | `arm_joint_state_topic` | `/arm/joint_states` | 机械臂关节状态话题 |
-| `arm_fk_topic` | `/arm/fk_position` | 机械臂末端位置话题 |
+| `arm_pose_topic` | `/arm/pose` | 机械臂末端位姿话题 |
+| `arm_pose_position_topic` | `/arm/pose.position` | 机械臂末端位置话题 |
 | `odom_frame_id` | `odom` | odom 坐标系 |
 | `base_frame_id` | `base_footprint` | 底盘基座坐标系 |
 | `imu_frame_id` | `imu_link` | IMU 坐标系 |
@@ -494,7 +496,8 @@ ros2 topic list
 /odom
 /imu
 /arm/joint_states
-/arm/fk_position
+/arm/pose
+/arm/pose.position
 /cmd_vel
 /motor_cmd_vel
 /tf
@@ -507,6 +510,8 @@ ros2 topic list
 ros2 topic hz /odom
 ros2 topic hz /imu
 ros2 topic hz /arm/joint_states
+ros2 topic hz /arm/pose
+ros2 topic hz /arm/pose.position
 ros2 topic hz /scan
 ```
 
@@ -516,6 +521,8 @@ ros2 topic hz /scan
 /odom 约 50Hz
 /imu 约 100Hz
 /arm/joint_states 约 50Hz
+/arm/pose 约 50Hz
+/arm/pose.position 约 50Hz
 /scan 按雷达配置输出
 ```
 
@@ -547,7 +554,8 @@ ros2 topic pub /motor_cmd_vel geometry_msgs/msg/Twist \
 
 ```bash
 ros2 topic echo /arm/joint_states
-ros2 topic echo /arm/fk_position
+ros2 topic echo /arm/pose
+ros2 topic echo /arm/pose.position
 ```
 
 如果没有数据，优先检查 MCU 是否已发送 `MCU_ARM_STATE(0x27)`

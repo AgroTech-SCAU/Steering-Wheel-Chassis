@@ -1,3 +1,4 @@
+#include "mcu_comm_bridge/arm_state_codec.hpp"
 #include "mcu_comm_bridge/binary_frame.hpp"
 #include "mcu_comm_bridge/publish_scheduler.hpp"
 #include "mcu_comm_bridge/serial_port.hpp"
@@ -23,6 +24,7 @@
 #include <vector>
 
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -150,7 +152,11 @@ struct BridgeStats {
 
     std::atomic<uint64_t> imu_rx_valid{ 0 };
     std::atomic<uint64_t> odom_rx_valid{ 0 };
-    std::atomic<uint64_t> arm_rx_valid{ 0 };
+    std::atomic<uint64_t> arm_state_valid{ 0 };
+    std::atomic<uint64_t> arm_joint_valid{ 0 };
+    std::atomic<uint64_t> arm_pose_valid{ 0 };
+    std::atomic<uint64_t> arm_pose_invalid_quaternion{ 0 };
+    std::atomic<uint64_t> arm_state_bad_length{ 0 };
     std::atomic<uint64_t> status_rx_valid{ 0 };
     std::atomic<uint64_t> imu_rx_crc_rejected{ 0 };
     std::atomic<uint64_t> odom_rx_crc_rejected{ 0 };
@@ -192,7 +198,11 @@ struct BridgeStatsSnapshot {
     uint64_t termios_mismatch_count = 0;
     uint64_t imu_rx_valid = 0;
     uint64_t odom_rx_valid = 0;
-    uint64_t arm_rx_valid = 0;
+    uint64_t arm_state_valid = 0;
+    uint64_t arm_joint_valid = 0;
+    uint64_t arm_pose_valid = 0;
+    uint64_t arm_pose_invalid_quaternion = 0;
+    uint64_t arm_state_bad_length = 0;
     uint64_t status_rx_valid = 0;
     uint64_t imu_rx_crc_rejected = 0;
     uint64_t odom_rx_crc_rejected = 0;
@@ -405,7 +415,8 @@ private:
         odom_topic_ = declare_parameter<std::string>("odom_topic", "/odom");
         imu_topic_ = declare_parameter<std::string>("imu_topic", "/imu");
         arm_joint_state_topic_ = declare_parameter<std::string>("arm_joint_state_topic", "/arm/joint_states");
-        arm_fk_topic_ = declare_parameter<std::string>("arm_fk_topic", "/arm/fk_position");
+        arm_pose_topic_ = declare_parameter<std::string>("arm_pose_topic", "/arm/pose");
+        arm_pose_position_topic_ = declare_parameter<std::string>("arm_pose_position_topic", "/arm/pose.position");
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
@@ -458,7 +469,8 @@ private:
         odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(odom_topic_, rclcpp::QoS(20));
         imu_pub_ = create_publisher<sensor_msgs::msg::Imu>(imu_topic_, rclcpp::SensorDataQoS());
         arm_joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>(arm_joint_state_topic_, rclcpp::QoS(20));
-        arm_fk_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(arm_fk_topic_, rclcpp::QoS(20));
+        arm_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(arm_pose_topic_, rclcpp::QoS(20));
+        arm_pose_position_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(arm_pose_position_topic_, rclcpp::QoS(20));
 
         if(publish_tf_) {
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -595,6 +607,12 @@ private:
             else if(event.kind == ParserErrorKind::RawBufferOverflow) {
                 RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "parser raw buffer overflow, oldest bytes dropped");
             }
+            else if(event.kind == ParserErrorKind::KnownMessageBadLength &&
+                    event.msg_id.has_value() &&
+                    event.msg_id.value() == MSG_MCU_ARM_STATE) {
+                stats_.arm_state_bad_length++;
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "ARM_STATE dropped: expected payload=%u bytes", PAYLOAD_MCU_ARM_STATE_LEN);
+            }
         }
     }
 
@@ -723,21 +741,26 @@ private:
     }
 
     void handle_arm_state(const Frame& frame) {
-        ArmState arm;
-        arm.stamp_ms = read_u32_le(frame.payload, 0);
-        arm.status_flags = read_u16_le(frame.payload, 4);
-        arm.sequence_count = read_u16_le(frame.payload, 6);
-        arm.q0_urad = read_i32_le(frame.payload, 8);
-        arm.q1_urad = read_i32_le(frame.payload, 12);
-        arm.q2_urad = read_i32_le(frame.payload, 16);
-        arm.q3_urad = read_i32_le(frame.payload, 20);
-        arm.q4_urad = read_i32_le(frame.payload, 24);
-        arm.x_mm = read_i32_le(frame.payload, 28);
-        arm.y_mm = read_i32_le(frame.payload, 32);
-        arm.z_mm = read_i32_le(frame.payload, 36);
+        DecodedArmState arm;
+        const ArmStateDecodeError decode_error = decode_arm_state_payload(frame.payload, &arm);
+        if(decode_error == ArmStateDecodeError::BadLength) {
+            stats_.arm_state_bad_length++;
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "ARM_STATE dropped: invalid payload length=%zu", frame.payload.size());
+            return;
+        }
 
-        publish_arm_state(arm);
-        stats_.arm_rx_valid++;
+        const auto stamp = now();
+        publish_arm_state(arm, stamp);
+        stats_.arm_state_valid++;
+        if(arm.joint_valid) {
+            stats_.arm_joint_valid++;
+        }
+        if(arm.pose_valid) {
+            stats_.arm_pose_valid++;
+        }
+        else if(arm.pose_flag_set && decode_error != ArmStateDecodeError::None) {
+            stats_.arm_pose_invalid_quaternion++;
+        }
     }
 
     void handle_status(const Frame& frame) {
@@ -886,32 +909,42 @@ private:
         }
     }
 
-    void publish_arm_state(const ArmState& arm) {
-        const rclcpp::Time stamp = now();
-
+    void publish_arm_state(const DecodedArmState& arm, const rclcpp::Time& stamp) {
         if((arm.status_flags & ARM_STATE_FLAG_JOINT_VALID) != 0u) {
             sensor_msgs::msg::JointState joint_msg;
             joint_msg.header.stamp = stamp;
             joint_msg.header.frame_id = arm_frame_id_;
             joint_msg.name = { "q0", "q1", "q2", "q3", "q4" };
             joint_msg.position = {
-                urad_to_rad(arm.q0_urad),
-                urad_to_rad(arm.q1_urad),
-                urad_to_rad(arm.q2_urad),
-                urad_to_rad(arm.q3_urad),
-                urad_to_rad(arm.q4_urad),
+                arm.joints_rad[0],
+                arm.joints_rad[1],
+                arm.joints_rad[2],
+                arm.joints_rad[3],
+                arm.joints_rad[4],
             };
             arm_joint_state_pub_->publish(joint_msg);
         }
 
-        if((arm.status_flags & ARM_STATE_FLAG_FK_VALID) != 0u) {
+        if(arm.pose_valid) {
+            geometry_msgs::msg::PoseStamped pose_msg;
+            pose_msg.header.stamp = stamp;
+            pose_msg.header.frame_id = arm_frame_id_;
+            pose_msg.pose.position.x = arm.position_x_m;
+            pose_msg.pose.position.y = arm.position_y_m;
+            pose_msg.pose.position.z = arm.position_z_m;
+            pose_msg.pose.orientation.x = arm.orientation_x;
+            pose_msg.pose.orientation.y = arm.orientation_y;
+            pose_msg.pose.orientation.z = arm.orientation_z;
+            pose_msg.pose.orientation.w = arm.orientation_w;
+            arm_pose_pub_->publish(pose_msg);
+
             geometry_msgs::msg::PointStamped point_msg;
             point_msg.header.stamp = stamp;
             point_msg.header.frame_id = arm_frame_id_;
-            point_msg.point.x = mm_to_m(arm.x_mm);
-            point_msg.point.y = mm_to_m(arm.y_mm);
-            point_msg.point.z = mm_to_m(arm.z_mm);
-            arm_fk_pub_->publish(point_msg);
+            point_msg.point.x = arm.position_x_m;
+            point_msg.point.y = arm.position_y_m;
+            point_msg.point.z = arm.position_z_m;
+            arm_pose_position_pub_->publish(point_msg);
         }
     }
 
@@ -1350,7 +1383,11 @@ private:
         snapshot.termios_mismatch_count = stats_.termios_mismatch_count.load();
         snapshot.imu_rx_valid = stats_.imu_rx_valid.load();
         snapshot.odom_rx_valid = stats_.odom_rx_valid.load();
-        snapshot.arm_rx_valid = stats_.arm_rx_valid.load();
+        snapshot.arm_state_valid = stats_.arm_state_valid.load();
+        snapshot.arm_joint_valid = stats_.arm_joint_valid.load();
+        snapshot.arm_pose_valid = stats_.arm_pose_valid.load();
+        snapshot.arm_pose_invalid_quaternion = stats_.arm_pose_invalid_quaternion.load();
+        snapshot.arm_state_bad_length = stats_.arm_state_bad_length.load();
         snapshot.status_rx_valid = stats_.status_rx_valid.load();
         snapshot.imu_rx_crc_rejected = stats_.imu_rx_crc_rejected.load();
         snapshot.odom_rx_crc_rejected = stats_.odom_rx_crc_rejected.load();
@@ -1423,11 +1460,19 @@ private:
             "RX valid_hz imu=%.1f odom=%.1f arm=%.1f status=%.1f crc_reject imu=%.1f odom=%.1f unknown=%.1f",
             safe_rate(snapshot.imu_rx_valid - last_stats_snapshot_.imu_rx_valid, elapsed_sec),
             safe_rate(snapshot.odom_rx_valid - last_stats_snapshot_.odom_rx_valid, elapsed_sec),
-            safe_rate(snapshot.arm_rx_valid - last_stats_snapshot_.arm_rx_valid, elapsed_sec),
+            safe_rate(snapshot.arm_state_valid - last_stats_snapshot_.arm_state_valid, elapsed_sec),
             safe_rate(snapshot.status_rx_valid - last_stats_snapshot_.status_rx_valid, elapsed_sec),
             safe_rate(snapshot.imu_rx_crc_rejected - last_stats_snapshot_.imu_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.odom_rx_crc_rejected - last_stats_snapshot_.odom_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.parser_crc_error_unknown_msg - last_stats_snapshot_.parser_crc_error_unknown_msg, elapsed_sec));
+
+        RCLCPP_INFO(
+            get_logger(),
+            "ARM_STATE joint_valid=%.1f pose_valid=%.1f pose_invalid=%.1f bad_length=%.1f",
+            safe_rate(snapshot.arm_joint_valid - last_stats_snapshot_.arm_joint_valid, elapsed_sec),
+            safe_rate(snapshot.arm_pose_valid - last_stats_snapshot_.arm_pose_valid, elapsed_sec),
+            safe_rate(snapshot.arm_pose_invalid_quaternion - last_stats_snapshot_.arm_pose_invalid_quaternion, elapsed_sec),
+            safe_rate(snapshot.arm_state_bad_length - last_stats_snapshot_.arm_state_bad_length, elapsed_sec));
 
         RCLCPP_INFO(
             get_logger(),
@@ -1509,7 +1554,8 @@ private:
     std::string odom_topic_ = "/odom";
     std::string imu_topic_ = "/imu";
     std::string arm_joint_state_topic_ = "/arm/joint_states";
-    std::string arm_fk_topic_ = "/arm/fk_position";
+    std::string arm_pose_topic_ = "/arm/pose";
+    std::string arm_pose_position_topic_ = "/arm/pose.position";
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
     std::string estop_service_ = "/mcu/estop";
@@ -1568,7 +1614,8 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr arm_joint_state_pub_;
-    rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_fk_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr arm_pose_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_pose_position_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmJoints>::SharedPtr arm_joints_srv_;

@@ -188,6 +188,10 @@ typedef struct {
     int32_t x_mm;
     int32_t y_mm;
     int32_t z_mm;
+    int32_t quat_x_e6;
+    int32_t quat_y_e6;
+    int32_t quat_z_e6;
+    int32_t quat_w_e6;
 } PiCommsArmStateSnapshot;
 
 typedef struct {
@@ -236,7 +240,7 @@ typedef struct {
 
 #define PI_COMMS_PAYLOAD_IMU_LEN 48u
 #define PI_COMMS_PAYLOAD_ODOM_LEN 32u
-#define PI_COMMS_PAYLOAD_ARM_STATE_LEN 40u
+#define PI_COMMS_PAYLOAD_ARM_STATE_LEN 56u
 
 #define PI_COMMS_IMU_STATUS_IMU_READY 0x0001u
 #define PI_COMMS_IMU_STATUS_ACC_VALID 0x0002u
@@ -257,6 +261,7 @@ typedef struct {
 #define PI_COMMS_ARM_STATE_STATUS_ARM_READY 0x0001u
 #define PI_COMMS_ARM_STATE_STATUS_JOINT_VALID 0x0002u
 #define PI_COMMS_ARM_STATE_STATUS_FK_VALID 0x0004u
+#define PI_COMMS_ARM_STATE_STATUS_POSE_VALID PI_COMMS_ARM_STATE_STATUS_FK_VALID
 
 PiCommsStatus pi_comms_init(const PiCommsConfig* config);
 void pi_comms_on_rx_byte(uint8_t data);

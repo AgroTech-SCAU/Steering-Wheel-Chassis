@@ -131,7 +131,7 @@ CRC_L    1 byte   CRC16 low byte
 | `0x24` | `MCU_FAULT_EVENT` | 8 | 故障事件，当前预留 |
 | `0x25` | `MCU_IMU` | 48 | IMU 周期帧，100Hz |
 | `0x26` | `MCU_ODOM` | 32 | 底盘局部里程计周期帧，50Hz |
-| `0x27` | `MCU_ARM_STATE` | 40 | 机械臂当前关节角与正解末端位置，50Hz |
+| `0x27` | `MCU_ARM_STATE` | 56 | 机械臂当前关节角与完整末端 Pose，50Hz |
 
 ### 5.3 Pi -> MCU
 
@@ -582,14 +582,19 @@ MCU -> Pi
 
 payload 长度：
 ```text
-40 bytes
+56 bytes
+```
+
+完整帧长度：
+```text
+66 bytes
 ```
 
 说明：
-1. 周期发送机械臂当前关节角和当前末端位置
+1. 周期发送机械臂当前关节角和当前末端完整 Pose
 2. `q0 ~ q4` 来自 `arm.get_current_joints()`
-3. `x / y / z` 来自 `arm.get_current_pose().position`
-4. `x / y / z` 是当前关节角正运动学结果
+3. `x / y / z` 与 `qx / qy / qz / qw` 来自 `arm.get_current_pose()`
+4. Pose 表示末端坐标系相对于 `arm_base_link` 的位姿，四元数顺序固定为 `x / y / z / w`
 5. 该帧是周期状态帧，不使用 `ACK`
 6. Pi 端根据 `status_flags` 判断字段是否有效
 
@@ -608,6 +613,10 @@ payload 偏移：
 | 28 | 4 | `int32_t` | `x_mm` | `mm` |
 | 32 | 4 | `int32_t` | `y_mm` | `mm` |
 | 36 | 4 | `int32_t` | `z_mm` | `mm` |
+| 40 | 4 | `int32_t` | `quat_x_e6` | `quaternion / 1,000,000.0` |
+| 44 | 4 | `int32_t` | `quat_y_e6` | `quaternion / 1,000,000.0` |
+| 48 | 4 | `int32_t` | `quat_z_e6` | `quaternion / 1,000,000.0` |
+| 52 | 4 | `int32_t` | `quat_w_e6` | `quaternion / 1,000,000.0` |
 
 `status_flags`：
 
@@ -615,7 +624,7 @@ payload 偏移：
 |---:|---|---|
 | bit0 | `arm_ready` | 机械臂服务已初始化 |
 | bit1 | `joint_valid` | `q0 ~ q4` 有效 |
-| bit2 | `fk_valid` | `x / y / z` 正解结果有效 |
+| bit2 | `fk_valid / pose_valid` | `x / y / z / qx / qy / qz / qw` 来自同一帧有效 FK |
 
 ### 8.4 MCU_STATUS
 

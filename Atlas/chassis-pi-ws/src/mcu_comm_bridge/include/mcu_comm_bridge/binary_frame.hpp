@@ -36,7 +36,7 @@ constexpr uint16_t PAYLOAD_MCU_ACK_LEN = 4u;
 constexpr uint16_t PAYLOAD_MCU_FAULT_EVENT_LEN = 8u;
 constexpr uint16_t PAYLOAD_MCU_IMU_LEN = 48u;
 constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;
-constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 40u;
+constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 56u;
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;
 constexpr uint16_t PAYLOAD_PI_ESTOP_LEN = 8u;
@@ -45,6 +45,7 @@ constexpr uint16_t PAYLOAD_PI_ACK_LEN = 4u;
 constexpr uint16_t ARM_STATE_FLAG_ARM_READY = 0x0001u;
 constexpr uint16_t ARM_STATE_FLAG_JOINT_VALID = 0x0002u;
 constexpr uint16_t ARM_STATE_FLAG_FK_VALID = 0x0004u;
+constexpr uint16_t ARM_STATE_FLAG_POSE_VALID = ARM_STATE_FLAG_FK_VALID;
 
 struct Frame {
     uint8_t version = 0;
