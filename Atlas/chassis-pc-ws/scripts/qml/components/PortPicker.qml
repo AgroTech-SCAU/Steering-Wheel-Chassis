@@ -20,14 +20,17 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: 6
+
         Text {
             text: root.label
             color: "#344454"
             font.pixelSize: 13
         }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
+
             TextField {
                 id: field
                 Layout.fillWidth: true
@@ -46,6 +49,7 @@ Item {
                 }
                 onEditingFinished: backend.setConfigValue(root.configKey, text)
             }
+
             ToolButton {
                 id: menuButton
                 implicitWidth: 40
@@ -65,61 +69,100 @@ Item {
                     color: menuButton.hovered ? "#EDF4F8" : "#F8FAFC"
                     border.color: "#CAD5DF"
                 }
-                onClicked: portMenu.open()
-                Menu {
-                    id: portMenu
-                    y: menuButton.height + 4
-                    width: 330
-                    background: Rectangle {
-                        color: "#FFFFFF"
-                        border.color: "#D9E2EC"
-                        radius: 10
-                    }
-                    Repeater {
-                        model: root.portModel
-                        MenuItem {
-                            width: portMenu.width
-                            height: 48
-                            contentItem: Column {
-                                spacing: 2
-                                Text {
-                                    text: modelData
-                                    color: "#2C3A47"
-                                    font.pixelSize: 13
-                                    font.weight: Font.DemiBold
-                                }
-                                Text {
-                                    text: backend.portDescription(modelData)
-                                    color: "#718092"
-                                    font.pixelSize: 11
-                                    elide: Text.ElideRight
-                                    width: portMenu.width - 30
-                                }
-                            }
-                            background: Rectangle {
-                                radius: 7
-                                color: parent.highlighted ? "#EAF6FC" : "transparent"
-                            }
-                            onTriggered: {
-                                field.text = modelData
-                                backend.setConfigValue(root.configKey, modelData)
-                            }
-                        }
-                    }
-                    MenuItem {
-                        visible: root.portModel.length === 0
-                        enabled: false
-                        text: "未扫描到串口，可直接手动输入"
-                    }
-                }
+                onClicked: portPopup.open()
             }
         }
+
         Text {
             text: backend.portDescription(field.text)
             color: "#718092"
             font.pixelSize: 11
             elide: Text.ElideRight
             Layout.fillWidth: true
+        }
+    }
+
+    Popup {
+        id: portPopup
+        x: Math.max(0, Math.min(root.width - width,
+                               menuButton.mapToItem(root, menuButton.width - width, 0).x))
+        y: menuButton.mapToItem(root, 0, menuButton.height + 4).y
+        width: Math.min(300, root.width)
+        height: root.portModel.length > 0
+                ? Math.min(portList.contentHeight + 8, 228)
+                : 46
+        padding: 4
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#FFFFFF"
+            border.color: "#D9E2EC"
+            border.width: 1
+            radius: 9
+        }
+
+        contentItem: Item {
+            implicitWidth: 292
+            implicitHeight: portPopup.height - portPopup.topPadding - portPopup.bottomPadding
+
+            ListView {
+                id: portList
+                anchors.fill: parent
+                clip: true
+                model: root.portModel
+                boundsBehavior: Flickable.StopAtBounds
+                spacing: 0
+
+                delegate: ItemDelegate {
+                    width: portList.width
+                    height: 50
+                    hoverEnabled: true
+                    leftPadding: 10
+                    rightPadding: 10
+                    topPadding: 5
+                    bottomPadding: 5
+
+                    contentItem: Column {
+                        spacing: 2
+                        Text {
+                            width: parent.width
+                            text: String(modelData)
+                            color: "#243442"
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: backend.portDescription(String(modelData))
+                            color: "#718092"
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    background: Rectangle {
+                        radius: 6
+                        color: parent.hovered || parent.highlighted ? "#EAF6FC" : "transparent"
+                    }
+
+                    onClicked: {
+                        field.text = String(modelData)
+                        backend.setConfigValue(root.configKey, String(modelData))
+                        portPopup.close()
+                    }
+                }
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: root.portModel.length === 0
+                text: "未扫描到串口，可直接手动输入"
+                color: "#718092"
+                font.pixelSize: 12
+            }
         }
     }
 }

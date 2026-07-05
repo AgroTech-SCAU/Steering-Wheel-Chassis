@@ -33,6 +33,7 @@ from PySide6.QtCore import (
     QObject,
     Qt,
     QThread,
+    QTimer,
     Signal,
     Slot,
 )
@@ -92,6 +93,10 @@ LEN_PRESENT_POSITION = 4
 TORQUE_DISABLE = 0
 TORQUE_ENABLE = 1
 OPERATING_MODE_CURRENT_POSITION = 5
+
+STARTUP_TIMEOUT_MS = 8000
+STOP_INTERRUPT_TIMEOUT_MS = 2500
+STOP_TERMINATE_TIMEOUT_MS = 2500
 
 COMMON_BAUDRATES = [
     "9600",
@@ -443,16 +448,23 @@ class DynamixelLeader:
         )
         return LeaderState(q_rad, gripper_raw, gripper_norm, end_switch)
 
+    def interrupt(self) -> None:
+        """Close the SDK port immediately so a pending operation can return."""
+        if not self._connected:
+            return
+        try:
+            self.port_handler.closePort()
+        except Exception:
+            pass
+        finally:
+            self._connected = False
+
     def close(self) -> None:
         try:
             self.group_reader.clearParam()
         except Exception:
             pass
-        if self._connected:
-            try:
-                self.port_handler.closePort()
-            finally:
-                self._connected = False
+        self.interrupt()
 
 
 class McuSerialSender:
@@ -547,9 +559,26 @@ class McuSerialSender:
         self._rx_lines += len(lines)
         return lines
 
+    def interrupt(self) -> None:
+        """Cancel pending serial I/O and close the handle."""
+        ser = self.ser
+        if ser is None:
+            return
+        for method_name in ("cancel_read", "cancel_write"):
+            method = getattr(ser, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+        try:
+            if ser.is_open:
+                ser.close()
+        except Exception:
+            pass
+
     def close(self) -> None:
-        if self.ser is not None and self.ser.is_open:
-            self.ser.close()
+        self.interrupt()
 
 
 class LogModel(QAbstractListModel):
@@ -626,9 +655,23 @@ class TeleopWorker(QThread):
         super().__init__(parent)
         self.config = config
         self._stop_event = threading.Event()
+        self._io_lock = threading.Lock()
+        self._leader: DynamixelLeader | None = None
+        self._sender: McuSerialSender | None = None
 
     def request_stop(self) -> None:
         self._stop_event.set()
+        self.interrupt_io()
+
+    def interrupt_io(self) -> None:
+        """Force pending device I/O to return by closing both serial handles."""
+        with self._io_lock:
+            leader = self._leader
+            sender = self._sender
+        if sender is not None:
+            sender.interrupt()
+        if leader is not None:
+            leader.interrupt()
 
     def log(self, message: str, level: str = "INFO") -> None:
         self.logEvent.emit(time.strftime("%H:%M:%S"), level, message)
@@ -636,6 +679,10 @@ class TeleopWorker(QThread):
     def run(self) -> None:
         leader = DynamixelLeader(self.config)
         sender = McuSerialSender(self.config)
+        with self._io_lock:
+            self._leader = leader
+            self._sender = sender
+
         packer = ProtocolPacker(self.config.crc_name)
         stats = RunStats()
         fatal_error = ""
@@ -646,6 +693,8 @@ class TeleopWorker(QThread):
                 f"打开主臂串口：{self.config.leader_port} @ {self.config.leader_baud}"
             )
             leader.connect()
+            if self._stop_event.is_set():
+                return
             self.log("主臂 Dynamixel 连接成功")
 
             if self.config.dry_run:
@@ -656,6 +705,8 @@ class TeleopWorker(QThread):
                     f"打开从臂 MCU 串口：{self.config.mcu_port} @ {self.config.mcu_baud}"
                 )
                 sender.connect()
+                if self._stop_event.is_set():
+                    return
                 self.log("从臂 MCU 串口连接成功")
 
             period_s = 1.0 / self.config.master_send_freq_hz
@@ -676,6 +727,9 @@ class TeleopWorker(QThread):
                             self.log(f"{self.config.mcu_log_prefix}{line}", "MCU")
 
                     state = leader.read_state()
+                    if self._stop_event.is_set():
+                        break
+
                     frame = packer.pack_master_joints(state.q_rad, state.end_switch)
                     if not self.config.dry_run:
                         sender.write_frame(frame)
@@ -727,6 +781,8 @@ class TeleopWorker(QThread):
                     serial.SerialException,
                     serial.SerialTimeoutException,
                 ) as exc:
+                    if self._stop_event.is_set():
+                        break
                     stats.errors += 1
                     self.log(str(exc), "WARN")
                     self.statsEvent.emit({"errors": stats.errors})
@@ -741,11 +797,11 @@ class TeleopWorker(QThread):
                     break
 
         except Exception as exc:
-            fatal_error = str(exc)
-            self.log(f"启动或运行失败：{exc}", "ERROR")
-            self.log(traceback.format_exc().rstrip(), "DEBUG")
-            self.statusEvent.emit("运行失败")
-
+            if not self._stop_event.is_set():
+                fatal_error = str(exc)
+                self.log(f"启动或运行失败：{exc}", "ERROR")
+                self.log(traceback.format_exc().rstrip(), "DEBUG")
+                self.statusEvent.emit("运行失败")
         finally:
             self.statusEvent.emit("正在停止")
             try:
@@ -762,6 +818,9 @@ class TeleopWorker(QThread):
                 leader.close()
             except Exception as exc:
                 self.log(f"关闭主臂串口时出错：{exc}", "WARN")
+            with self._io_lock:
+                self._sender = None
+                self._leader = None
             self.log("遥操作已停止")
             self.activeChanged.emit(False)
             self.stopped.emit(fatal_error)
@@ -789,7 +848,20 @@ class TeleopBackend(QObject):
         self._config_dirty = True
         self._applied_config: AppConfig | None = None
         self._worker: TeleopWorker | None = None
+        self._stop_requested = False
         self._stats: dict[str, Any] = self._empty_stats()
+
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setSingleShot(True)
+        self._startup_timer.timeout.connect(self._on_startup_timeout)
+
+        self._stop_interrupt_timer = QTimer(self)
+        self._stop_interrupt_timer.setSingleShot(True)
+        self._stop_interrupt_timer.timeout.connect(self._on_stop_interrupt_timeout)
+
+        self._stop_terminate_timer = QTimer(self)
+        self._stop_terminate_timer.setSingleShot(True)
+        self._stop_terminate_timer.timeout.connect(self._on_stop_terminate_timeout)
 
     @staticmethod
     def _empty_stats() -> dict[str, Any]:
@@ -851,7 +923,7 @@ class TeleopBackend(QObject):
 
     @Property(bool, notify=stateChanged)
     def canStop(self) -> bool:
-        return self._busy and self._worker is not None
+        return self._busy and self._worker is not None and not self._stop_requested
 
     @Property(str, notify=stateChanged)
     def configState(self) -> str:
@@ -1120,6 +1192,7 @@ class TeleopBackend(QObject):
         worker = TeleopWorker(self._applied_config, self)
         self._worker = worker
         self._busy = True
+        self._stop_requested = False
         self._pending_fatal_error = ""
         worker.logEvent.connect(self._on_worker_log)
         worker.statusEvent.connect(self._set_status)
@@ -1130,15 +1203,48 @@ class TeleopBackend(QObject):
         worker.finished.connect(worker.deleteLater)
         self.stateChanged.emit()
         worker.start()
+        self._startup_timer.start(STARTUP_TIMEOUT_MS)
 
     @Slot()
     def stopRun(self) -> None:
-        if self._worker is None or not self._worker.isRunning():
+        worker = self._worker
+        if worker is None or not worker.isRunning() or self._stop_requested:
             return
+        self._stop_requested = True
+        self._startup_timer.stop()
         self._set_status("正在请求停止")
-        self._append_log("INFO", "已发送停止请求，等待通信线程释放串口")
-        self._worker.request_stop()
+        self._append_log("INFO", "已发送停止请求，正在中断串口 I/O")
+        worker.request_stop()
+        self._stop_interrupt_timer.start(STOP_INTERRUPT_TIMEOUT_MS)
         self.stateChanged.emit()
+
+    @Slot()
+    def _on_startup_timeout(self) -> None:
+        if not self._busy or self._running or self._worker is None:
+            return
+        self._append_log("ERROR", "设备连接超过 8 秒，已自动中止连接")
+        self._set_status("连接超时，正在停止")
+        self.stopRun()
+
+    @Slot()
+    def _on_stop_interrupt_timeout(self) -> None:
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        self._append_log("WARN", "停止等待超时，正在强制关闭主从串口")
+        self._set_status("停止超时，正在强制释放串口")
+        worker.interrupt_io()
+        self._stop_terminate_timer.start(STOP_TERMINATE_TIMEOUT_MS)
+
+    @Slot()
+    def _on_stop_terminate_timeout(self) -> None:
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        self._append_log("ERROR", "串口强制关闭后线程仍未退出，执行最终线程终止")
+        self._set_status("正在强制终止通信线程")
+        worker.terminate()
+        worker.wait(1000)
 
     @Slot()
     def resetDefaults(self) -> None:
@@ -1214,11 +1320,18 @@ class TeleopBackend(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        self._startup_timer.stop()
+        self._stop_interrupt_timer.stop()
+        self._stop_terminate_timer.stop()
         worker = self._worker
         if worker is None or not worker.isRunning():
             return
         worker.request_stop()
-        worker.wait(5000)
+        if not worker.wait(2500):
+            worker.interrupt_io()
+        if worker.isRunning() and not worker.wait(1500):
+            worker.terminate()
+            worker.wait(1000)
 
     @Slot(str, str, str)
     def _on_worker_log(self, timestamp: str, level: str, message: str) -> None:
@@ -1232,10 +1345,15 @@ class TeleopBackend(QObject):
     @Slot(bool)
     def _on_worker_active(self, active: bool) -> None:
         self._running = active
+        if active:
+            self._startup_timer.stop()
         self.stateChanged.emit()
 
     @Slot(str)
     def _on_worker_stopped(self, fatal_error: str) -> None:
+        self._startup_timer.stop()
+        self._stop_interrupt_timer.stop()
+        self._stop_terminate_timer.stop()
         self._running = False
         self._pending_fatal_error = fatal_error
         self._set_status("运行失败" if fatal_error else "已停止")
@@ -1245,7 +1363,11 @@ class TeleopBackend(QObject):
 
     @Slot()
     def _on_worker_finished(self) -> None:
+        self._startup_timer.stop()
+        self._stop_interrupt_timer.stop()
+        self._stop_terminate_timer.stop()
         self._running = False
         self._busy = False
+        self._stop_requested = False
         self._worker = None
         self.stateChanged.emit()

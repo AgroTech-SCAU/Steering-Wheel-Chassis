@@ -624,13 +624,16 @@ ApplicationWindow {
                             border.color: "#D9E2EC"
 
                             ScrollView {
+                                id: liveMonitorScroll
                                 anchors.fill: parent
                                 anchors.margins: 14
                                 clip: true
+                                contentWidth: availableWidth
                                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                                 ColumnLayout {
-                                    width: parent.availableWidth
+                                    width: liveMonitorScroll.availableWidth
                                     spacing: 12
 
                                     RowLayout {

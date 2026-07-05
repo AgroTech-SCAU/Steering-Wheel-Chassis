@@ -21,6 +21,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: 6
+
         RowLayout {
             Layout.fillWidth: true
             Text {
@@ -36,9 +37,11 @@ Item {
                 font.pixelSize: 11
             }
         }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
+
             TextField {
                 id: field
                 Layout.fillWidth: true
@@ -57,6 +60,7 @@ Item {
                 }
                 onEditingFinished: backend.setConfigValue(root.configKey, text)
             }
+
             ToolButton {
                 id: menuButton
                 implicitWidth: 40
@@ -76,38 +80,60 @@ Item {
                     color: menuButton.hovered ? "#EDF4F8" : "#F8FAFC"
                     border.color: "#CAD5DF"
                 }
-                onClicked: valueMenu.open()
-                Menu {
-                    id: valueMenu
-                    y: menuButton.height + 4
-                    width: 180
-                    background: Rectangle {
-                        color: "#FFFFFF"
-                        border.color: "#D9E2EC"
-                        radius: 10
-                    }
-                    Repeater {
-                        model: root.values
-                        MenuItem {
-                            width: valueMenu.width
-                            text: modelData
-                            contentItem: Text {
-                                text: parent.text
-                                color: "#2C3A47"
-                                font.pixelSize: 13
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: 8
-                            }
-                            background: Rectangle {
-                                radius: 7
-                                color: parent.highlighted ? "#EAF6FC" : "transparent"
-                            }
-                            onTriggered: {
-                                field.text = modelData
-                                backend.setConfigValue(root.configKey, modelData)
-                            }
-                        }
-                    }
+                onClicked: valuePopup.open()
+            }
+        }
+    }
+
+    Popup {
+        id: valuePopup
+        x: Math.max(0, Math.min(root.width - width,
+                               menuButton.mapToItem(root, menuButton.width - width, 0).x))
+        y: menuButton.mapToItem(root, 0, menuButton.height + 4).y
+        width: Math.min(170, root.width)
+        height: Math.min(valueList.contentHeight + 8, 218)
+        padding: 4
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#FFFFFF"
+            border.color: "#D9E2EC"
+            border.width: 1
+            radius: 9
+        }
+
+        contentItem: ListView {
+            id: valueList
+            clip: true
+            model: root.values
+            boundsBehavior: Flickable.StopAtBounds
+
+            delegate: ItemDelegate {
+                width: valueList.width
+                height: 34
+                hoverEnabled: true
+                leftPadding: 10
+                rightPadding: 10
+
+                contentItem: Text {
+                    text: String(modelData)
+                    color: "#243442"
+                    font.pixelSize: 13
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+
+                background: Rectangle {
+                    radius: 6
+                    color: parent.hovered || parent.highlighted ? "#EAF6FC" : "transparent"
+                }
+
+                onClicked: {
+                    field.text = String(modelData)
+                    backend.setConfigValue(root.configKey, String(modelData))
+                    valuePopup.close()
                 }
             }
         }
