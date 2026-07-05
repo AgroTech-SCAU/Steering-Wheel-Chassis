@@ -36,7 +36,7 @@ constexpr uint16_t PAYLOAD_MCU_ACK_LEN = 4u;
 constexpr uint16_t PAYLOAD_MCU_FAULT_EVENT_LEN = 8u;
 constexpr uint16_t PAYLOAD_MCU_IMU_LEN = 48u;
 constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;
-constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 56u;
+constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 48u;
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;
 constexpr uint16_t PAYLOAD_PI_ESTOP_LEN = 8u;
@@ -97,6 +97,8 @@ private:
     std::vector<Frame> drain_frames();
     void record_error(ParserErrorKind kind, std::optional<uint8_t> msg_id = std::nullopt);
     void trim_raw_buffer_if_needed();
+    void discard_current_candidate();
+    bool candidate_header_is_plausible(size_t offset) const;
     static std::optional<uint16_t> expected_payload_length(uint8_t msg_id);
 
     uint16_t max_body_len_;

@@ -113,7 +113,7 @@ colcon test-result --verbose
 - `ARM_VALID=0` 的语义是不更新机械臂目标，不是停止
 - 停止机械臂仍通过 `PI_ARM_ACTION_STOP`
 - 机械臂命令只允许在 MCU 的 `AutoPi` 模式中执行
-- `MCU_ARM_STATE` payload 固定为 `56 bytes`，完整帧长为 `66 bytes`
+- `MCU_ARM_STATE` payload 固定为 `48 bytes`，完整帧长为 `58 bytes`
 - `POSE_VALID` 只在位置和四元数都来自同一帧有效 FK 且四元数通过桥接侧校验后才发布 `/arm/pose`
 
 ## 机械臂服务故障诊断日志

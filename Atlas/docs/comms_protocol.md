@@ -131,7 +131,7 @@ CRC_L    1 byte   CRC16 low byte
 | `0x24` | `MCU_FAULT_EVENT` | 8 | 故障事件，当前预留 |
 | `0x25` | `MCU_IMU` | 48 | IMU 周期帧，100Hz |
 | `0x26` | `MCU_ODOM` | 32 | 底盘局部里程计周期帧，50Hz |
-| `0x27` | `MCU_ARM_STATE` | 56 | 机械臂当前关节角与完整末端 Pose，50Hz |
+| `0x27` | `MCU_ARM_STATE` | 48 | 机械臂当前关节角与完整末端 Pose，50Hz |
 
 ### 5.3 Pi -> MCU
 
@@ -582,12 +582,12 @@ MCU -> Pi
 
 payload 长度：
 ```text
-56 bytes
+48 bytes
 ```
 
 完整帧长度：
 ```text
-66 bytes
+58 bytes
 ```
 
 说明：
@@ -613,10 +613,10 @@ payload 偏移：
 | 28 | 4 | `int32_t` | `x_mm` | `mm` |
 | 32 | 4 | `int32_t` | `y_mm` | `mm` |
 | 36 | 4 | `int32_t` | `z_mm` | `mm` |
-| 40 | 4 | `int32_t` | `quat_x_e6` | `quaternion / 1,000,000.0` |
-| 44 | 4 | `int32_t` | `quat_y_e6` | `quaternion / 1,000,000.0` |
-| 48 | 4 | `int32_t` | `quat_z_e6` | `quaternion / 1,000,000.0` |
-| 52 | 4 | `int32_t` | `quat_w_e6` | `quaternion / 1,000,000.0` |
+| 40 | 2 | `int16_t` | `quat_x_q15` | `quaternion / 32767.0` |
+| 42 | 2 | `int16_t` | `quat_y_q15` | `quaternion / 32767.0` |
+| 44 | 2 | `int16_t` | `quat_z_q15` | `quaternion / 32767.0` |
+| 46 | 2 | `int16_t` | `quat_w_q15` | `quaternion / 32767.0` |
 
 `status_flags`：
 

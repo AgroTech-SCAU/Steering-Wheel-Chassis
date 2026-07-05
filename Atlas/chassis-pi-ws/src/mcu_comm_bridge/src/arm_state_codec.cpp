@@ -27,10 +27,10 @@ ArmStateDecodeError decode_arm_state_payload(const std::vector<uint8_t>& payload
     out->position_x_m = mm_to_m(read_i32_le(payload, 28));
     out->position_y_m = mm_to_m(read_i32_le(payload, 32));
     out->position_z_m = mm_to_m(read_i32_le(payload, 36));
-    out->orientation_x = static_cast<double>(read_i32_le(payload, 40)) / 1000000.0;
-    out->orientation_y = static_cast<double>(read_i32_le(payload, 44)) / 1000000.0;
-    out->orientation_z = static_cast<double>(read_i32_le(payload, 48)) / 1000000.0;
-    out->orientation_w = static_cast<double>(read_i32_le(payload, 52)) / 1000000.0;
+    out->orientation_x = static_cast<double>(read_i16_le(payload, 40)) / 32767.0;
+    out->orientation_y = static_cast<double>(read_i16_le(payload, 42)) / 32767.0;
+    out->orientation_z = static_cast<double>(read_i16_le(payload, 44)) / 32767.0;
+    out->orientation_w = static_cast<double>(read_i16_le(payload, 46)) / 32767.0;
     out->joint_valid = (out->status_flags & ARM_STATE_FLAG_JOINT_VALID) != 0u;
     out->pose_flag_set = (out->status_flags & ARM_STATE_FLAG_POSE_VALID) != 0u;
 

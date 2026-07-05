@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <stdexcept>
 
 namespace mcu_comm_bridge {
@@ -97,8 +98,22 @@ std::vector<Frame> BinaryFrameParser::drain_frames() {
         const uint16_t body_len = static_cast<uint16_t>(raw_buffer_[2] << 8) | raw_buffer_[3];
         if(body_len < BODY_PREFIX_LEN || body_len > max_body_len_) {
             record_error(ParserErrorKind::LengthError);
-            raw_buffer_.erase(raw_buffer_.begin());
-            stats_.resync++;
+            discard_current_candidate();
+            continue;
+        }
+
+        const auto msg_id = std::optional<uint8_t>(raw_buffer_[5]);
+        if(raw_buffer_[4] != PROTOCOL_VERSION) {
+            record_error(ParserErrorKind::VersionError, msg_id);
+            discard_current_candidate();
+            continue;
+        }
+
+        const size_t payload_len = static_cast<size_t>(body_len - BODY_PREFIX_LEN);
+        const auto expected_len = expected_payload_length(*msg_id);
+        if(expected_len.has_value() && payload_len != expected_len.value()) {
+            record_error(ParserErrorKind::KnownMessageBadLength, msg_id);
+            discard_current_candidate();
             continue;
         }
 
@@ -107,30 +122,12 @@ std::vector<Frame> BinaryFrameParser::drain_frames() {
             break;
         }
 
-        const auto msg_id = std::optional<uint8_t>(raw_buffer_[5]);
         const uint16_t stored_crc = static_cast<uint16_t>(raw_buffer_[frame_len - 2u] << 8) |
                                     raw_buffer_[frame_len - 1u];
         const uint16_t calculated_crc = crc16_ccitt(raw_buffer_.data(), static_cast<size_t>(body_len + 4u));
         if(calculated_crc != stored_crc) {
             record_error(ParserErrorKind::CrcError, msg_id);
-            raw_buffer_.erase(raw_buffer_.begin());
-            stats_.resync++;
-            continue;
-        }
-
-        if(raw_buffer_[4] != PROTOCOL_VERSION) {
-            record_error(ParserErrorKind::VersionError, msg_id);
-            raw_buffer_.erase(raw_buffer_.begin());
-            stats_.resync++;
-            continue;
-        }
-
-        const size_t payload_len = static_cast<size_t>(body_len - BODY_PREFIX_LEN);
-        const auto expected_len = expected_payload_length(*msg_id);
-        if(expected_len.has_value() && payload_len != expected_len.value()) {
-            record_error(ParserErrorKind::KnownMessageBadLength, msg_id);
-            raw_buffer_.erase(raw_buffer_.begin());
-            stats_.resync++;
+            discard_current_candidate();
             continue;
         }
 
@@ -168,6 +165,56 @@ void BinaryFrameParser::record_error(ParserErrorKind kind, std::optional<uint8_t
     }
 
     error_events_.push_back(ParserErrorEvent{ kind, msg_id });
+}
+
+void BinaryFrameParser::discard_current_candidate() {
+    const auto search_begin = raw_buffer_.begin() + 1;
+    auto next_sof = std::search(search_begin, raw_buffer_.end(), kSof.begin(), kSof.end());
+    while(next_sof != raw_buffer_.end()) {
+        const auto offset = static_cast<size_t>(std::distance(raw_buffer_.begin(), next_sof));
+        if(candidate_header_is_plausible(offset)) {
+            raw_buffer_.erase(raw_buffer_.begin(), next_sof);
+            stats_.resync++;
+            return;
+        }
+        next_sof = std::search(next_sof + 1, raw_buffer_.end(), kSof.begin(), kSof.end());
+    }
+
+    if(!raw_buffer_.empty() && raw_buffer_.back() == SOF0) {
+        raw_buffer_.erase(raw_buffer_.begin(), raw_buffer_.end() - 1);
+    }
+    else {
+        raw_buffer_.clear();
+    }
+    stats_.resync++;
+}
+
+bool BinaryFrameParser::candidate_header_is_plausible(size_t offset) const {
+    const size_t remaining = raw_buffer_.size() - offset;
+    if(remaining < 4u) {
+        return true;
+    }
+
+    const uint16_t body_len = static_cast<uint16_t>(raw_buffer_[offset + 2u] << 8) | raw_buffer_[offset + 3u];
+    if(body_len < BODY_PREFIX_LEN || body_len > max_body_len_) {
+        return false;
+    }
+
+    if(remaining < 6u) {
+        return true;
+    }
+
+    if(raw_buffer_[offset + 4u] != PROTOCOL_VERSION) {
+        return false;
+    }
+
+    const uint8_t msg_id = raw_buffer_[offset + 5u];
+    const auto expected_len = expected_payload_length(msg_id);
+    if(expected_len.has_value() && static_cast<size_t>(body_len - BODY_PREFIX_LEN) != expected_len.value()) {
+        return false;
+    }
+
+    return true;
 }
 
 void BinaryFrameParser::trim_raw_buffer_if_needed() {

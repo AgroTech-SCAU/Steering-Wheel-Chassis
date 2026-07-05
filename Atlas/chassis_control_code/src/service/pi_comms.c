@@ -378,10 +378,10 @@ bool pi_comms_send_arm_state(const PiCommsArmStateSnapshot* snapshot) {
     binary_frame_write_i32_le(&payload[28], snapshot->x_mm);
     binary_frame_write_i32_le(&payload[32], snapshot->y_mm);
     binary_frame_write_i32_le(&payload[36], snapshot->z_mm);
-    binary_frame_write_i32_le(&payload[40], snapshot->quat_x_e6);
-    binary_frame_write_i32_le(&payload[44], snapshot->quat_y_e6);
-    binary_frame_write_i32_le(&payload[48], snapshot->quat_z_e6);
-    binary_frame_write_i32_le(&payload[52], snapshot->quat_w_e6);
+    binary_frame_write_i16_le(&payload[40], snapshot->quat_x_q15);
+    binary_frame_write_i16_le(&payload[42], snapshot->quat_y_q15);
+    binary_frame_write_i16_le(&payload[44], snapshot->quat_z_q15);
+    binary_frame_write_i16_le(&payload[46], snapshot->quat_w_q15);
 
     return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ARM_STATE,
                                pi_comms_next_tx_seq(),

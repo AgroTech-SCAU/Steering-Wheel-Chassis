@@ -160,6 +160,7 @@ struct BridgeStats {
     std::atomic<uint64_t> status_rx_valid{ 0 };
     std::atomic<uint64_t> imu_rx_crc_rejected{ 0 };
     std::atomic<uint64_t> odom_rx_crc_rejected{ 0 };
+    std::atomic<uint64_t> arm_rx_crc_rejected{ 0 };
     std::atomic<uint64_t> parser_crc_error_unknown_msg{ 0 };
 
     std::atomic<uint64_t> imu_publish_total{ 0 };
@@ -206,6 +207,7 @@ struct BridgeStatsSnapshot {
     uint64_t status_rx_valid = 0;
     uint64_t imu_rx_crc_rejected = 0;
     uint64_t odom_rx_crc_rejected = 0;
+    uint64_t arm_rx_crc_rejected = 0;
     uint64_t parser_crc_error_unknown_msg = 0;
     uint64_t imu_publish_total = 0;
     uint64_t imu_publish_fresh = 0;
@@ -551,7 +553,7 @@ private:
     }
 
     void rx_loop() {
-        std::array<uint8_t, 256> buf{};
+        std::array<uint8_t, 1024> buf{};
 
         while(rclcpp::ok() && running_.load()) {
             stats_.read_call_count++;
@@ -599,6 +601,9 @@ private:
                 }
                 else if(event.msg_id.has_value() && event.msg_id.value() == MSG_MCU_ODOM) {
                     stats_.odom_rx_crc_rejected++;
+                }
+                else if(event.msg_id.has_value() && event.msg_id.value() == MSG_MCU_ARM_STATE) {
+                    stats_.arm_rx_crc_rejected++;
                 }
                 else {
                     stats_.parser_crc_error_unknown_msg++;
@@ -1391,6 +1396,7 @@ private:
         snapshot.status_rx_valid = stats_.status_rx_valid.load();
         snapshot.imu_rx_crc_rejected = stats_.imu_rx_crc_rejected.load();
         snapshot.odom_rx_crc_rejected = stats_.odom_rx_crc_rejected.load();
+        snapshot.arm_rx_crc_rejected = stats_.arm_rx_crc_rejected.load();
         snapshot.parser_crc_error_unknown_msg = stats_.parser_crc_error_unknown_msg.load();
         snapshot.imu_publish_total = stats_.imu_publish_total.load();
         snapshot.imu_publish_fresh = stats_.imu_publish_fresh.load();
@@ -1457,13 +1463,14 @@ private:
 
         RCLCPP_INFO(
             get_logger(),
-            "RX valid_hz imu=%.1f odom=%.1f arm=%.1f status=%.1f crc_reject imu=%.1f odom=%.1f unknown=%.1f",
+            "RX valid_hz imu=%.1f odom=%.1f arm=%.1f status=%.1f crc_reject imu=%.1f odom=%.1f arm=%.1f unknown=%.1f",
             safe_rate(snapshot.imu_rx_valid - last_stats_snapshot_.imu_rx_valid, elapsed_sec),
             safe_rate(snapshot.odom_rx_valid - last_stats_snapshot_.odom_rx_valid, elapsed_sec),
             safe_rate(snapshot.arm_state_valid - last_stats_snapshot_.arm_state_valid, elapsed_sec),
             safe_rate(snapshot.status_rx_valid - last_stats_snapshot_.status_rx_valid, elapsed_sec),
             safe_rate(snapshot.imu_rx_crc_rejected - last_stats_snapshot_.imu_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.odom_rx_crc_rejected - last_stats_snapshot_.odom_rx_crc_rejected, elapsed_sec),
+            safe_rate(snapshot.arm_rx_crc_rejected - last_stats_snapshot_.arm_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.parser_crc_error_unknown_msg - last_stats_snapshot_.parser_crc_error_unknown_msg, elapsed_sec));
 
         RCLCPP_INFO(

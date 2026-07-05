@@ -155,6 +155,10 @@ int32_t binary_frame_unit_to_e6_i32(float value) {
     return binary_frame_round_clamp_i32(value * 1000000.0f);
 }
 
+int16_t binary_frame_unit_to_q15_i16(float value) {
+    return binary_frame_round_clamp_i16(value * 32767.0f);
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static uint16_t binary_frame_crc16_update(uint16_t crc, uint8_t data) {

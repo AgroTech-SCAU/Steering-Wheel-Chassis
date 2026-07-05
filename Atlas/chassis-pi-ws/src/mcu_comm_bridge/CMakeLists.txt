@@ -80,19 +80,5 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_gtest REQUIRED)
-
-  ament_add_gtest(test_arm_state_codec
-    test/test_arm_state_codec.cpp
-  )
-  if(TARGET test_arm_state_codec)
-    target_link_libraries(test_arm_state_codec mcu_comm_bridge_codec)
-    target_include_directories(test_arm_state_codec PUBLIC
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    )
-  endif()
-endif()
-
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()

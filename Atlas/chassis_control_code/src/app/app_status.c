@@ -384,23 +384,23 @@ static void app_status_build_pi_arm_state_snapshot(PiCommsArmStateSnapshot* snap
         if(app_status_pose_has_finite_position(pose) &&
            app_status_try_normalize_quaternion(&pose->orientation, &normalized_quat)) {
             status_flags |= PI_COMMS_ARM_STATE_STATUS_POSE_VALID;
-            snapshot->quat_x_e6 = binary_frame_unit_to_e6_i32(normalized_quat.x);
-            snapshot->quat_y_e6 = binary_frame_unit_to_e6_i32(normalized_quat.y);
-            snapshot->quat_z_e6 = binary_frame_unit_to_e6_i32(normalized_quat.z);
-            snapshot->quat_w_e6 = binary_frame_unit_to_e6_i32(normalized_quat.w);
+            snapshot->quat_x_q15 = binary_frame_unit_to_q15_i16(normalized_quat.x);
+            snapshot->quat_y_q15 = binary_frame_unit_to_q15_i16(normalized_quat.y);
+            snapshot->quat_z_q15 = binary_frame_unit_to_q15_i16(normalized_quat.z);
+            snapshot->quat_w_q15 = binary_frame_unit_to_q15_i16(normalized_quat.w);
         }
         else {
-            snapshot->quat_x_e6 = 0;
-            snapshot->quat_y_e6 = 0;
-            snapshot->quat_z_e6 = 0;
-            snapshot->quat_w_e6 = 1000000;
+            snapshot->quat_x_q15 = 0;
+            snapshot->quat_y_q15 = 0;
+            snapshot->quat_z_q15 = 0;
+            snapshot->quat_w_q15 = 32767;
         }
     }
     else {
-        snapshot->quat_x_e6 = 0;
-        snapshot->quat_y_e6 = 0;
-        snapshot->quat_z_e6 = 0;
-        snapshot->quat_w_e6 = 1000000;
+        snapshot->quat_x_q15 = 0;
+        snapshot->quat_y_q15 = 0;
+        snapshot->quat_z_q15 = 0;
+        snapshot->quat_w_q15 = 32767;
     }
 
     snapshot->status_flags = status_flags;
