@@ -294,10 +294,10 @@ ApplicationWindow {
                                         }
                                         Text {
                                             text: [
-                                                "选择主从设备端口，并设置通信节拍与写入超时。",
-                                                "定义 q0~q4 的 Dynamixel ID、方向和零位转换。",
-                                                "配置 ID7 夹爪映射、末端开关阈值和启动行为。",
-                                                "管理 MCU 日志、协议参数与本地配置文件。"
+                                                "选择主从设备端口，并设置通信节拍与写入超时",
+                                                "定义 q0~q4 的 Dynamixel ID、方向和零位转换",
+                                                "配置 ID7 夹爪映射、末端开关阈值和启动行为",
+                                                "管理 MCU 日志、协议参数与本地配置文件"
                                             ][window.currentPage]
                                             color: "#718092"
                                             font.pixelSize: 12

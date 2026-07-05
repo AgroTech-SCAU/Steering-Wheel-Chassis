@@ -10,6 +10,5 @@ python -m PyInstaller `
     --icon ".\assets\app.ico" `
     --add-data ".\qml:qml" `
     --add-data ".\assets:assets" `
-    --collect-all PySide6 `
     ".\main.py"
 ```

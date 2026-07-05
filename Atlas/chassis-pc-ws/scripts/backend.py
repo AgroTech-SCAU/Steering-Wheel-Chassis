@@ -1182,7 +1182,7 @@ class TeleopBackend(QObject):
     def startRun(self) -> None:
         if not self.canRun or self._applied_config is None:
             self.dialogRequested.emit(
-                "配置未应用", "请先验证并应用当前配置。", False
+                "配置未应用", "请先验证并应用当前配置", False
             )
             return
         self._stats = self._empty_stats()
