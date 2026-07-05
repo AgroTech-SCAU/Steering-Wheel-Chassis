@@ -989,6 +989,16 @@ private:
         queue_arm_command(PI_ARM_MODE_JOINTS, target, speed_mrad_s, response->command_seq);
         response->success = true;
         response->message = "arm joints command queued for transmission";
+        RCLCPP_INFO(get_logger(),
+                    "arm joints queued: seq=%u speed=%.3f q=[%.4f,%.4f,%.4f,%.4f,%.4f] repeats=%d",
+                    static_cast<unsigned int>(response->command_seq),
+                    request->speed_rad_s,
+                    request->joints_rad[0],
+                    request->joints_rad[1],
+                    request->joints_rad[2],
+                    request->joints_rad[3],
+                    request->joints_rad[4],
+                    std::max(1, arm_command_repeat_count_));
         stats_.arm_service_accepted++;
     }
 
@@ -1015,6 +1025,16 @@ private:
         queue_arm_command(PI_ARM_MODE_POSE_5D, target, speed_mrad_s, response->command_seq);
         response->success = true;
         response->message = "arm pose command queued for transmission";
+        RCLCPP_INFO(get_logger(),
+                    "arm pose queued: seq=%u speed=%.3f xyz=[%.4f,%.4f,%.4f] pitch=%.4f yaw=%.4f repeats=%d",
+                    static_cast<unsigned int>(response->command_seq),
+                    request->speed_rad_s,
+                    request->x_m,
+                    request->y_m,
+                    request->z_m,
+                    request->pitch_rad,
+                    request->yaw_rad,
+                    std::max(1, arm_command_repeat_count_));
         stats_.arm_service_accepted++;
     }
 
@@ -1039,6 +1059,14 @@ private:
         queue_arm_command(PI_ARM_MODE_POSITION, target, speed_mrad_s, response->command_seq);
         response->success = true;
         response->message = "arm position command queued for transmission";
+        RCLCPP_INFO(get_logger(),
+                    "arm position queued: seq=%u speed=%.3f xyz=[%.4f,%.4f,%.4f] repeats=%d",
+                    static_cast<unsigned int>(response->command_seq),
+                    request->speed_rad_s,
+                    request->x_m,
+                    request->y_m,
+                    request->z_m,
+                    std::max(1, arm_command_repeat_count_));
         stats_.arm_service_accepted++;
     }
 
@@ -1062,6 +1090,13 @@ private:
         queue_arm_command(PI_ARM_MODE_ORIENTATION_2D, target, speed_mrad_s, response->command_seq);
         response->success = true;
         response->message = "arm orientation command queued for transmission";
+        RCLCPP_INFO(get_logger(),
+                    "arm orientation queued: seq=%u speed=%.3f pitch=%.4f yaw=%.4f repeats=%d",
+                    static_cast<unsigned int>(response->command_seq),
+                    request->speed_rad_s,
+                    request->pitch_rad,
+                    request->yaw_rad,
+                    std::max(1, arm_command_repeat_count_));
         stats_.arm_service_accepted++;
     }
 

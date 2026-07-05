@@ -110,3 +110,22 @@ colcon test-result --verbose
 - `ARM_VALID=0` 的语义是不更新机械臂目标，不是停止
 - 停止机械臂仍通过 `PI_ARM_ACTION_STOP`
 - 机械臂命令只允许在 MCU 的 `AutoPi` 模式中执行
+
+## 机械臂服务故障诊断日志
+
+机械臂服务排队时，bridge 会打印实际请求值，例如：
+
+```text
+arm joints queued: seq=48351 speed=0.500 q=[3.1400,1.5700,6.2600,3.1400,3.1400] repeats=3
+```
+
+请将该日志与 MCU 端的以下两行对照：
+
+```text
+APP_CONTROL pi arm execute: mode=joints seq=48351 ...
+APP_CONTROL pi arm result: mode=joints seq=48351 status=OK
+```
+
+两端数值一致，才能证明 ROS 服务字段、协议编码和 MCU 解码一致。
+
+服务返回 `success=true` 只表示命令已进入 bridge 发送队列，不表示机械臂已经停止运动或到达目标。机械臂可能在服务返回后继续运动数秒。
