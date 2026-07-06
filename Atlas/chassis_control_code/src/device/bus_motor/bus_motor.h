@@ -10,7 +10,7 @@
  * @file bus_motor.h
  * @brief 总线电机统一抽象接口
  *
- * 本模块只定义所有总线电机共同具备的能力不同品牌电机的协议帧、
+ * 本模块只定义所有总线电机共同具备的能力，不同品牌电机的协议、
  * 模式枚举和参数含义由具体实例自行定义
  */
 
@@ -23,15 +23,15 @@
  * @brief 电机通用状态码表
  */
 #define MOTOR_STATUS_TABLE \
-    X(OK, 0) \
-    X(ERROR, 1) \
-    X(INVALID_PARAM, 2) \
-    X(PORT_ERROR, 3) \
-    X(TIMEOUT, 4) \
-    X(ID_MISMATCH, 5) \
-    X(NO_INSTANCE, 6) \
-    X(NOT_INITIALIZE, 7) \
-    X(UNSUPPORTED, 8) \
+    X(OK, 0)               \
+    X(ERROR, 1)            \
+    X(INVALID_PARAM, 2)    \
+    X(PORT_ERROR, 3)       \
+    X(TIMEOUT, 4)          \
+    X(ID_MISMATCH, 5)      \
+    X(NO_INSTANCE, 6)      \
+    X(NOT_INITIALIZE, 7)   \
+    X(UNSUPPORTED, 8)      \
     X(NO_FEEDBACK, 9)
 
 #define X(name, value) MOTOR_STATUS_##name = value,
@@ -46,7 +46,7 @@ typedef enum {
 /**
  * @brief 电机通用模式值
  *
- * 统一层只透传该值，不解释具体含义具体枚举见 `DmMotorMode`、
+ * 统一层只透传该值，不解释具体含义；具体模式枚举见 `DmMotorMode`、
  * `DjiMotorMode` 等驱动头文件
  */
 typedef uint32_t BusMotorMode;
@@ -68,9 +68,9 @@ typedef struct {
 typedef struct {
     bool (*send)(uint32_t id, const uint8_t* data, uint8_t len); /**< 发送一帧总线数据 */
     bool (*read)(uint32_t* id, uint8_t* data, uint8_t* len);     /**< 读取一帧总线数据 */
-    uint32_t(*now_ms)(void);                                    /**< 获取当前单调时间，单位 ms */
-    void (*delay_ms)(uint32_t ms);                              /**< 可选阻塞延时，单位 ms */
-    void (*flush_rx)(void);                                     /**< 可选清空接收缓冲 */
+    uint32_t (*now_ms)(void);                                    /**< 获取当前单调时间，单位 ms */
+    void (*delay_ms)(uint32_t ms);                               /**< 可选阻塞延时，单位 ms */
+    void (*flush_rx)(void);                                      /**< 可选清空接收缓冲 */
 } BusMotorPortOps;
 
 /**
@@ -78,31 +78,39 @@ typedef struct {
  */
 typedef struct {
     const BusMotorPortOps* ops; /**< 底层端口函数表，不能为空 */
-    uint32_t timeout_ms;        /**< 反馈等待超时，单位 ms；0 表示使用具体驱动默认值 */
+    uint32_t timeout_ms;        /**< 反馈等待超时，单位 ms，0 表示使用具体驱动默认值 */
     uint8_t retry_count;        /**< 预留重试次数，具体驱动按需使用 */
+
+    /**
+     * @brief 具体驱动的私有配置。
+     *
+     * 通用 bus_motor 层不解释该指针，直接传递给具体驱动。
+     * 允许为 NULL，由具体驱动决定默认行为。
+     */
+    const void* driver_config;
 } BusMotorConfig;
 
 /**
  * @brief 电机统一接口表
  */
 typedef struct {
-    BusMotorStatus(*init)(const BusMotorConfig* config); /**< 初始化具体电机驱动 */
-    const char* (*status_str)(BusMotorStatus status);    /**< 状态码转字符串 */
-    const char* (*mode_str)(BusMotorMode mode);          /**< 模式值转字符串 */
-    BusMotorStatus(*enable)(uint16_t id);                /**< 使能电机 */
-    BusMotorStatus(*disable)(uint16_t id);               /**< 失能电机 */
-    BusMotorStatus(*switch_mode)(uint16_t id, BusMotorMode mode); /**< 切换电机模式 */
-    BusMotorStatus(*set_pos)(uint16_t id, float position); /**< 设定目标位置，单位 rad */
-    BusMotorStatus(*set_spd)(uint16_t id, float speed);    /**< 设定目标速度，单位 rad/s */
-    BusMotorStatus(*set_pos_vel)(uint16_t id, float position, float speed); /**< 设定目标位置和速度 */
-    BusMotorStatus(*set_tor)(uint16_t id, float torque);   /**< 设定目标扭矩或前馈，单位 N*m */
-    BusMotorStatus(*set_pd)(uint16_t id, float kp, float kd); /**< 设定位置环 PD 参数 */
-    BusMotorStatus(*update_feedback)(uint16_t id, BusMotorFeedback* feedback); /**< 主动请求并更新反馈 */
-    float (*get_pos)(uint16_t id); /**< 从本地缓存获取最近位置，单位 rad */
-    float (*get_spd)(uint16_t id); /**< 从本地缓存获取最近速度，单位 rad/s */
-    float (*get_tor)(uint16_t id); /**< 从本地缓存获取最近扭矩，单位 N*m */
-    BusMotorStatus(*stop)(uint16_t id);  /**< 停止电机 */
-    BusMotorStatus(*brake)(uint16_t id); /**< 制动电机 */
+    BusMotorStatus (*init)(const BusMotorConfig* config);                       /**< 初始化具体电机驱动 */
+    const char* (*status_str)(BusMotorStatus status);                           /**< 状态码转字符串 */
+    const char* (*mode_str)(BusMotorMode mode);                                 /**< 模式值转字符串 */
+    BusMotorStatus (*enable)(uint16_t id);                                      /**< 使能电机 */
+    BusMotorStatus (*disable)(uint16_t id);                                     /**< 失能电机 */
+    BusMotorStatus (*switch_mode)(uint16_t id, BusMotorMode mode);              /**< 切换电机模式 */
+    BusMotorStatus (*set_pos)(uint16_t id, float position);                     /**< 设定目标位置，单位 rad */
+    BusMotorStatus (*set_spd)(uint16_t id, float speed);                        /**< 设定目标速度，单位 rad/s */
+    BusMotorStatus (*set_pos_vel)(uint16_t id, float position, float speed);    /**< 设定目标位置和速度 */
+    BusMotorStatus (*set_tor)(uint16_t id, float torque);                       /**< 设定目标扭矩或前馈，单位 N*m */
+    BusMotorStatus (*set_pd)(uint16_t id, float kp, float kd);                  /**< 设定位置环 PD 参数 */
+    BusMotorStatus (*update_feedback)(uint16_t id, BusMotorFeedback* feedback); /**< 主动请求并更新反馈 */
+    float (*get_pos)(uint16_t id);                                              /**< 从本地缓存获取最近位置，单位 rad */
+    float (*get_spd)(uint16_t id);                                              /**< 从本地缓存获取最近速度，单位 rad/s */
+    float (*get_tor)(uint16_t id);                                              /**< 从本地缓存获取最近扭矩，单位 N*m */
+    BusMotorStatus (*stop)(uint16_t id);                                        /**< 停止电机 */
+    BusMotorStatus (*brake)(uint16_t id);                                       /**< 制动电机 */
 } BusMotorInterface;
 
 /**

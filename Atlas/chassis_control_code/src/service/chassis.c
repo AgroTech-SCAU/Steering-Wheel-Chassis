@@ -1,6 +1,7 @@
 ﻿#include "chassis.h"
 
 #include "bus_motor/agv_motor.h"
+#include "bus_motor/dji_motor.h"
 #include "log.h"
 
 #include <math.h>
@@ -23,112 +24,112 @@
  * 当前机械结构按一比一处理；
  * 若后续更换传动结构，可通过配置覆盖
  */
-#define CHASSIS_DEFAULT_WHEEL_DRIVE_RATIO       1.0f
+#define CHASSIS_DEFAULT_WHEEL_DRIVE_RATIO 1.0f
 /**
  * @brief 转向电机 S 曲线规划后的最大跟踪速度
  *
  * 单位为 rad/s；
  * 该值越大转向越快，但也更容易引入抖动
  */
-#define CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S     12.56f
+#define CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S 12.56f
 /**
  * @brief 转向电机 S 曲线规划使用的最低跟踪速度
  *
  * 单位为 rad/s；
  * 用于避免速度过低导致转向响应迟滞
  */
-#define CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S     1.57f
+#define CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S 1.57f
 /**
  * @brief 转向跟踪速度从最低值爬升到最高值的时间
  *
  * 单位为秒；
  * 该时间决定 S 曲线加速段的柔和程度
  */
-#define CHASSIS_STEER_SPEED_RAMP_TIME_S         0.1f
+#define CHASSIS_STEER_SPEED_RAMP_TIME_S 0.1f
 /**
  * @brief 转向接近目标角时开始降速的角度窗口
  *
  * 单位为 rad；
  * 误差进入该窗口后速度会平滑降低
  */
-#define CHASSIS_STEER_SLOWDOWN_ANGLE_RAD        0.628f
+#define CHASSIS_STEER_SLOWDOWN_ANGLE_RAD 0.628f
 /**
  * @brief 底盘控制任务周期
  *
  * 单位为秒；
  * 需与 TIM6 触发周期保持一致
  */
-#define CHASSIS_CONTROL_PERIOD_S                0.002f
+#define CHASSIS_CONTROL_PERIOD_S 0.002f
 /**
  * @brief 判定转向目标明显变化的角度阈值
  *
  * 单位为 rad；
  * 超过该阈值会启动 S 曲线速度规划
  */
-#define CHASSIS_STEER_TARGET_CHANGE_RAD         0.0628f
+#define CHASSIS_STEER_TARGET_CHANGE_RAD 0.0628f
 /**
  * @brief 允许驱动电机出力的转向角误差阈值
  *
  * 单位为 rad；
  * 未进入该误差范围前，驱动速度会被置零以防漂移
  */
-#define CHASSIS_DRIVE_ANGLE_TOL_RAD             0.157f
+#define CHASSIS_DRIVE_ANGLE_TOL_RAD 0.157f
 /**
  * @brief 驻车刹车流程使用的转向到位误差阈值
  *
  * 单位为 rad；
  * 转向角到位后才会进入电机抱死状态
  */
-#define CHASSIS_BRAKE_ANGLE_TOL_RAD             0.0628f
+#define CHASSIS_BRAKE_ANGLE_TOL_RAD 0.0628f
 /**
  * @brief 圆周率常量
  *
  * 用于角度归一化和等效角计算；
  * 保持 float 精度即可满足底盘控制需求
  */
-#define CHASSIS_PI                              3.14159265358979323846f
+#define CHASSIS_PI 3.14159265358979323846f
 /**
  * @brief 转向角完整周期
  *
  * 单位为 rad；
  * 用于选择离当前位置最近的等效转向角
  */
-#define CHASSIS_2PI                             (2.0f * CHASSIS_PI)
+#define CHASSIS_2PI (2.0f * CHASSIS_PI)
 /**
  * @brief 转向电机位置命令的安全绝对边界
  *
  * 单位为 rad；
  * 目标角会被限制在该范围内
  */
-#define CHASSIS_STEER_POS_LIMIT_RAD             12.4f
+#define CHASSIS_STEER_POS_LIMIT_RAD 12.4f
 /**
  * @brief 等效转向角切换滞回
  *
  * 单位为 rad；
  * 用于避免目标角在两个等效解之间来回跳变
  */
-#define CHASSIS_EQUIV_ANGLE_HYST_RAD            0.12f
+#define CHASSIS_EQUIV_ANGLE_HYST_RAD 0.12f
 /**
  * @brief 驱动方向等效优化的滞回角
  *
  * 单位为 rad；
  * 用于避免前进/后退等效解在临界角附近抖动
  */
-#define CHASSIS_DRIVE_EQUIV_HYST_RAD            0.03f
+#define CHASSIS_DRIVE_EQUIV_HYST_RAD 0.03f
 /**
  * @brief 转向电机上电准备重试间隔
  *
  * 单位为底盘控制周期；
  * 启动未收到反馈时会按该间隔重新发送准备序列
  */
-#define CHASSIS_STEER_PREPARE_RETRY_CYCLES      250u
+#define CHASSIS_STEER_PREPARE_RETRY_CYCLES 250u
 /**
  * @brief 驱动电机上电准备重试间隔
  *
  * 单位为底盘控制周期；
  * 启动未收到反馈时会按该间隔重新发送准备序列
  */
-#define CHASSIS_DRIVE_PREPARE_RETRY_CYCLES      250u
+#define CHASSIS_DRIVE_PREPARE_RETRY_CYCLES 250u
 
 /**
  * @brief 逻辑舵轮模块到物理 CAN 电机的映射关系
@@ -228,6 +229,15 @@ static ChassisModuleFeedback s_module_fb[CHASSIS_MODULE_COUNT] = { 0 };
  */
 static bool s_last_drive_inverted[CHASSIS_MODULE_COUNT] = { false };
 /**
+ * @brief 当前项目驱动电机显式使用的 DJI 型号配置
+ *
+ * 当前底盘驱动电机为 M2006/C610；
+ * 显式配置可避免依赖设备层兼容默认值
+ */
+static const DjiMotorConfig s_drive_motor_dji_config = {
+    .model = DJI_MOTOR_MODEL_M2006,
+};
+/**
  * @brief 转向电机上电准备重试倒计时
  *
  * 单位为底盘控制周期；
@@ -287,9 +297,7 @@ static const ChassisModuleMap s_module_map[CHASSIS_MODULE_COUNT] = {
  * 实际实现均位于本文件中
  */
 const struct ChassisInterface chassis_interface = {
-    {
-        CHASSIS_STATUS_TABLE
-    },
+    { CHASSIS_STATUS_TABLE },
     .init = chassis_init,
     .set_velocity = chassis_set_velocity,
     .set_steer_then_drive_enabled = chassis_set_steer_then_drive_enabled,
@@ -540,6 +548,7 @@ ChassisErrorCode chassis_init(const ChassisConfig* config) {
         .ops = config != NULL ? config->drive_ops : NULL,
         .timeout_ms = 0u,
         .retry_count = 0u,
+        .driver_config = &s_drive_motor_dji_config,
     };
     ChassisErrorCode config_status = chassis_check_config(config);
 
@@ -550,15 +559,12 @@ ChassisErrorCode chassis_init(const ChassisConfig* config) {
         return config_status;
     }
 
-    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL
-        || config->steer_ops == NULL || config->drive_ops == NULL
-        || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL) {
+    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL || config->steer_ops == NULL || config->drive_ops == NULL || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL) {
         log_error("CHASSIS dependency missing before init");
         return ch.DEPENDENCY_MISSING;
     }
 
-    if(steer_motor_set_instance(config->steer_motor_interface) != MOTOR_STATUS_OK
-        || drive_motor_set_instance(config->drive_motor_interface) != MOTOR_STATUS_OK) {
+    if(steer_motor_set_instance(config->steer_motor_interface) != MOTOR_STATUS_OK || drive_motor_set_instance(config->drive_motor_interface) != MOTOR_STATUS_OK) {
         log_error("CHASSIS motor instance bind failed");
         return ch.INVALID_PARAM;
     }
@@ -675,7 +681,7 @@ ChassisErrorCode chassis_process(void) {
     }
 
     if(!chassis_maintain_motor_startup(steer_feedback_observed, steer_missing_mask,
-        drive_feedback_observed, drive_missing_mask)) {
+                                       drive_feedback_observed, drive_missing_mask)) {
         s_chassis.kine.state.cur_vx = 0.0f;
         s_chassis.kine.state.cur_vy = 0.0f;
         s_chassis.kine.state.cur_wz = 0.0f;
@@ -843,9 +849,7 @@ const SteerWheelControl* chassis_get_control(void) {
  * @return bool `true` 表示底盘就绪，`false` 表示仍在等待反馈
  */
 bool chassis_is_ready(void) {
-    return s_chassis.initialized
-        && s_chassis.steer_motor_ready
-        && s_chassis.drive_motor_ready;
+    return s_chassis.initialized && s_chassis.steer_motor_ready && s_chassis.drive_motor_ready;
 }
 
 /**
@@ -859,11 +863,14 @@ bool chassis_is_ready(void) {
  * 该宏只在状态码转字符串函数中使用；
  * 展开完成后立即取消定义
  */
-#define X(name, str) case CHASSIS_##name: return str;
+#define X(name, str)     \
+    case CHASSIS_##name: \
+        return str;
 const char* chassis_error_code_to_str(ChassisErrorCode status) {
     switch(status) {
         CHASSIS_STATUS_TABLE
-        default: return "UNKNOWN";
+        default:
+            return "UNKNOWN";
     }
 }
 #undef X
@@ -874,19 +881,13 @@ static ChassisErrorCode chassis_check_config(const ChassisConfig* config) {
     if(config == NULL) {
         return ch.INVALID_PARAM;
     }
-    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL
-        || config->steer_ops == NULL || config->drive_ops == NULL
-        || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL
-        || config->steer_ops->send == NULL || config->drive_ops->send == NULL) {
+    if(config->steer_motor_interface == NULL || config->drive_motor_interface == NULL || config->steer_ops == NULL || config->drive_ops == NULL || config->prepare_steer_motor == NULL || config->prepare_drive_motor == NULL || config->steer_ops->send == NULL || config->drive_ops->send == NULL) {
         return ch.DEPENDENCY_MISSING;
     }
-    if(config->model.length <= 0.0f || config->model.width <= 0.0f
-        || config->model.wheel_radius <= 0.0f || config->model.max_wheel_linear_speed < 0.0f
-        || config->wheel_drive_ratio <= 0.0f) {
+    if(config->model.length <= 0.0f || config->model.width <= 0.0f || config->model.wheel_radius <= 0.0f || config->model.max_wheel_linear_speed < 0.0f || config->wheel_drive_ratio <= 0.0f) {
         return ch.INVALID_MODEL;
     }
-    if(config->steer_target_mode != CHASSIS_STEER_TARGET_ABS_NEAREST
-        && config->steer_target_mode != CHASSIS_STEER_TARGET_WRAP_PI) {
+    if(config->steer_target_mode != CHASSIS_STEER_TARGET_ABS_NEAREST && config->steer_target_mode != CHASSIS_STEER_TARGET_WRAP_PI) {
         return ch.INVALID_PARAM;
     }
 
@@ -932,7 +933,7 @@ static ChassisErrorCode chassis_prepare_drive_motors(void) {
 }
 
 static bool chassis_maintain_motor_startup(bool steer_feedback_observed, uint8_t steer_missing_mask,
-    bool drive_feedback_observed, uint8_t drive_missing_mask) {
+                                           bool drive_feedback_observed, uint8_t drive_missing_mask) {
     if(steer_feedback_observed) {
         if(!s_chassis.steer_motor_ready) {
             log_info("CHASSIS steer motor ready");
@@ -997,15 +998,21 @@ static float chassis_drive_omega_to_wheel_omega(float drive_omega) {
 }
 
 static void chassis_external_to_internal_twist(float vx_ext, float vy_ext, float wz_ext, float* vx_int, float* vy_int, float* wz_int) {
-    if(vx_int != NULL) *vx_int = vx_ext;
-    if(vy_int != NULL) *vy_int = -vy_ext;
-    if(wz_int != NULL) *wz_int = -wz_ext;
+    if(vx_int != NULL)
+        *vx_int = vx_ext;
+    if(vy_int != NULL)
+        *vy_int = -vy_ext;
+    if(wz_int != NULL)
+        *wz_int = -wz_ext;
 }
 
 static void chassis_internal_to_external_twist(float vx_int, float vy_int, float wz_int, float* vx_ext, float* vy_ext, float* wz_ext) {
-    if(vx_ext != NULL) *vx_ext = vx_int;
-    if(vy_ext != NULL) *vy_ext = -vy_int;
-    if(wz_ext != NULL) *wz_ext = -wz_int;
+    if(vx_ext != NULL)
+        *vx_ext = vx_int;
+    if(vy_ext != NULL)
+        *vy_ext = -vy_int;
+    if(wz_ext != NULL)
+        *wz_ext = -wz_int;
 }
 
 static float chassis_calc_yaw_bias_ext(float vx_ext, float vy_ext) {
@@ -1120,8 +1127,7 @@ static void chassis_resolve_brake_module_command(ChassisModule module, float tar
     prev_equiv_error_a = fabsf(option_prev - option_a);
     prev_equiv_error_b = fabsf(option_prev - option_b);
 
-    if((prev_equiv_error_a < CHASSIS_DRIVE_ANGLE_TOL_RAD || prev_equiv_error_b < CHASSIS_DRIVE_ANGLE_TOL_RAD)
-        && fabsf(error_prev) <= (fminf(fabsf(error_a), fabsf(error_b)) + CHASSIS_EQUIV_ANGLE_HYST_RAD)) {
+    if((prev_equiv_error_a < CHASSIS_DRIVE_ANGLE_TOL_RAD || prev_equiv_error_b < CHASSIS_DRIVE_ANGLE_TOL_RAD) && fabsf(error_prev) <= (fminf(fabsf(error_a), fabsf(error_b)) + CHASSIS_EQUIV_ANGLE_HYST_RAD)) {
         s_module_cmd[module].steer_target_abs_angle = option_prev;
     }
     else if(fabsf(error_b) < fabsf(error_a)) {
@@ -1227,8 +1233,7 @@ static float chassis_calc_steer_track_speed(ChassisModule module, float target_a
         speed_ratio = slowdown_ratio;
     }
 
-    return CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S
-        + (CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S - CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S) * speed_ratio;
+    return CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S + (CHASSIS_STEER_TRACK_MAX_SPEED_RAD_S - CHASSIS_STEER_TRACK_MIN_SPEED_RAD_S) * speed_ratio;
 }
 
 static bool chassis_drive_targets_reached(void) {

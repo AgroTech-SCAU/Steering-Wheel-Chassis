@@ -6,18 +6,24 @@
 // ! ========================= 变 量 声 明 ========================= ! //
 
 #define DJI_MOTOR_FEEDBACK_BASE_ID 0x200u
-#define DJI_MOTOR_CTRL_FRAME_ID    0x200u
-#define DJI_MOTOR_ENCODER_RANGE    8192
-#define DJI_MOTOR_ENCODER_HALF     4096
-#define DJI_MOTOR_RAD_PER_ROUND    6.28318530718f
-#define DJI_MOTOR_RPM_TO_RAD_S     (DJI_MOTOR_RAD_PER_ROUND / 60.0f)
-#define DJI_MOTOR_RAD_S_TO_RPM     (60.0f / DJI_MOTOR_RAD_PER_ROUND)
+#define DJI_MOTOR_CTRL_FRAME_ID 0x200u
+#define DJI_MOTOR_ENCODER_RANGE 8192
+#define DJI_MOTOR_ENCODER_HALF 4096
+#define DJI_MOTOR_RAD_PER_ROUND 6.28318530718f
+#define DJI_MOTOR_RPM_TO_RAD_S (DJI_MOTOR_RAD_PER_ROUND / 60.0f)
+#define DJI_MOTOR_RAD_S_TO_RPM (60.0f / DJI_MOTOR_RAD_PER_ROUND)
 
-#define DJI_MOTOR_DEFAULT_KP           8.0f
-#define DJI_MOTOR_DEFAULT_KI           0.1f
-#define DJI_MOTOR_DEFAULT_KD           0.0f
-#define DJI_MOTOR_DEFAULT_MAX_I        5000.0f
-#define DJI_MOTOR_DEFAULT_MAX_CURRENT  16384.0f
+#define DJI_MOTOR_DEFAULT_KP 8.0f
+#define DJI_MOTOR_DEFAULT_KI 0.1f
+#define DJI_MOTOR_DEFAULT_KD 0.0f
+#define DJI_MOTOR_DEFAULT_MAX_I 5000.0f
+
+typedef struct {
+    DjiMotorModel model;
+    const char* name;
+    float reduction_ratio;
+    float max_current_command;
+} DjiMotorModelParams;
 
 typedef struct {
     float kp;
@@ -46,10 +52,27 @@ typedef struct {
     DjiMotorPid speed_pid;
 } DjiMotorSlot;
 
+static const DjiMotorModelParams s_model_params[] = {
+    {
+        .model = DJI_MOTOR_MODEL_M3508,
+        .name = "M3508",
+        .reduction_ratio = (3591.0f / 187.0f),
+        .max_current_command = 16384.0f,
+    },
+    {
+        .model = DJI_MOTOR_MODEL_M2006,
+        .name = "M2006",
+        .reduction_ratio = 36.0f,
+        .max_current_command = 10000.0f,
+    },
+};
+
 static const BusMotorPortOps* s_ops = 0;
 static bool s_is_initialized = false;
 static DjiMotorSlot s_slots[DJI_MOTOR_MAX_ID];
 static uint8_t s_pending_current_mask = 0u;
+static DjiMotorModel s_model = DJI_MOTOR_MODEL_M2006;
+static const DjiMotorModelParams* s_active_model_params = 0;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -71,9 +94,13 @@ static float dji_motor_get_tor(uint16_t id);
 static BusMotorStatus dji_motor_stop(uint16_t id);
 static BusMotorStatus dji_motor_brake(uint16_t id);
 
+static bool dji_motor_is_ready(void);
+static const DjiMotorModelParams* dji_motor_get_model_params(DjiMotorModel model);
 static DjiMotorSlot* dji_motor_get_slot(uint16_t id);
 static const DjiMotorSlot* dji_motor_get_slot_const(uint16_t id);
-static void dji_motor_reset_slot(DjiMotorSlot* slot, uint16_t id);
+static void dji_motor_reset_slot(DjiMotorSlot* slot,
+                                 uint16_t id,
+                                 const DjiMotorModelParams* model_params);
 static BusMotorStatus dji_motor_send_all_current(void);
 static void dji_motor_update_pid(DjiMotorSlot* slot);
 static float dji_motor_limit(float value, float limit);
@@ -104,6 +131,9 @@ const BusMotorInterface dji_motor_instance = {
  * @brief 初始化 DJI 电机实例
  */
 static BusMotorStatus dji_motor_init(const BusMotorConfig* config) {
+    const DjiMotorConfig* driver_config;
+    const DjiMotorModelParams* model_params;
+    DjiMotorModel model;
     uint16_t id;
 
     if(config == 0 || config->ops == 0) {
@@ -113,9 +143,32 @@ static BusMotorStatus dji_motor_init(const BusMotorConfig* config) {
         return MOTOR_STATUS_PORT_ERROR;
     }
 
+    s_ops = 0;
+    s_is_initialized = false;
+    s_pending_current_mask = 0u;
+    s_model = DJI_MOTOR_MODEL_M2006;
+    s_active_model_params = 0;
+
+    driver_config = (const DjiMotorConfig*)config->driver_config;
+    if(driver_config != 0) {
+        model = driver_config->model;
+    }
+    else {
+        /* Compatibility default for the current project until upper layers
+         * pass DjiMotorConfig explicitly. */
+        model = DJI_MOTOR_MODEL_M2006;
+    }
+
+    model_params = dji_motor_get_model_params(model);
+    if(model_params == 0) {
+        return MOTOR_STATUS_INVALID_PARAM;
+    }
+
     s_ops = config->ops;
+    s_model = model;
+    s_active_model_params = model_params;
     for(id = 1u; id <= DJI_MOTOR_MAX_ID; ++id) {
-        dji_motor_reset_slot(&s_slots[id - 1u], id);
+        dji_motor_reset_slot(&s_slots[id - 1u], id, s_active_model_params);
     }
     s_pending_current_mask = 0u;
     s_is_initialized = true;
@@ -128,10 +181,13 @@ static BusMotorStatus dji_motor_init(const BusMotorConfig* config) {
  */
 static const char* dji_motor_status_str(BusMotorStatus status) {
     switch(status) {
-#define X(name, value) case MOTOR_STATUS_##name: return #name;
+#define X(name, value)        \
+    case MOTOR_STATUS_##name: \
+        return #name;
         MOTOR_STATUS_TABLE
 #undef X
-        default: return "UNKNOWN";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -140,8 +196,10 @@ static const char* dji_motor_status_str(BusMotorStatus status) {
  */
 static const char* dji_motor_mode_str(BusMotorMode mode) {
     switch((DjiMotorMode)mode) {
-        case DJI_MOTOR_MODE_SPEED: return "SPEED";
-        default: return "UNKNOWN";
+        case DJI_MOTOR_MODE_SPEED:
+            return "SPEED";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -149,6 +207,9 @@ static const char* dji_motor_mode_str(BusMotorMode mode) {
  * @brief 使能 DJI 电机
  */
 static BusMotorStatus dji_motor_enable(uint16_t id) {
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
     if(dji_motor_get_slot(id) == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -160,8 +221,13 @@ static BusMotorStatus dji_motor_enable(uint16_t id) {
  * @brief 失能 DJI 电机
  */
 static BusMotorStatus dji_motor_disable(uint16_t id) {
-    DjiMotorSlot* slot = dji_motor_get_slot(id);
+    DjiMotorSlot* slot;
 
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
+    slot = dji_motor_get_slot(id);
     if(slot == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -175,6 +241,9 @@ static BusMotorStatus dji_motor_disable(uint16_t id) {
  * @brief 切换 DJI 电机模式
  */
 static BusMotorStatus dji_motor_switch_mode(uint16_t id, BusMotorMode mode) {
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
     if(dji_motor_get_slot(id) == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -186,20 +255,29 @@ static BusMotorStatus dji_motor_switch_mode(uint16_t id, BusMotorMode mode) {
 }
 
 /**
- * @brief DJI 3508 只支持速度闭环入口
+ * @brief DJI 电机当前只支持输出轴速度闭环入口
  */
 static BusMotorStatus dji_motor_set_pos(uint16_t id, float position) {
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
     (void)id;
     (void)position;
     return MOTOR_STATUS_UNSUPPORTED;
 }
 
 /**
- * @brief 设定目标速度, 单位 rad/s, 内部转换为电机端 rpm 做电流环输出
+ * @brief 设定目标速度，单位 rad/s，内部转换为转子 rpm 做电流环输出
  */
 static BusMotorStatus dji_motor_set_spd(uint16_t id, float speed) {
-    DjiMotorSlot* slot = dji_motor_get_slot(id);
+    DjiMotorSlot* slot;
 
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
+    slot = dji_motor_get_slot(id);
     if(slot == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -215,9 +293,13 @@ static BusMotorStatus dji_motor_set_spd(uint16_t id, float speed) {
 }
 
 /**
- * @brief DJI 3508 不直接支持位置和速度的复合控制入口
+ * @brief DJI 电机当前不直接支持位置和速度的复合控制入口
  */
 static BusMotorStatus dji_motor_set_pos_vel(uint16_t id, float position, float speed) {
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
     (void)id;
     (void)position;
     (void)speed;
@@ -225,9 +307,13 @@ static BusMotorStatus dji_motor_set_pos_vel(uint16_t id, float position, float s
 }
 
 /**
- * @brief DJI 3508 不直接支持通用扭矩入口
+ * @brief DJI 电机当前不直接支持通用扭矩入口
  */
 static BusMotorStatus dji_motor_set_tor(uint16_t id, float torque) {
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
     (void)id;
     (void)torque;
     return MOTOR_STATUS_UNSUPPORTED;
@@ -237,8 +323,13 @@ static BusMotorStatus dji_motor_set_tor(uint16_t id, float torque) {
  * @brief 设定速度 PID 的 P/D 参数
  */
 static BusMotorStatus dji_motor_set_pd(uint16_t id, float kp, float kd) {
-    DjiMotorSlot* slot = dji_motor_get_slot(id);
+    DjiMotorSlot* slot;
 
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
+    slot = dji_motor_get_slot(id);
     if(slot == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -252,8 +343,13 @@ static BusMotorStatus dji_motor_set_pd(uint16_t id, float kp, float kd) {
  * @brief 从反馈缓存读取最近反馈
  */
 static BusMotorStatus dji_motor_update_feedback(uint16_t id, BusMotorFeedback* feedback) {
-    const DjiMotorSlot* slot = dji_motor_get_slot_const(id);
+    const DjiMotorSlot* slot;
 
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
+
+    slot = dji_motor_get_slot_const(id);
     if(slot == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
@@ -325,16 +421,21 @@ static BusMotorStatus dji_motor_brake(uint16_t id) {
  * @brief 解析一帧 DJI 电机反馈并刷新本地缓存
  */
 BusMotorStatus dji_motor_parse_feedback_frame(uint32_t frame_id,
-    const uint8_t data[DJI_MOTOR_CMD_LEN],
-    BusMotorFeedback* feedback) {
+                                              const uint8_t data[DJI_MOTOR_CMD_LEN],
+                                              BusMotorFeedback* feedback) {
     DjiMotorSlot* slot;
+    float rotor_position_rad;
+    float reduction_ratio;
     int16_t delta;
     uint16_t id;
 
+    if(dji_motor_is_ready() == false) {
+        return MOTOR_STATUS_NOT_INITIALIZE;
+    }
     if(data == 0) {
         return MOTOR_STATUS_INVALID_PARAM;
     }
-    if(frame_id <= DJI_MOTOR_FEEDBACK_BASE_ID || frame_id > DJI_MOTOR_FEEDBACK_BASE_ID + DJI_MOTOR_MAX_ID) {
+    if(frame_id <= DJI_MOTOR_FEEDBACK_BASE_ID || frame_id > (DJI_MOTOR_FEEDBACK_BASE_ID + DJI_MOTOR_MAX_ID)) {
         return MOTOR_STATUS_ID_MISMATCH;
     }
 
@@ -366,11 +467,12 @@ BusMotorStatus dji_motor_parse_feedback_frame(uint32_t frame_id,
     slot->last_angle = slot->angle;
     slot->feedback.id = id;
     slot->feedback.error_code = slot->temperature;
-    slot->feedback.position =
-        ((float)slot->total_tick / (float)DJI_MOTOR_ENCODER_RANGE) * DJI_MOTOR_RAD_PER_ROUND
-        / DJI_MOTOR_M3508_REDUCTION_RATIO;
+    reduction_ratio = s_active_model_params->reduction_ratio;
+    rotor_position_rad =
+        ((float)slot->total_tick / (float)DJI_MOTOR_ENCODER_RANGE) * DJI_MOTOR_RAD_PER_ROUND;
+    slot->feedback.position = rotor_position_rad / reduction_ratio;
     slot->feedback.speed =
-        ((float)slot->rpm * DJI_MOTOR_RPM_TO_RAD_S) / DJI_MOTOR_M3508_REDUCTION_RATIO;
+        ((float)slot->rpm * DJI_MOTOR_RPM_TO_RAD_S) / reduction_ratio;
     slot->feedback.torque = (float)slot->current;
     slot->has_feedback = true;
 
@@ -381,7 +483,43 @@ BusMotorStatus dji_motor_parse_feedback_frame(uint32_t frame_id,
     return MOTOR_STATUS_OK;
 }
 
+/**
+ * @brief 获取 DJI 电机当前型号
+ */
+DjiMotorModel dji_motor_get_model(void) {
+    return s_model;
+}
+
+/**
+ * @brief 将 DJI 电机型号转换为字符串
+ */
+const char* dji_motor_model_str(DjiMotorModel model) {
+    const DjiMotorModelParams* model_params = dji_motor_get_model_params(model);
+
+    if(model_params == 0) {
+        return "UNKNOWN";
+    }
+
+    return model_params->name;
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
+
+static bool dji_motor_is_ready(void) {
+    return (s_is_initialized == true) && (s_ops != 0) && (s_active_model_params != 0);
+}
+
+static const DjiMotorModelParams* dji_motor_get_model_params(DjiMotorModel model) {
+    uint32_t i;
+
+    for(i = 0u; i < (uint32_t)(sizeof(s_model_params) / sizeof(s_model_params[0])); ++i) {
+        if(s_model_params[i].model == model) {
+            return &s_model_params[i];
+        }
+    }
+
+    return 0;
+}
 
 static DjiMotorSlot* dji_motor_get_slot(uint16_t id) {
     if(id == 0u || id > DJI_MOTOR_MAX_ID) {
@@ -399,8 +537,10 @@ static const DjiMotorSlot* dji_motor_get_slot_const(uint16_t id) {
     return &s_slots[id - 1u];
 }
 
-static void dji_motor_reset_slot(DjiMotorSlot* slot, uint16_t id) {
-    if(slot == 0) {
+static void dji_motor_reset_slot(DjiMotorSlot* slot,
+                                 uint16_t id,
+                                 const DjiMotorModelParams* model_params) {
+    if(slot == 0 || model_params == 0) {
         return;
     }
 
@@ -411,18 +551,15 @@ static void dji_motor_reset_slot(DjiMotorSlot* slot, uint16_t id) {
     slot->speed_pid.ki = DJI_MOTOR_DEFAULT_KI;
     slot->speed_pid.kd = DJI_MOTOR_DEFAULT_KD;
     slot->speed_pid.max_integral = DJI_MOTOR_DEFAULT_MAX_I;
-    slot->speed_pid.max_output = DJI_MOTOR_DEFAULT_MAX_CURRENT;
+    slot->speed_pid.max_output = model_params->max_current_command;
 }
 
 static BusMotorStatus dji_motor_send_all_current(void) {
     uint8_t data[DJI_MOTOR_CMD_LEN];
     uint16_t i;
 
-    if(s_is_initialized == false) {
+    if(dji_motor_is_ready() == false) {
         return MOTOR_STATUS_NOT_INITIALIZE;
-    }
-    if(s_ops == 0 || s_ops->send == 0) {
-        return MOTOR_STATUS_PORT_ERROR;
     }
 
     for(i = 0u; i < DJI_MOTOR_MAX_ID; ++i) {
@@ -436,25 +573,24 @@ static BusMotorStatus dji_motor_send_all_current(void) {
     }
 
     s_pending_current_mask = 0u;
-
     return MOTOR_STATUS_OK;
 }
 
 static void dji_motor_update_pid(DjiMotorSlot* slot) {
     DjiMotorPid* pid;
     float target_rpm;
+    float reduction_ratio;
 
-    if(slot == 0) {
+    if(slot == 0 || s_active_model_params == 0) {
         return;
     }
 
     pid = &slot->speed_pid;
-    target_rpm = slot->target_speed * DJI_MOTOR_M3508_REDUCTION_RATIO * DJI_MOTOR_RAD_S_TO_RPM;
+    reduction_ratio = s_active_model_params->reduction_ratio;
+    target_rpm = slot->target_speed * reduction_ratio * DJI_MOTOR_RAD_S_TO_RPM;
     pid->error = target_rpm - (float)slot->rpm;
     pid->integral = dji_motor_limit(pid->integral + pid->error, pid->max_integral);
-    pid->output = pid->kp * pid->error
-        + pid->ki * pid->integral
-        + pid->kd * (pid->error - pid->last_error);
+    pid->output = pid->kp * pid->error + pid->ki * pid->integral + pid->kd * (pid->error - pid->last_error);
     pid->output = dji_motor_limit(pid->output, pid->max_output);
     pid->last_error = pid->error;
 }

@@ -1,142 +1,122 @@
-# bus_motor SDK 接口文档
+# bus_motor SDK 接口说明
 
-> `sdks/device/bus_motor/` 提供电机设备层统一入口和具体电机实例实现
+`src/device/bus_motor/` 提供总线电机设备层统一接口，以及具体电机驱动实例实现。
 
 ---
 
 ## 1. 模块定位
 
-`bus_motor.*` 是电机统一接口入口，供 service/app 上层调用
+`bus_motor.*` 提供统一抽象接口，供 service / app 上层调用。
 
-`dm_bus_motor.*` 是达妙电机实例，实现达妙协议并提供 `dm_bus_motor_instance`
+`dji_motor.*` 当前支持以下 DJI 总线电机组合：
 
-推荐使用方式：
+- `M3508 + C620`
+- `M2006 + C610`
 
-```text
-service init
-→ 组装 BusMotorPortOps
-→ bus_motor_set_instance(&dm_bus_motor_instance)
-→ bus_motor_init(&config)
-→ app/service 统一调用 bus_motor.xxx 或 bus_motor_xxx
-```
+这两种型号共用同一套 CAN 协议框架，但内部机械减速比和控制器原始电流指令范围不同，因此驱动内部会按型号参数表进行换算与限幅。
 
 ---
 
-## 2. 文件结构
+## 2. 通用配置透传
 
-```text
-sdks/device/bus_motor/
-├── bus_motor.h       # 通用电机接口、状态码、反馈结构、PortOps、入口单例
-├── bus_motor.c       # 入口单例转发实现
-├── dm_bus_motor.h    # 达妙电机实例声明和协议常量
-└── dm_bus_motor.c    # 达妙电机协议实现
-```
-
----
-
-## 3. 统一接口
-
-### 3.1 入口单例
-
-```c
-#define bus_motor (*bus_motor_instance)
-
-extern const BusMotorInterface* bus_motor_instance;
-
-BusMotorStatus bus_motor_set_instance(const BusMotorInterface* instance);
-```
-
-上层不直接 include 某个具体电机实现，只绑定实例后调用统一入口
-
-```c
-bus_motor_set_instance(&dm_bus_motor_instance);
-bus_motor.init(&config);
-bus_motor.set_spd(1, 3.0f);
-```
-
-### 3.2 状态码
-
-```c
-typedef enum {
-    MOTOR_STATUS_OK = 0,
-    MOTOR_STATUS_ERROR,
-    MOTOR_STATUS_INVALID_PARAM,
-    MOTOR_STATUS_PORT_ERROR,
-    MOTOR_STATUS_TIMEOUT,
-    MOTOR_STATUS_ID_MISMATCH,
-    MOTOR_STATUS_NO_INSTANCE,
-    MOTOR_STATUS_NOT_INITIALIZE,
-} BusMotorStatus;
-```
-
-`MOTOR_STATUS_NOT_INITIALIZE` 表示已经有电机实例，但实例尚未完成 `bus_motor_init()`
-
-### 3.3 PortOps
+`BusMotorConfig` 提供一个可选的 `driver_config` 指针，用于把具体驱动私有配置透传给实例层：
 
 ```c
 typedef struct {
-    bool (*send)(uint32_t id, const uint8_t* data, uint8_t len);
-    bool (*read)(uint32_t* id, uint8_t* data, uint8_t* len);
-    uint32_t (*now_ms)(void);
-    void (*delay_ms)(uint32_t ms);
-} BusMotorPortOps;
+    const BusMotorPortOps* ops;
+    uint32_t timeout_ms;
+    uint8_t retry_count;
+    const void* driver_config;
+} BusMotorConfig;
 ```
 
-PortOps 由 service 绑定 platform 或 adapter，电机 SDK 不直接依赖 HAL/FSP/CubeMX
+通用 `bus_motor` 层不会解析 `driver_config`，只负责原样传给具体驱动。
 
 ---
 
-## 4. 初始化示例
+## 3. DJI 型号配置
+
+DJI 驱动使用 `DjiMotorConfig` 指定型号：
 
 ```c
-#include "bus_motor.h"
-#include "dm_bus_motor.h"
-#include "platform_can.h"
-#include "platform_time.h"
+typedef enum {
+    DJI_MOTOR_MODEL_M3508 = 0u,
+    DJI_MOTOR_MODEL_M2006,
+    DJI_MOTOR_MODEL_COUNT
+} DjiMotorModel;
 
-static const BusMotorPortOps bus_motor_ops = {
-    .send = platform_can_send,
-    .read = platform_can_read,
-    .now_ms = platform_time_now_ms,
-    .delay_ms = platform_time_delay_ms,
+typedef struct {
+    DjiMotorModel model;
+} DjiMotorConfig;
+```
+
+长期推荐由上层显式传入 `DjiMotorConfig`；当前工程为了兼容未改动的 service 初始化代码，在 `driver_config == NULL` 时会默认选择 `DJI_MOTOR_MODEL_M2006`。
+
+---
+
+## 4. 速度与位置语义
+
+对 DJI 驱动而言：
+
+- `set_spd()` 的输入语义是减速箱输出轴目标角速度，单位 `rad/s`
+- `get_spd()` 的输出语义是减速箱输出轴当前角速度，单位 `rad/s`
+- `get_pos()` 的输出语义是减速箱输出轴累计角度，单位 `rad`
+
+注意：
+
+- CAN 反馈中的 `rpm` 是转子侧转速
+- 驱动内部会根据当前型号减速比，把转子侧 RPM / 角度换算成输出轴速度 / 位置
+
+---
+
+## 5. 型号配置示例
+
+`M2006 + C610`：
+
+```c
+static const DjiMotorConfig dji_config = {
+    .model = DJI_MOTOR_MODEL_M2006,
 };
 
-void chassis_bus_motor_init(void)
-{
-    BusMotorConfig config = {
-        .ops = &bus_motor_ops,
-        .feedback_timeout_ms = 50u,
-    };
-
-    bus_motor_set_instance(&dm_bus_motor_instance);
-    bus_motor_init(&config);
-}
+BusMotorConfig config = {
+    .ops = &motor_ops,
+    .timeout_ms = 0u,
+    .retry_count = 0u,
+    .driver_config = &dji_config,
+};
 ```
 
----
-
-## 5. 调用示例
+`M3508 + C620`：
 
 ```c
-void chassis_update(void)
-{
-    BusMotorFeedback feedback;
-
-    bus_motor.set_spd(1, 2.0f);
-
-    if(bus_motor.get_feedback(1, &feedback) == MOTOR_STATUS_OK) {
-        /* 使用 feedback.pos_rad / feedback.spd_rad_s / feedback.torque_a */
-    }
-}
+static const DjiMotorConfig dji_config = {
+    .model = DJI_MOTOR_MODEL_M3508,
+};
 ```
 
 ---
 
-## 6. 设计约束
+## 6. 当前支持的型号参数
 
-- 上层只依赖 `bus_motor.h`
-- 具体电机实例只负责协议实现
-- 具体实例内部的初始化、在线等二值状态使用 `bool` / `true` / `false`，不再用 `uint8_t` 或 `0/1` 表示
-- `dm_bus_motor.*` 不直接 include platform 头文件
-- platform 对接统一放在 service init 或 adapter 中
-- 新增其他电机时，只需要新增实例文件并提供 `BusMotorInterface`
+DJI 驱动内部参数表当前包含：
+
+- `M3508`：减速比 `3591 / 187`，原始电流指令范围 `-16384 ~ +16384`
+- `M2006`：减速比 `36`，原始电流指令范围 `-10000 ~ +10000`
+
+PID 输出会先按当前型号的原始电流指令范围限幅，再编码进 `0x200` 控制帧；该控制帧维持现有协议格式不变，每个电机占用 2 字节有符号控制值。
+
+---
+
+## 7. 初始化建议
+
+推荐初始化流程：
+
+```text
+service init
+-> 组装 BusMotorPortOps
+-> bus_motor_set_instance(&dji_motor_instance)
+-> bus_motor_init(&config)
+-> app/service 统一调用 bus_motor.xxx
+```
+
+如果上层暂未传入 `driver_config`，当前工程仍会以 `M2006` 兼容默认值运行；长期建议显式配置，避免项目后续切换硬件时产生隐式行为。
