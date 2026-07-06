@@ -15,12 +15,14 @@ void FixedRatePublishScheduler::reset() {
     latest_receive_time_ms_ = 0;
     latest_version_ = 0;
     published_version_ = 0;
+    reused_latest_version_ = false;
 }
 
 void FixedRatePublishScheduler::note_valid(uint64_t receive_time_ms) {
     has_valid_ = true;
     latest_receive_time_ms_ = receive_time_ms;
     ++latest_version_;
+    reused_latest_version_ = false;
 }
 
 PublishOutcome FixedRatePublishScheduler::on_tick(uint64_t now_ms) {
@@ -30,11 +32,17 @@ PublishOutcome FixedRatePublishScheduler::on_tick(uint64_t now_ms) {
 
     if(latest_version_ != published_version_) {
         published_version_ = latest_version_;
+        reused_latest_version_ = false;
         return PublishOutcome::Fresh;
+    }
+
+    if(reused_latest_version_) {
+        return PublishOutcome::StaleDrop;
     }
 
     if(now_ms >= latest_receive_time_ms_ &&
        static_cast<int64_t>(now_ms - latest_receive_time_ms_) <= max_reuse_age_ms_) {
+        reused_latest_version_ = true;
         return PublishOutcome::Reused;
     }
 

@@ -135,8 +135,10 @@ template <typename T>
 struct LatestValidCache {
     T sample{};
     rclcpp::Time source_stamp{ 0, 0, RCL_ROS_TIME };
+    rclcpp::Time published_stamp{ 0, 0, RCL_ROS_TIME };
     SteadyClock::time_point receive_tp{};
     bool has_value = false;
+    bool has_published = false;
 };
 
 struct BridgeStats {
@@ -715,8 +717,10 @@ private:
             std::lock_guard<std::mutex> lock(data_mutex_);
             latest_imu_.sample = sample;
             latest_imu_.source_stamp = now();
+            latest_imu_.published_stamp = rclcpp::Time{ 0, 0, get_clock()->get_clock_type() };
             latest_imu_.receive_tp = SteadyClock::now();
             latest_imu_.has_value = true;
+            latest_imu_.has_published = false;
             imu_publish_scheduler_.note_valid(steady_now_ms());
         }
         stats_.imu_rx_valid++;
@@ -738,8 +742,10 @@ private:
             std::lock_guard<std::mutex> lock(data_mutex_);
             latest_odom_.sample = odom;
             latest_odom_.source_stamp = now();
+            latest_odom_.published_stamp = rclcpp::Time{ 0, 0, get_clock()->get_clock_type() };
             latest_odom_.receive_tp = SteadyClock::now();
             latest_odom_.has_value = true;
+            latest_odom_.has_published = false;
             odom_publish_scheduler_.note_valid(steady_now_ms());
         }
         stats_.odom_rx_valid++;
@@ -805,9 +811,11 @@ private:
                 sample = latest_imu_.sample;
                 if(outcome == PublishOutcome::Fresh || reused_message_stamp_mode_ == ReusedMessageStampMode::PublishNow) {
                     stamp = now();
+                    latest_imu_.published_stamp = stamp;
+                    latest_imu_.has_published = true;
                 }
                 else {
-                    stamp = latest_imu_.source_stamp;
+                    stamp = latest_imu_.has_published ? latest_imu_.published_stamp : latest_imu_.source_stamp;
                 }
             }
         }
@@ -845,9 +853,11 @@ private:
                 odom = latest_odom_.sample;
                 if(outcome == PublishOutcome::Fresh || reused_message_stamp_mode_ == ReusedMessageStampMode::PublishNow) {
                     stamp = now();
+                    latest_odom_.published_stamp = stamp;
+                    latest_odom_.has_published = true;
                 }
                 else {
-                    stamp = latest_odom_.source_stamp;
+                    stamp = latest_odom_.has_published ? latest_odom_.published_stamp : latest_odom_.source_stamp;
                 }
             }
         }

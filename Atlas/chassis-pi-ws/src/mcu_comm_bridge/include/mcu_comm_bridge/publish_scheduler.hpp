@@ -26,6 +26,7 @@ private:
     uint64_t latest_receive_time_ms_ = 0;
     uint64_t latest_version_ = 0;
     uint64_t published_version_ = 0;
+    bool reused_latest_version_ = false;
 };
 
 }  // namespace mcu_comm_bridge
