@@ -8,7 +8,6 @@
 #include "app_fsm.h"
 #include "app_runtime.h"
 #include "arm.h"
-#include "imu/imu.h"
 #include "binary_frame.h"
 #include "chassis.h"
 #include "delay.h"
@@ -507,20 +506,6 @@ static void app_status_log(void) {
              (unsigned long)(snapshot.stats.tx_hal_error_count - last_snapshot.stats.tx_hal_error_count),
              (unsigned long)total_ok_delta,
              (unsigned long)total_fail_delta);
-
-    ImuAngle imu_angle = { 0 };
-    imu_angle = imu.get_angle();
-    log_info("PI_TX imu angle roll=%.3f pitch=%.3f yaw=%.3f",
-             (double)imu_angle.roll,
-             (double)imu_angle.pitch,
-             (double)imu_angle.yaw);
-    Vector3 odom_angle = { 0 };
-    odom.get_angle(&odom_angle);
-    log_info("PI_TX odom angle roll=%.3f pitch=%.3f yaw=%.3f",
-             (double)odom_angle.x,
-             (double)odom_angle.y,
-             (double)odom_angle.z);
-
 
     log_info("--------------------------------------------------");
 
