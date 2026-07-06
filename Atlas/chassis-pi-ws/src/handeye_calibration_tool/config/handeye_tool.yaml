@@ -1,0 +1,73 @@
+handeye_calibration_tool:
+  ros__parameters:
+    # UVC camera. camera_backend can be "v4l2" or "any".
+    camera_index: 0
+    camera_backend: "v4l2"
+    camera_width: 1280
+    camera_height: 720
+    camera_fps: 30.0
+    camera_fourcc: "MJPG"
+    camera_window_name: "Hand-Eye Calibration Camera"
+
+    # Camera intrinsics. It can be a ROS camera_info YAML or an OpenCV YAML.
+    intrinsics_file: ""
+
+    # Calibration board type:
+    #   chessboard = plain black/white checkerboard without ArUco markers
+    #   charuco    = checkerboard containing ArUco markers
+    board_type: "chessboard"
+
+    # Plain chessboard. These are INNER corner counts, not square counts.
+    # Example: 10 x 7 black/white squares => 9 x 6 inner corners.
+    chessboard_inner_corners_x: 9
+    chessboard_inner_corners_y: 6
+    chessboard_square_length_m: 0.025
+    chessboard_use_sb: true
+
+    # ChArUco board: squares_x/squares_y are the number of complete squares.
+    charuco_dictionary: "DICT_4X4_50"
+    charuco_squares_x: 7
+    charuco_squares_y: 5
+    charuco_square_length_m: 0.030
+    charuco_marker_length_m: 0.022
+    min_charuco_corners: 8
+    max_reprojection_error_px: 1.5
+
+    # eye_in_hand: camera fixed on the end effector, board fixed in the world.
+    # eye_to_hand: camera fixed outside, board fixed on the end effector.
+    handeye_mode: "eye_in_hand"
+    base_frame: "arm_base_link"
+    gripper_frame: "tool0"
+    camera_frame: "camera_optical_frame"
+    target_frame: "handeye_target"
+
+    # auto: prefer /arm/pose, otherwise use joint_fk.
+    # pose_topic: only use geometry_msgs/PoseStamped.
+    # joint_fk: combine /arm/fk_position and /arm/joint_states.
+    arm_pose_source: "auto"
+    arm_pose_topic: "/arm/pose"
+    arm_joint_state_topic: "/arm/joint_states"
+    arm_fk_position_topic: "/arm/fk_position"
+
+    # joint_fk orientation mapping:
+    # [roll row (5), pitch row (5), yaw row (5)] * [q0..q4] + rpy_offset.
+    # The default matches a 5-DoF arm with q0 yaw and q1..q4 parallel pitch axes.
+    orientation_rpy_joint_coeffs: [
+      0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 1.0, 1.0, 1.0, 1.0,
+      1.0, 0.0, 0.0, 0.0, 0.0
+    ]
+    orientation_rpy_offset_rad: [0.0, 0.0, 0.0]
+
+    max_robot_state_age_s: 0.5
+    robot_sync_tolerance_s: 0.20
+    require_stable_before_capture: true
+    stable_duration_s: 0.5
+    stable_joint_range_rad: 0.008
+    stable_wait_timeout_s: 8.0
+
+    arm_joints_service: "/mcu/set_arm_joints"
+    arm_pose_service: "/mcu/set_arm_pose"
+    default_arm_speed_rad_s: 0.8
+
+    output_directory: "~/handeye_calibration"
