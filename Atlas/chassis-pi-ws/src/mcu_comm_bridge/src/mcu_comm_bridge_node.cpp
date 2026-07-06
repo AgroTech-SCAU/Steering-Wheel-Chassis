@@ -329,6 +329,16 @@ uint64_t steady_now_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now().time_since_epoch()).count());
 }
 
+rclcpp::Time strictly_increasing_stamp(
+    const rclcpp::Time& candidate,
+    const rclcpp::Time& last_published,
+    bool has_published) {
+    if(!has_published || candidate.nanoseconds() > last_published.nanoseconds()) {
+        return candidate;
+    }
+    return rclcpp::Time(last_published.nanoseconds() + 1, candidate.get_clock_type());
+}
+
 }  // namespace
 
 class McuCommBridgeNode : public rclcpp::Node {
@@ -809,14 +819,10 @@ private:
             outcome = imu_publish_scheduler_.on_tick(steady_now_ms());
             if(outcome == PublishOutcome::Fresh || outcome == PublishOutcome::Reused) {
                 sample = latest_imu_.sample;
-                if(outcome == PublishOutcome::Fresh || reused_message_stamp_mode_ == ReusedMessageStampMode::PublishNow) {
-                    stamp = now();
-                    latest_imu_.published_stamp = stamp;
-                    latest_imu_.has_published = true;
-                }
-                else {
-                    stamp = latest_imu_.has_published ? latest_imu_.published_stamp : latest_imu_.source_stamp;
-                }
+                const auto candidate_stamp = now();
+                stamp = strictly_increasing_stamp(candidate_stamp, latest_imu_.published_stamp, latest_imu_.has_published);
+                latest_imu_.published_stamp = stamp;
+                latest_imu_.has_published = true;
             }
         }
 
@@ -851,14 +857,10 @@ private:
             outcome = odom_publish_scheduler_.on_tick(steady_now_ms());
             if(outcome == PublishOutcome::Fresh || outcome == PublishOutcome::Reused) {
                 odom = latest_odom_.sample;
-                if(outcome == PublishOutcome::Fresh || reused_message_stamp_mode_ == ReusedMessageStampMode::PublishNow) {
-                    stamp = now();
-                    latest_odom_.published_stamp = stamp;
-                    latest_odom_.has_published = true;
-                }
-                else {
-                    stamp = latest_odom_.has_published ? latest_odom_.published_stamp : latest_odom_.source_stamp;
-                }
+                const auto candidate_stamp = now();
+                stamp = strictly_increasing_stamp(candidate_stamp, latest_odom_.published_stamp, latest_odom_.has_published);
+                latest_odom_.published_stamp = stamp;
+                latest_odom_.has_published = true;
             }
         }
 
