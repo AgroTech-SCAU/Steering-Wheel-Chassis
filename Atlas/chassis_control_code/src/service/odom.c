@@ -115,6 +115,7 @@ OdomConfig odom_default_config(void) {
             .chassis_angular_static_threshold = 0.02f,
             .imu_gyro_static_threshold = 0.01f,
         },
+        .yaw_rate_scale = 1.0f,
         .process_period_s = ODOM_DEFAULT_PROCESS_PERIOD_S,
     };
 
@@ -136,6 +137,9 @@ OdomStatus odom_init(const OdomConfig* config) {
     s_last_fallback_timestamp_us = 0u;
     if(s_config.process_period_s <= 0.0f) {
         s_config.process_period_s = ODOM_DEFAULT_PROCESS_PERIOD_S;
+    }
+    if(!isfinite(s_config.yaw_rate_scale) || s_config.yaw_rate_scale <= 0.0f) {
+        s_config.yaw_rate_scale = 1.0f;
     }
 
     status = chassis_imu_odom.init(&s_fusion, &s_config.fusion);
@@ -197,9 +201,11 @@ OdomStatus odom_process(void) {
         chassis_velocity.vy = chassis_state->cur_vy;
         chassis_velocity.wz = chassis_state->cur_wz;
     }
+    chassis_velocity.wz *= s_config.yaw_rate_scale;
 
     imu_sample.acc = s_odom.acc;
     imu_sample.gyro = s_odom.gyro_corrected;
+    imu_sample.gyro.z *= s_config.yaw_rate_scale;
     if(chassis_imu_odom.update(&s_fusion, chassis_velocity, imu_sample, process_dt_s) != chassis_imu_odom.OK) {
         s_odom.fusion_ready = false;
         return od.FUSION_FAILED;

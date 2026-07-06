@@ -45,6 +45,7 @@ typedef enum {
  */
 typedef struct {
     ChassisImuOdomConfig fusion; /**< 底盘 + IMU 融合配置 */
+    float yaw_rate_scale;        /**< odom yaw rate scale，无量纲 */
     float process_period_s;      /**< odom.process() 调用周期，单位 s */
 } OdomConfig;
 
@@ -52,16 +53,19 @@ typedef struct {
  * @brief 里程计服务只读状态快照
  */
 typedef struct {
-    Vector3 acc;            /**< 最近一次三轴加速度，单位 m/s^2 */
-    Vector3 gyro;           /**< 最近一次原始三轴角速度，单位 rad/s */
-    Vector3 gyro_bias;      /**< 最近一次 IMU 姿态算法估计的陀螺零偏，单位 rad/s */
-    Vector3 gyro_corrected; /**< 最近一次扣除零偏和补偿后的三轴角速度，单位 rad/s */
-    Vector3 angle;          /**< 融合后的三轴姿态角，x/y/z 分别为 roll/pitch/yaw，单位 rad */
-    Vector3 odom;           /**< 融合后的三轴里程，x/y 单位 m；z 当前为预留高度状态 */
-    Vector3 velocity;       /**< 融合后的底盘速度，x/y/z 分别表示 vx/vy/wz */
-    bool imu_ready;         /**< true 表示最近一次 IMU 更新成功 */
-    bool fusion_ready;      /**< true 表示最近一次融合更新成功 */
-    bool initialized;       /**< true 表示服务已初始化 */
+    Vector3 acc;              /**< 最近一次三轴加速度，单位 m/s^2 */
+    Vector3 gyro;             /**< 最近一次原始三轴角速度，单位 rad/s */
+    Vector3 gyro_bias;        /**< 最近一次 IMU 姿态算法估计的陀螺零偏，单位 rad/s */
+    Vector3 gyro_corrected;   /**< 最近一次扣除零偏和补偿后的三轴角速度，单位 rad/s */
+    Vector3 angle;            /**< 融合后的三轴姿态角，x/y/z 分别为 roll/pitch/yaw，单位 rad */
+    Vector3 odom;             /**< 融合后的三轴里程，x/y 单位 m，z 当前为预留高度状态 */
+    Vector3 velocity;         /**< 融合后的底盘速度，x/y/z 分别表示 vx/vy/wz */
+    float fusion_gyro_bias_z; /**< 融合估计的 IMU z 轴残余零偏，单位 rad/s */
+    bool static_window;       /**< true 表示当前应用静止零速约束 */
+    bool wheel_wz_rejected;   /**< true 表示当前降低了 wheel wz 观测权重 */
+    bool imu_ready;           /**< true 表示最近一次 IMU 更新成功 */
+    bool fusion_ready;        /**< true 表示最近一次融合更新成功 */
+    bool initialized;         /**< true 表示服务已初始化 */
 } Odom;
 
 /**
