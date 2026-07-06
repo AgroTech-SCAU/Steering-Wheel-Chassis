@@ -2,7 +2,9 @@
 
 #include "chassis.h"
 #include "imu/imu.h"
+#include "stm32_hal_dwt.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -19,6 +21,12 @@
  * 当前由 250Hz 任务调用，周期为 0.004s
  */
 #define ODOM_DEFAULT_PROCESS_PERIOD_S 0.004f
+/**
+ * @brief 里程计服务周期上限
+ *
+ * 当 IMU 样本时间戳间隔超过该值时，使用 fallback 时间戳计算周期
+ */
+#define ODOM_MAX_PROCESS_DT_S 0.05f
 
 /**
  * @brief 里程计服务对外状态缓存
@@ -32,6 +40,14 @@ static ChassisImuOdom s_fusion = { 0 };
  * @brief 当前里程计服务配置
  */
 static OdomConfig s_config = { 0 };
+/**
+ * @brief 上次 IMU 样本时间戳，单位微秒
+ */
+static uint32_t s_last_gyro_timestamp_us = 0u;
+/**
+ * @brief 上次 fallback 时间戳，单位微秒
+ */
+static uint32_t s_last_fallback_timestamp_us = 0u;
 
 /**
  * @brief 里程计服务接口单例
@@ -73,6 +89,10 @@ static Vector3 odom_angle_to_vec3(ImuAngle angle);
  * @brief 检查数据是否可用并拷贝 Vector3 输出
  */
 static OdomStatus odom_copy_vec3(bool ready, const Vector3* src, Vector3* out);
+/**
+ * @brief 解析 IMU 样本时间戳，计算本次里程计服务周期
+ */
+static float odom_resolve_process_dt_s(const ImuSample* sample);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -112,6 +132,8 @@ OdomStatus odom_init(const OdomConfig* config) {
     memset(&s_odom, 0, sizeof(s_odom));
     memset(&s_fusion, 0, sizeof(s_fusion));
     s_config = (config != NULL) ? *config : odom_default_config();
+    s_last_gyro_timestamp_us = 0u;
+    s_last_fallback_timestamp_us = 0u;
     if(s_config.process_period_s <= 0.0f) {
         s_config.process_period_s = ODOM_DEFAULT_PROCESS_PERIOD_S;
     }
@@ -139,9 +161,11 @@ OdomStatus odom_process(void) {
     ImuGyro gyro_bias;
     ImuGyro gyro_corrected;
     ImuAngle imu_angle;
+    ImuSample imu_raw_sample = { 0 };
     ChassisImuOdomChassis chassis_velocity = { 0.0f, 0.0f, 0.0f };
     ChassisImuOdomImu imu_sample;
     const SteerWheelState* chassis_state;
+    float process_dt_s;
 
     if(!s_odom.initialized) {
         return od.NOT_INITIALIZED;
@@ -157,6 +181,8 @@ OdomStatus odom_process(void) {
     gyro_bias = imu_get_gyro_bias();
     gyro_corrected = imu_get_gyro_corrected();
     imu_angle = imu.get_angle();
+    (void)imu_get_sample(&imu_raw_sample);
+    process_dt_s = odom_resolve_process_dt_s(&imu_raw_sample);
 
     s_odom.acc = odom_acc_to_vec3(acc);
     s_odom.gyro = odom_gyro_to_vec3(gyro);
@@ -174,7 +200,7 @@ OdomStatus odom_process(void) {
 
     imu_sample.acc = s_odom.acc;
     imu_sample.gyro = s_odom.gyro_corrected;
-    if(chassis_imu_odom.update(&s_fusion, chassis_velocity, imu_sample, s_config.process_period_s) != chassis_imu_odom.OK) {
+    if(chassis_imu_odom.update(&s_fusion, chassis_velocity, imu_sample, process_dt_s) != chassis_imu_odom.OK) {
         s_odom.fusion_ready = false;
         return od.FUSION_FAILED;
     }
@@ -354,4 +380,34 @@ static OdomStatus odom_copy_vec3(bool ready, const Vector3* src, Vector3* out) {
 
     *out = *src;
     return od.OK;
+}
+
+/**
+ * @brief 解析 IMU 样本时间戳，计算本次里程计服务周期
+ * @param sample IMU 样本指针；NULL 表示使用 fallback 时间戳
+ * @return float 里程计服务周期，单位秒
+ */
+static float odom_resolve_process_dt_s(const ImuSample* sample) {
+    float dt_s = s_config.process_period_s;
+
+    if(sample != NULL && sample->gyro_timestamp_us != 0u) {
+        if(s_last_gyro_timestamp_us != 0u) {
+            dt_s = (float)(sample->gyro_timestamp_us - s_last_gyro_timestamp_us) * 1.0e-6f;
+        }
+        s_last_gyro_timestamp_us = sample->gyro_timestamp_us;
+    }
+    else {
+        const uint32_t now_us = dwt_get_us();
+
+        if(s_last_fallback_timestamp_us != 0u && now_us != 0u) {
+            dt_s = (float)(now_us - s_last_fallback_timestamp_us) * 1.0e-6f;
+        }
+        s_last_fallback_timestamp_us = now_us;
+    }
+
+    if(!isfinite(dt_s) || dt_s <= 0.0f || dt_s > ODOM_MAX_PROCESS_DT_S) {
+        dt_s = s_config.process_period_s;
+    }
+
+    return dt_s;
 }
