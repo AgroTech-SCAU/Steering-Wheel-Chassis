@@ -59,6 +59,12 @@ bool remote_is_manual_requested(void);
 
 bool remote_is_auto_requested(void);
 
+bool remote_take_auto_start_event(void);
+
+bool remote_take_clear_reset_event(void);
+
+void remote_clear_pending_auto_start_event(void);
+
 RemoteManualSource remote_get_manual_source(void);
 
 const FsIa10bData* remote_get_raw_data(void);

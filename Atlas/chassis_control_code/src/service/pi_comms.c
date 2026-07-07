@@ -309,7 +309,7 @@ bool pi_comms_send_status(const PiCommsStatusSnapshot* status) {
     payload[8] = status->fault_source;
     payload[9] = status->fault_level;
     binary_frame_write_i16_le(&payload[10], status->fault_code);
-    payload[12] = 0u;
+    payload[12] = status->auto_start_latched > 0u ? 1u : 0u;
     payload[13] = 0u;
     payload[14] = 0u;
     payload[15] = 0u;

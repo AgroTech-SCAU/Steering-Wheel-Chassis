@@ -26,15 +26,24 @@
 #define APP_RUNTIME_ODOM_NOT_READY_FAULT_CODE 1
 #define APP_RUNTIME_PI_TIMEOUT_FAULT_CODE 1
 #define APP_RUNTIME_CONTROL_EXEC_FAULT_CODE 2
-#define APP_RUNTIME_REMOTE_CLEAR_FAULT_HOLD_MS 800u
 #define APP_RUNTIME_RESULT_LOG_PERIOD_MS 1000u
+#define APP_RUNTIME_EVENT_LOG_PERIOD_MS 1000u
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
 static RemoteState s_remote_state = { 0 };
-static ms_t s_remote_clear_fault_timer = 0u;
 static ms_t s_command_invalid_log_timer = 0u;
 static ms_t s_unsupported_log_timer = 0u;
+static ms_t s_auto_start_accept_log_timer = 0u;
+static ms_t s_auto_start_already_latched_log_timer = 0u;
+static ms_t s_auto_start_invalid_state_log_timer = 0u;
+static ms_t s_auto_start_pi_offline_log_timer = 0u;
+static ms_t s_auto_start_chassis_not_ready_log_timer = 0u;
+static ms_t s_auto_start_odom_not_ready_log_timer = 0u;
+static ms_t s_auto_start_fault_log_timer = 0u;
+static ms_t s_auto_start_estop_log_timer = 0u;
+static ms_t s_remote_reset_log_timer = 0u;
+static bool s_auto_start_latched = false;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -46,8 +55,12 @@ static void app_runtime_leave_manual_chassis_pc_arm(void);
 static void app_runtime_leave_auto_pi(void);
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code);
 static bool app_runtime_pi_arm_cmd_pending(void);
-static bool app_runtime_remote_clear_fault_requested(void);
-static void app_runtime_clear_recoverable_fault(void);
+static bool app_runtime_try_accept_auto_start_event(void);
+static bool app_runtime_can_accept_auto_start(void);
+static void app_runtime_set_auto_start_latched(bool latched);
+static void app_runtime_handle_remote_clear_reset(void);
+static void app_runtime_reset_auto_task_context(void);
+static void app_runtime_finish_reset_transition(void);
 static void app_runtime_handle_control_result(AppControlResult result);
 static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event);
 
@@ -55,9 +68,18 @@ static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event
 
 void app_runtime_init(void) {
     memset(&s_remote_state, 0, sizeof(s_remote_state));
-    s_remote_clear_fault_timer = 0u;
     s_command_invalid_log_timer = 0u;
     s_unsupported_log_timer = 0u;
+    s_auto_start_accept_log_timer = 0u;
+    s_auto_start_already_latched_log_timer = 0u;
+    s_auto_start_invalid_state_log_timer = 0u;
+    s_auto_start_pi_offline_log_timer = 0u;
+    s_auto_start_chassis_not_ready_log_timer = 0u;
+    s_auto_start_odom_not_ready_log_timer = 0u;
+    s_auto_start_fault_log_timer = 0u;
+    s_auto_start_estop_log_timer = 0u;
+    s_remote_reset_log_timer = 0u;
+    s_auto_start_latched = false;
 
     app_control_init();
     app_fsm_init();
@@ -91,6 +113,10 @@ bool app_runtime_has_fault(void) {
     return app_fsm_has_fault();
 }
 
+bool app_runtime_is_auto_start_latched(void) {
+    return s_auto_start_latched;
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static void app_runtime_update_inputs(void) {
@@ -107,13 +133,13 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
-    if(pi_comms_take_mission_event(&mission_event)) {
-        app_runtime_handle_pi_mission_event(&mission_event);
+    if(remote_take_clear_reset_event()) {
+        app_runtime_handle_remote_clear_reset();
         return;
     }
 
-    if(app_runtime_remote_clear_fault_requested()) {
-        app_runtime_clear_recoverable_fault();
+    if(pi_comms_take_mission_event(&mission_event)) {
+        app_runtime_handle_pi_mission_event(&mission_event);
         return;
     }
 
@@ -139,14 +165,8 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
-    if(remote_is_auto_requested()) {
-        if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
-            app_runtime_leave_manual_chassis_pc_arm();
-        }
-        if(app_fsm_get_state() != APP_FSM_STATE_AUTO_PI) {
-            pi_comms_clear_controls();
-        }
-        (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI);
+    if(remote_take_auto_start_event()) {
+        (void)app_runtime_try_accept_auto_start_event();
         return;
     }
 
@@ -202,6 +222,17 @@ static bool app_runtime_apply_safety(void) {
     }
 
     if(state == APP_FSM_STATE_AUTO_PI) {
+        if(!s_auto_start_latched) {
+            if(delay_nb_ms(&s_auto_start_invalid_state_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+                log_warn("APP_RUNTIME auto_pi aborted: auto_start_latched=0");
+            }
+            app_runtime_leave_auto_pi();
+            (void)app_control_stop_all();
+            (void)app_fsm_post(APP_FSM_EVENT_STOP);
+            app_fsm_process();
+            return false;
+        }
+
         if(!chassis.is_ready()) {
             app_runtime_raise_fault_once(APP_FAULT_SOURCE_CHASSIS,
                                          APP_FAULT_LEVEL_RECOVERABLE,
@@ -306,43 +337,121 @@ static bool app_runtime_pi_arm_cmd_pending(void) {
     return pi_comms_has_pending_arm_control();
 }
 
-static bool app_runtime_remote_clear_fault_requested(void) {
-    const AppFault* fault = app_fsm_get_fault();
-    const uint16_t swc = s_remote_state.rc_data.channel[REMOTE_CH_SWC];
-    const uint16_t swd = s_remote_state.rc_data.channel[REMOTE_CH_SWD];
-    const uint16_t vra = s_remote_state.rc_data.channel[REMOTE_CH_VRA];
-    const uint16_t vrb = s_remote_state.rc_data.channel[REMOTE_CH_VRB];
-    const bool safe_combo = swc == REMOTE_SW_HIGH && swd == REMOTE_SW_LOW &&
-                            vra <= REMOTE_VR_LOW_THRESHOLD && vrb <= REMOTE_VR_LOW_THRESHOLD;
+static bool app_runtime_try_accept_auto_start_event(void) {
+    const AppFsmStateId state = app_fsm_get_state();
 
-    if(app_fsm_get_state() != APP_FSM_STATE_FAULT || !s_remote_state.online || fault == NULL ||
-       fault->level == APP_FAULT_LEVEL_FATAL || !safe_combo) {
-        s_remote_clear_fault_timer = 0u;
+    if(s_auto_start_latched) {
+        if(delay_nb_ms(&s_auto_start_already_latched_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start event ignored, already latched");
+        }
         return false;
     }
 
-    if(s_remote_clear_fault_timer == 0u) {
-        s_remote_clear_fault_timer = delay_now_ms();
+    if(state == APP_FSM_STATE_ESTOP) {
+        if(delay_nb_ms(&s_auto_start_estop_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: estop active");
+        }
         return false;
     }
 
-    if((delay_now_ms() - s_remote_clear_fault_timer) < APP_RUNTIME_REMOTE_CLEAR_FAULT_HOLD_MS) {
+    if(state != APP_FSM_STATE_IDLE) {
+        if(delay_nb_ms(&s_auto_start_invalid_state_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: invalid state=%s", app_fsm_state_str(state));
+        }
         return false;
     }
 
-    s_remote_clear_fault_timer = 0u;
+    if(app_fsm_has_fault()) {
+        if(delay_nb_ms(&s_auto_start_fault_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: fault latched");
+        }
+        return false;
+    }
+
+    if(!pi_comms_is_online()) {
+        if(delay_nb_ms(&s_auto_start_pi_offline_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: Pi offline");
+        }
+        return false;
+    }
+
+    if(!chassis.is_ready()) {
+        if(delay_nb_ms(&s_auto_start_chassis_not_ready_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: chassis not ready");
+        }
+        return false;
+    }
+
+    if(!odom.is_ready()) {
+        if(delay_nb_ms(&s_auto_start_odom_not_ready_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+            log_info("AUTO start rejected: odom not ready");
+        }
+        return false;
+    }
+
+    if(!app_runtime_can_accept_auto_start()) {
+        return false;
+    }
+
+    (void)app_control_stop_all();
+    pi_comms_clear_controls();
+    chassis_yaw_hold_reset();
+    app_runtime_set_auto_start_latched(true);
+    (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI);
+    if(delay_nb_ms(&s_auto_start_accept_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+        log_info("AUTO start event accepted, latched=1");
+    }
     return true;
 }
 
-static void app_runtime_clear_recoverable_fault(void) {
-    if(!app_fsm_clear_fault()) {
-        return;
-    }
+static bool app_runtime_can_accept_auto_start(void) {
+    const AppFsmStateId state = app_fsm_get_state();
 
+    return !s_auto_start_latched &&
+           state == APP_FSM_STATE_IDLE &&
+           !app_fsm_has_fault() &&
+           state != APP_FSM_STATE_ESTOP &&
+           pi_comms_is_online() &&
+           chassis.is_ready() &&
+           odom.is_ready();
+}
+
+static void app_runtime_set_auto_start_latched(bool latched) {
+    s_auto_start_latched = latched;
+}
+
+static void app_runtime_handle_remote_clear_reset(void) {
+    app_runtime_set_auto_start_latched(false);
+    remote_clear_pending_auto_start_event();
+    app_runtime_reset_auto_task_context();
+    app_runtime_finish_reset_transition();
+    if(delay_nb_ms(&s_remote_reset_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
+        log_info("AUTO task reset by remote gesture, latched=0");
+    }
+}
+
+static void app_runtime_reset_auto_task_context(void) {
     pc_comms_clear_master_joints();
     pi_comms_clear_controls();
     chassis_yaw_hold_reset();
-    s_remote_clear_fault_timer = 0u;
+    (void)app_control_stop_all();
+}
+
+static void app_runtime_finish_reset_transition(void) {
+    const AppFsmStateId state = app_fsm_get_state();
+    const AppFault* fault = app_fsm_get_fault();
+
+    if(state == APP_FSM_STATE_FAULT) {
+        if(fault != NULL && fault->level == APP_FAULT_LEVEL_RECOVERABLE && app_fsm_clear_fault()) {
+            app_fsm_process();
+        }
+        return;
+    }
+
+    if(state == APP_FSM_STATE_AUTO_PI || state == APP_FSM_STATE_FINISHED) {
+        (void)app_fsm_post(APP_FSM_EVENT_STOP);
+        app_fsm_process();
+    }
 }
 
 static void app_runtime_handle_control_result(AppControlResult result) {

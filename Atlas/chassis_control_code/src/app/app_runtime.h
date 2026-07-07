@@ -48,4 +48,10 @@ const AppFault* app_runtime_get_fault(void);
  */
 bool app_runtime_has_fault(void);
 
+/**
+ * @brief 判断当前是否锁存了自动启动事件
+ * @return bool `true` 表示锁存了自动启动事件
+ */
+bool app_runtime_is_auto_start_latched(void);
+
 #endif

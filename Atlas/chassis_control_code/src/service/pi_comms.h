@@ -134,6 +134,7 @@ typedef struct {
     uint8_t fault_source;
     uint8_t fault_level;
     int16_t fault_code;
+    uint8_t auto_start_latched;
 } PiCommsStatusSnapshot;
 
 /**

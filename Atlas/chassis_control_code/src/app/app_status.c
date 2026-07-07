@@ -229,6 +229,7 @@ static void app_status_send_pi_status_now(void) {
     status.fault_source = fault != NULL ? (uint8_t)fault->source : 0u;
     status.fault_level = fault != NULL ? (uint8_t)fault->level : 0u;
     status.fault_code = fault != NULL ? (int16_t)fault->code : 0;
+    status.auto_start_latched = app_runtime_is_auto_start_latched() ? 1u : 0u;
     (void)pi_comms_send_status(&status);
 }
 
@@ -469,12 +470,13 @@ static void app_status_log(void) {
 
     fault = app_runtime_get_fault();
     log_info("--------------------------------------------------");
-    log_info("Heartbeat state=%s manual=%s remote=%u pc=%u pi=%u fault=%u src=%u level=%u code=%ld",
+    log_info("Heartbeat state=%s manual=%s remote=%u pc=%u pi=%u auto_start=%u fault=%u src=%u level=%u code=%ld",
              app_fsm_state_str(app_runtime_get_state()),
              app_fsm_manual_mode_str(app_runtime_get_manual_mode()),
              remote_is_online(100u) ? 1u : 0u,
              pc_comms_is_online() ? 1u : 0u,
              pi_comms_is_online() ? 1u : 0u,
+             app_runtime_is_auto_start_latched() ? 1u : 0u,
              app_runtime_has_fault() ? 1u : 0u,
              fault != NULL ? (unsigned int)fault->source : 0u,
              fault != NULL ? (unsigned int)fault->level : 0u,
