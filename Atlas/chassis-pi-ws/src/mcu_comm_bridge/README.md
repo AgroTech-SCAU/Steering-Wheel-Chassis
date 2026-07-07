@@ -1,79 +1,106 @@
 # mcu_comm_bridge
 
-`mcu_comm_bridge` 负责在 ROS 2 与 Atlas MCU 二进制协议之间做桥接
+`mcu_comm_bridge` is the ROS 2 Humble bridge between Atlas Pi and the MCU binary protocol.
 
-## 功能
+## What It Does
 
-- 解析 `MCU_IMU / MCU_ODOM / MCU_ARM_STATE / MCU_STATUS`
-- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose`、`/arm/pose_position`
-- 订阅 `/motor_cmd_vel`，以 `50Hz` 连续发送 `PI_CONTROL`
-- 提供刹车、急停、yaw、机械臂目标等 ROS 2 服务
-- 对机械臂目标做本地排队与有限重发
+- Parses `MCU_IMU`, `MCU_ODOM`, `MCU_ARM_STATE`, and `MCU_STATUS`
+- Publishes `/imu`, `/odom`, `/arm/joint_states`, `/arm/pose`, `/arm/pose_position`
+- Publishes latched MCU state on `/mcu/status`
+- Publishes one-shot auto task edges on `/mcu/auto_task_event`
+- Subscribes to `/motor_cmd_vel` and streams `PI_CONTROL` at the configured rate
+- Provides brake, estop, yaw, and arm command services
 
-## PI_CONTROL 发送语义
+## MCU Auto Task Ownership
 
-`PI_CONTROL` 仍固定为 38 字节，bridge 每个控制周期会按需组合发送：
+The MCU is the only owner of:
 
-- 底盘目标
-- 机械臂目标
-- 刹车标志
+- The app state machine
+- Auto task start authority
+- Auto task reset authority
 
-允许的组合：
+The Pi bridge must not add APIs that request `Idle -> AutoPi`, and it must not invent:
 
-- `chassis-only`
-- `arm-only`
-- `chassis + arm`
+- `PI_MODE_REQUEST`
+- `PI_STATE_REQUEST`
+- `/mcu/enter_auto`
+- `/mcu/set_mode`
 
-如果同一时刻两者都没有待发送内容，则不发 `PI_CONTROL`
+The Pi side only:
 
-## 机械臂服务
+1. Receives `MCU_STATUS`
+2. Parses `auto_start_latched`
+3. Detects `START` and `RESET` edges
+4. Clears the previous local auto-task context
+5. Publishes one-shot events for upper layers
+6. Runs automatic control only while MCU is already in `AutoPi`
 
-新增服务：
+## Topics
 
-- `/mcu/set_arm_joints`
-- `/mcu/set_arm_pose`
-- `/mcu/set_arm_position`
-- `/mcu/set_arm_orientation`
+### `/mcu/status`
 
-返回 `success=true` 只表示：
+Message type: `mcu_comm_bridge/msg/McuStatus`
 
-```text
-arm command queued for transmission
-```
+QoS:
 
-不表示 MCU 已接收或已执行成功
+- Reliable
+- KeepLast(1)
+- TransientLocal
 
-### 服务示例
-
-```bash
-ros2 service call /mcu/set_arm_joints mcu_comm_bridge/srv/SetArmJoints \
-  "{joints_rad: [0.0, 0.2, -0.3, 0.1, 0.0], speed_rad_s: 1.5}"
-```
-
-```bash
-ros2 service call /mcu/set_arm_pose mcu_comm_bridge/srv/SetArmPose \
-  "{x_m: 0.35, y_m: 0.00, z_m: 0.22, pitch_rad: 0.30, yaw_rad: 0.00, speed_rad_s: 1.2}"
-```
+Use it to inspect the latest truth state from MCU:
 
 ```bash
-ros2 service call /mcu/set_arm_position mcu_comm_bridge/srv/SetArmPosition \
-  "{x_m: 0.30, y_m: 0.05, z_m: 0.18, speed_rad_s: 1.0}"
+ros2 topic echo /mcu/status \
+  --qos-reliability reliable \
+  --qos-durability transient_local
 ```
+
+### `/mcu/auto_task_event`
+
+Message type: `mcu_comm_bridge/msg/AutoTaskEvent`
+
+QoS:
+
+- Reliable
+- KeepLast(10)
+- Volatile
+
+This topic only publishes edge events:
+
+- `EVENT_START`
+- `EVENT_RESET`
+
+Use it like this:
 
 ```bash
-ros2 service call /mcu/set_arm_orientation mcu_comm_bridge/srv/SetArmOrientation \
-  "{pitch_rad: 0.20, yaw_rad: -0.10, speed_rad_s: 0.8}"
+ros2 topic echo /mcu/auto_task_event
 ```
 
-## 重发策略
+## `auto_start_latched` Semantics
 
-- 参数：`arm_command_repeat_count`
-- 默认值：`3`
-- 同一条机械臂命令的所有重发帧共享同一个 `arm_command_seq`
-- 只有串口写成功后才减少剩余重发次数
-- 新机械臂服务请求会覆盖尚未发完的旧命令
+- `0`: MCU has cleared the previous auto task and allows preparing the next one
+- `1`: MCU has latched an auto task start for the current round
 
-## 主要参数
+Pi-side behavior:
+
+1. `0 -> 1` can produce one `EVENT_START`
+2. `1 -> 0` clears local auto-task context and produces one `EVENT_RESET`
+3. Repeated `0` does not repeat reset
+4. Repeated `1` does not repeat start
+5. `auto_start_latched=1` is not enough by itself; `app_state` must also be `AutoPi`
+
+If MCU reports `auto_start_latched=1` while the app state is not yet `AutoPi`, the bridge keeps the event pending and waits for a later `AutoPi` status frame.
+
+## Upper-Layer Task Manager Contract
+
+Upper layers should consume `/mcu/auto_task_event` as the one-shot trigger.
+
+- On `EVENT_START`: start one navigation or mission run
+- On `EVENT_RESET`: cancel the active task, stop the action client, and clear BT/Nav2/mission context
+
+Upper layers must not repeatedly start tasks only because `app_state == AutoPi`.
+
+## Main Parameters
 
 ```yaml
 mcu_comm_bridge_node:
@@ -84,53 +111,21 @@ mcu_comm_bridge_node:
     control_rate_hz: 50.0
     cmd_vel_timeout_ms: 200
     arm_command_repeat_count: 3
-    arm_joint_state_topic: "/arm/joint_states"
-    arm_pose_topic: "/arm/pose"
-    arm_pose_position_topic: "/arm/pose_position"
-    brake_service: "/mcu/set_brake"
-    arm_joints_service: "/mcu/set_arm_joints"
-    arm_pose_service: "/mcu/set_arm_pose"
-    arm_position_service: "/mcu/set_arm_position"
-    arm_orientation_service: "/mcu/set_arm_orientation"
-    yaw_hold_service: "/mcu/set_yaw_hold"
-    yaw_target_service: "/mcu/set_yaw_target"
-    estop_service: "/mcu/estop"
+    mcu_status_topic: "/mcu/status"
+    auto_task_event_topic: "/mcu/auto_task_event"
 ```
 
-## 构建与测试
+## Build And Test
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon build --packages-select mcu_comm_bridge
-colcon test --packages-select mcu_comm_bridge
+
+colcon build \
+  --packages-select mcu_comm_bridge \
+  --symlink-install
+
+colcon test \
+  --packages-select mcu_comm_bridge
+
 colcon test-result --verbose
 ```
-
-## 说明
-
-- `speed_rad_s == 0` 表示使用 MCU 默认速度
-- 负速度会在服务层直接拒绝
-- `ARM_VALID=0` 的语义是不更新机械臂目标，不是停止
-- 停止机械臂仍通过 `PI_ARM_ACTION_STOP`
-- 机械臂命令只允许在 MCU 的 `AutoPi` 模式中执行
-- `MCU_ARM_STATE` payload 固定为 `48 bytes`，完整帧长为 `58 bytes`
-- `POSE_VALID` 只在位置和四元数都来自同一帧有效 FK 且四元数通过桥接侧校验后才发布 `/arm/pose`
-
-## 机械臂服务故障诊断日志
-
-机械臂服务排队时，bridge 会打印实际请求值，例如：
-
-```text
-arm joints queued: seq=48351 speed=0.500 q=[3.1400,1.5700,6.2600,3.1400,3.1400] repeats=3
-```
-
-请将该日志与 MCU 端的以下两行对照：
-
-```text
-APP_CONTROL pi arm execute: mode=joints seq=48351 ...
-APP_CONTROL pi arm result: mode=joints seq=48351 status=OK
-```
-
-两端数值一致，才能证明 ROS 服务字段、协议编码和 MCU 解码一致。
-
-服务返回 `success=true` 只表示命令已进入 bridge 发送队列，不表示机械臂已经停止运动或到达目标。机械臂可能在服务返回后继续运动数秒。

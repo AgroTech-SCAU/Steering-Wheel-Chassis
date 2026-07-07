@@ -13,24 +13,30 @@ find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/AutoTaskEvent.msg"
+  "msg/McuStatus.msg"
   "srv/Estop.srv"
   "srv/SetArmJoints.srv"
   "srv/SetArmOrientation.srv"
   "srv/SetArmPose.srv"
   "srv/SetArmPosition.srv"
   "srv/SetYawTarget.srv"
+  DEPENDENCIES std_msgs
 )
 
 include_directories(include)
 
 add_library(mcu_comm_bridge_codec
+  src/auto_task_latch_tracker.cpp
   src/binary_frame.cpp
   src/arm_state_codec.cpp
+  src/mcu_status_codec.cpp
 )
 
 target_include_directories(mcu_comm_bridge_codec PUBLIC
@@ -49,6 +55,7 @@ ament_target_dependencies(mcu_comm_bridge_node
   geometry_msgs
   nav_msgs
   sensor_msgs
+  std_msgs
   std_srvs
   tf2_ros
 )
@@ -76,9 +83,14 @@ install(TARGETS mcu_comm_bridge_codec
   DESTINATION lib
 )
 
+install(DIRECTORY include/
+  DESTINATION include
+)
+
 install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
+ament_export_include_directories(include)
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()

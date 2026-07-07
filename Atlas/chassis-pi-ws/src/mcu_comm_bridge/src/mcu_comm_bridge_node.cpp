@@ -1,5 +1,7 @@
 #include "mcu_comm_bridge/arm_state_codec.hpp"
+#include "mcu_comm_bridge/auto_task_latch_tracker.hpp"
 #include "mcu_comm_bridge/binary_frame.hpp"
+#include "mcu_comm_bridge/mcu_status_codec.hpp"
 #include "mcu_comm_bridge/publish_scheduler.hpp"
 #include "mcu_comm_bridge/serial_port.hpp"
 
@@ -31,9 +33,12 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/header.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 
+#include "mcu_comm_bridge/msg/auto_task_event.hpp"
+#include "mcu_comm_bridge/msg/mcu_status.hpp"
 #include "mcu_comm_bridge/srv/estop.hpp"
 #include "mcu_comm_bridge/srv/set_arm_joints.hpp"
 #include "mcu_comm_bridge/srv/set_arm_orientation.hpp"
@@ -104,17 +109,6 @@ struct ArmState {
     int32_t z_mm = 0;
 };
 
-struct McuStatus {
-    uint32_t stamp_ms = 0;
-    uint8_t app_state = 0;
-    uint8_t manual_mode = 0;
-    uint8_t ready_flags = 0;
-    uint8_t online_flags = 0;
-    uint8_t fault_source = 0;
-    uint8_t fault_level = 0;
-    int16_t fault_code = 0;
-};
-
 struct CmdVelCache {
     geometry_msgs::msg::Twist twist;
     SteadyClock::time_point last_update{};
@@ -129,6 +123,16 @@ struct ArmCommandCache {
     uint16_t command_seq = 0u;
     int repeats_remaining = 0;
     bool has_command = false;
+};
+
+struct AutoTaskContext {
+    bool auto_start_triggered = false;
+    bool auto_start_consumed = false;
+    bool mission_active = false;
+    bool mission_done = false;
+    bool mission_failed = false;
+    bool pending_mission_result = false;
+    bool pending_auto_control_resend = false;
 };
 
 template <typename T>
@@ -160,6 +164,7 @@ struct BridgeStats {
     std::atomic<uint64_t> arm_pose_invalid_quaternion{ 0 };
     std::atomic<uint64_t> arm_state_bad_length{ 0 };
     std::atomic<uint64_t> status_rx_valid{ 0 };
+    std::atomic<uint64_t> status_auto_start_invalid{ 0 };
     std::atomic<uint64_t> imu_rx_crc_rejected{ 0 };
     std::atomic<uint64_t> odom_rx_crc_rejected{ 0 };
     std::atomic<uint64_t> arm_rx_crc_rejected{ 0 };
@@ -207,6 +212,7 @@ struct BridgeStatsSnapshot {
     uint64_t arm_pose_invalid_quaternion = 0;
     uint64_t arm_state_bad_length = 0;
     uint64_t status_rx_valid = 0;
+    uint64_t status_auto_start_invalid = 0;
     uint64_t imu_rx_crc_rejected = 0;
     uint64_t odom_rx_crc_rejected = 0;
     uint64_t arm_rx_crc_rejected = 0;
@@ -339,6 +345,23 @@ rclcpp::Time strictly_increasing_stamp(
     return rclcpp::Time(last_published.nanoseconds() + 1, candidate.get_clock_type());
 }
 
+const char* app_state_name(uint8_t app_state) {
+    switch(app_state) {
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_IDLE:
+            return "Idle";
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_MANUAL:
+            return "Manual";
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_AUTO_PI:
+            return "AutoPi";
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_FAULT:
+            return "Fault";
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_ESTOP:
+            return "Estop";
+        default:
+            return "Unknown";
+    }
+}
+
 }  // namespace
 
 class McuCommBridgeNode : public rclcpp::Node {
@@ -431,6 +454,8 @@ private:
         arm_joint_state_topic_ = declare_parameter<std::string>("arm_joint_state_topic", "/arm/joint_states");
         arm_pose_topic_ = declare_parameter<std::string>("arm_pose_topic", "/arm/pose");
         arm_pose_position_topic_ = declare_parameter<std::string>("arm_pose_position_topic", "/arm/pose_position");
+        mcu_status_topic_ = declare_parameter<std::string>("mcu_status_topic", "/mcu/status");
+        auto_task_event_topic_ = declare_parameter<std::string>("auto_task_event_topic", "/mcu/auto_task_event");
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
@@ -485,6 +510,12 @@ private:
         arm_joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>(arm_joint_state_topic_, rclcpp::QoS(20));
         arm_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(arm_pose_topic_, rclcpp::QoS(20));
         arm_pose_position_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(arm_pose_position_topic_, rclcpp::QoS(20));
+        mcu_status_pub_ = create_publisher<::mcu_comm_bridge::msg::McuStatus>(
+            mcu_status_topic_,
+            rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
+        auto_task_event_pub_ = create_publisher<::mcu_comm_bridge::msg::AutoTaskEvent>(
+            auto_task_event_topic_,
+            rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile());
 
         if(publish_tf_) {
             tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -784,22 +815,164 @@ private:
         }
     }
 
-    void handle_status(const Frame& frame) {
-        McuStatus status;
-        status.stamp_ms = read_u32_le(frame.payload, 0);
-        status.app_state = frame.payload[4];
-        status.manual_mode = frame.payload[5];
-        status.ready_flags = frame.payload[6];
-        status.online_flags = frame.payload[7];
-        status.fault_source = frame.payload[8];
-        status.fault_level = frame.payload[9];
-        status.fault_code = read_i16_le(frame.payload, 10);
+    ::mcu_comm_bridge::msg::McuStatus make_status_msg(
+        const DecodedMcuStatus& status,
+        const rclcpp::Time& stamp) const {
+        ::mcu_comm_bridge::msg::McuStatus msg;
+        msg.header.stamp = stamp;
+        msg.mcu_stamp_ms = status.stamp_ms;
+        msg.app_state = status.app_state;
+        msg.manual_mode = status.manual_mode;
+        msg.ready_flags = status.ready_flags;
+        msg.online_flags = status.online_flags;
+        msg.fault_source = status.fault_source;
+        msg.fault_level = status.fault_level;
+        msg.fault_code = status.fault_code;
+        msg.auto_start_latched = status.auto_start_latched;
+        return msg;
+    }
+
+    void publish_auto_task_event(uint8_t event, const DecodedMcuStatus& status, const rclcpp::Time& stamp) {
+        ::mcu_comm_bridge::msg::AutoTaskEvent msg;
+        msg.header.stamp = stamp;
+        msg.event = event;
+        msg.mcu_stamp_ms = status.stamp_ms;
+        msg.app_state = status.app_state;
+        msg.auto_start_latched = status.auto_start_latched;
+        auto_task_event_pub_->publish(msg);
+    }
+
+    void log_status_summary(const DecodedMcuStatus& status) {
+        const uint8_t has_fault = (status.online_flags & (1u << 3)) != 0u ? 1u : 0u;
+        RCLCPP_INFO(
+            get_logger(),
+            "MCU status: state=%s manual=%u auto_start=%d fault=%u source=%u level=%u code=%d",
+            app_state_name(status.app_state),
+            status.manual_mode,
+            status.auto_start_latched ? 1 : 0,
+            has_fault,
+            status.fault_source,
+            status.fault_level,
+            status.fault_code);
+    }
+
+    void log_status_changes(const std::optional<DecodedMcuStatus>& previous, const DecodedMcuStatus& current) {
+        if(!previous.has_value()) {
+            log_status_summary(current);
+            return;
+        }
+
+        if(previous->app_state != current.app_state) {
+            RCLCPP_INFO(
+                get_logger(),
+                "MCU state changed: %s -> %s, auto_start=%d",
+                app_state_name(previous->app_state),
+                app_state_name(current.app_state),
+                current.auto_start_latched ? 1 : 0);
+        }
+
+        if(previous->auto_start_latched != current.auto_start_latched) {
+            RCLCPP_INFO(
+                get_logger(),
+                "MCU auto_start_latched changed: %d -> %d",
+                previous->auto_start_latched ? 1 : 0,
+                current.auto_start_latched ? 1 : 0);
+        }
+
+        if(previous->app_state != current.app_state ||
+           previous->manual_mode != current.manual_mode ||
+           previous->fault_source != current.fault_source ||
+           previous->fault_level != current.fault_level ||
+           previous->fault_code != current.fault_code ||
+           previous->auto_start_latched != current.auto_start_latched) {
+            log_status_summary(current);
+        }
+    }
+
+    void reset_auto_task_context(bool request_brake_after_reset) {
+        {
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            cmd_vel_cache_ = CmdVelCache{};
+            arm_command_cache_ = ArmCommandCache{};
+            brake_request_ = false;
+            auto_task_reset_brake_pending_ = request_brake_after_reset;
+        }
 
         {
+            std::lock_guard<std::mutex> lock(auto_task_mutex_);
+            auto_task_context_ = AutoTaskContext{};
+        }
+    }
+
+    void handle_status(const Frame& frame) {
+        const McuStatusDecodeResult decode_result = decode_mcu_status(frame.payload);
+        if(decode_result.status == McuStatusDecodeStatus::InvalidLength) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "MCU_STATUS dropped: expected payload=%u bytes, got=%zu",
+                PAYLOAD_MCU_STATUS_LEN, frame.payload.size());
+            return;
+        }
+
+        const DecodedMcuStatus& status = decode_result.decoded;
+        const rclcpp::Time stamp = now();
+
+        if(decode_result.status == McuStatusDecodeStatus::InvalidAutoStartLatchedValue) {
+            stats_.status_auto_start_invalid++;
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 5000,
+                "MCU_STATUS protocol anomaly: invalid auto_start_latched raw=%u, treating as latched",
+                decode_result.raw_auto_start_latched);
+        }
+
+        std::optional<DecodedMcuStatus> previous_status;
+        {
             std::lock_guard<std::mutex> lock(data_mutex_);
+            if(has_status_) {
+                previous_status = latest_status_;
+            }
             latest_status_ = status;
             has_status_ = true;
         }
+
+        mcu_status_pub_->publish(make_status_msg(status, stamp));
+        log_status_changes(previous_status, status);
+
+        const AutoTaskUpdate tracker_update = auto_task_latch_tracker_.update(status.auto_start_latched, status.app_state);
+        if(tracker_update.first_observation && !status.auto_start_latched) {
+            reset_auto_task_context(false);
+            RCLCPP_INFO(get_logger(), "MCU auto task baseline established with auto_start=0; local task context cleared");
+        }
+
+        if(tracker_update.start_pending) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 5000,
+                "MCU auto task pending: auto_start=1 but state=%s, waiting for state=AutoPi",
+                app_state_name(status.app_state));
+        }
+
+        if(tracker_update.transition == AutoTaskTransition::Start) {
+            {
+                std::lock_guard<std::mutex> lock(auto_task_mutex_);
+                auto_task_context_.auto_start_triggered = true;
+            }
+            publish_auto_task_event(::mcu_comm_bridge::msg::AutoTaskEvent::EVENT_START, status, stamp);
+            RCLCPP_INFO(
+                get_logger(),
+                "MCU auto task START detected: state=%s auto_start=%d",
+                app_state_name(status.app_state),
+                status.auto_start_latched ? 1 : 0);
+        }
+        else if(tracker_update.transition == AutoTaskTransition::Reset) {
+            const bool request_brake = status.app_state != ::mcu_comm_bridge::msg::McuStatus::STATE_IDLE;
+            reset_auto_task_context(request_brake);
+            publish_auto_task_event(::mcu_comm_bridge::msg::AutoTaskEvent::EVENT_RESET, status, stamp);
+            RCLCPP_INFO(
+                get_logger(),
+                "MCU auto task RESET detected: auto_start=%d, local task context cleared",
+                status.auto_start_latched ? 1 : 0);
+        }
+
         stats_.status_rx_valid++;
     }
 
@@ -1185,10 +1358,16 @@ private:
         bool has_chassis = false;
         ArmCommandCache arm_snapshot;
         bool has_arm = false;
+        bool reset_brake_snapshot = false;
 
         {
             std::lock_guard<std::mutex> lock(control_mutex_);
-            if(brake_request_) {
+            if(auto_task_reset_brake_pending_) {
+                reset_brake_snapshot = true;
+                brake = true;
+                has_chassis = true;
+            }
+            else if(brake_request_) {
                 brake = true;
                 has_chassis = true;
             }
@@ -1239,6 +1418,10 @@ private:
                         arm_command_cache_.has_command = false;
                     }
                 }
+            }
+            if(reset_brake_snapshot) {
+                std::lock_guard<std::mutex> lock(control_mutex_);
+                auto_task_reset_brake_pending_ = false;
             }
         }
     }
@@ -1406,6 +1589,7 @@ private:
         snapshot.arm_pose_invalid_quaternion = stats_.arm_pose_invalid_quaternion.load();
         snapshot.arm_state_bad_length = stats_.arm_state_bad_length.load();
         snapshot.status_rx_valid = stats_.status_rx_valid.load();
+        snapshot.status_auto_start_invalid = stats_.status_auto_start_invalid.load();
         snapshot.imu_rx_crc_rejected = stats_.imu_rx_crc_rejected.load();
         snapshot.odom_rx_crc_rejected = stats_.odom_rx_crc_rejected.load();
         snapshot.arm_rx_crc_rejected = stats_.arm_rx_crc_rejected.load();
@@ -1475,11 +1659,12 @@ private:
 
         RCLCPP_INFO(
             get_logger(),
-            "RX valid_hz imu=%.1f odom=%.1f arm=%.1f status=%.1f crc_reject imu=%.1f odom=%.1f arm=%.1f unknown=%.1f",
+            "RX valid_hz imu=%.1f odom=%.1f arm=%.1f status=%.1f status_auto_start_invalid=%.1f crc_reject imu=%.1f odom=%.1f arm=%.1f unknown=%.1f",
             safe_rate(snapshot.imu_rx_valid - last_stats_snapshot_.imu_rx_valid, elapsed_sec),
             safe_rate(snapshot.odom_rx_valid - last_stats_snapshot_.odom_rx_valid, elapsed_sec),
             safe_rate(snapshot.arm_state_valid - last_stats_snapshot_.arm_state_valid, elapsed_sec),
             safe_rate(snapshot.status_rx_valid - last_stats_snapshot_.status_rx_valid, elapsed_sec),
+            safe_rate(snapshot.status_auto_start_invalid - last_stats_snapshot_.status_auto_start_invalid, elapsed_sec),
             safe_rate(snapshot.imu_rx_crc_rejected - last_stats_snapshot_.imu_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.odom_rx_crc_rejected - last_stats_snapshot_.odom_rx_crc_rejected, elapsed_sec),
             safe_rate(snapshot.arm_rx_crc_rejected - last_stats_snapshot_.arm_rx_crc_rejected, elapsed_sec),
@@ -1541,7 +1726,16 @@ private:
             RCLCPP_INFO(get_logger(), "latest odom stamp_ms=%u reset=%u", latest_odom_.sample.stamp_ms, latest_odom_.sample.reset_counter);
         }
         if(has_status_) {
-            RCLCPP_INFO(get_logger(), "latest status stamp_ms=%u fault=%d", latest_status_.stamp_ms, latest_status_.fault_code);
+            RCLCPP_INFO(
+                get_logger(),
+                "latest status stamp_ms=%u state=%s manual=%u auto_start=%d source=%u level=%u code=%d",
+                latest_status_.stamp_ms,
+                app_state_name(latest_status_.app_state),
+                latest_status_.manual_mode,
+                latest_status_.auto_start_latched ? 1 : 0,
+                latest_status_.fault_source,
+                latest_status_.fault_level,
+                latest_status_.fault_code);
         }
 
         RCLCPP_INFO(get_logger(), "--------------------------------------------------");
@@ -1575,6 +1769,8 @@ private:
     std::string arm_joint_state_topic_ = "/arm/joint_states";
     std::string arm_pose_topic_ = "/arm/pose";
     std::string arm_pose_position_topic_ = "/arm/pose_position";
+    std::string mcu_status_topic_ = "/mcu/status";
+    std::string auto_task_event_topic_ = "/mcu/auto_task_event";
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
     std::string estop_service_ = "/mcu/estop";
@@ -1621,20 +1817,28 @@ private:
 
     LatestValidCache<ImuSample> latest_imu_;
     LatestValidCache<OdomState> latest_odom_;
-    McuStatus latest_status_{};
+    DecodedMcuStatus latest_status_{};
     bool has_status_ = false;
 
     std::mutex control_mutex_;
+    std::mutex auto_task_mutex_;
     CmdVelCache cmd_vel_cache_;
     bool brake_request_ = false;
+    bool auto_task_reset_brake_pending_ = false;
     ArmCommandCache arm_command_cache_;
     uint16_t next_arm_command_seq_ = 0u;
+    AutoTaskContext auto_task_context_{};
+    AutoTaskLatchTracker auto_task_latch_tracker_{
+        static_cast<uint8_t>(::mcu_comm_bridge::msg::McuStatus::STATE_AUTO_PI)
+    };
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr arm_joint_state_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr arm_pose_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_pose_position_pub_;
+    rclcpp::Publisher<::mcu_comm_bridge::msg::McuStatus>::SharedPtr mcu_status_pub_;
+    rclcpp::Publisher<::mcu_comm_bridge::msg::AutoTaskEvent>::SharedPtr auto_task_event_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmJoints>::SharedPtr arm_joints_srv_;

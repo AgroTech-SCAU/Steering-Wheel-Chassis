@@ -20,6 +20,8 @@ mcu_comm_bridge_node:
     arm_joint_state_topic: "/arm/joint_states"
     arm_pose_topic: "/arm/pose"
     arm_pose_position_topic: "/arm/pose_position"
+    mcu_status_topic: "/mcu/status"
+    auto_task_event_topic: "/mcu/auto_task_event"
 
     odom_frame_id: "odom"
     base_frame_id: "base_footprint"
