@@ -1,6 +1,6 @@
 handeye_calibration_tool:
   ros__parameters:
-    # UVC camera. camera_backend can be "v4l2" or "any".
+    # UVC 相机参数。camera_backend 可选 "v4l2" 或 "any"。
     camera_index: 0
     camera_backend: "v4l2"
     camera_width: 1280
@@ -9,22 +9,22 @@ handeye_calibration_tool:
     camera_fourcc: "MJPG"
     camera_window_name: "Hand-Eye Calibration Camera"
 
-    # Camera intrinsics. It can be a ROS camera_info YAML or an OpenCV YAML.
+    # 相机内参文件，可以是 ROS camera_info YAML，也可以是 OpenCV YAML。
     intrinsics_file: ""
 
-    # Calibration board type:
-    #   chessboard = plain black/white checkerboard without ArUco markers
-    #   charuco    = checkerboard containing ArUco markers
+    # 标定板类型：
+    #   chessboard = 不带 ArUco 编码的普通黑白棋盘格
+    #   charuco    = 带 ArUco 编码的 ChArUco 标定板
     board_type: "chessboard"
 
-    # Plain chessboard. These are INNER corner counts, not square counts.
-    # Example: 10 x 7 black/white squares => 9 x 6 inner corners.
+    # 普通棋盘格参数。这里填写的是“内角点数量”，不是方格数量。
+    # 例如 10 x 7 个黑白方格，对应 9 x 6 个内角点。
     chessboard_inner_corners_x: 9
     chessboard_inner_corners_y: 6
     chessboard_square_length_m: 0.025
     chessboard_use_sb: true
 
-    # ChArUco board: squares_x/squares_y are the number of complete squares.
+    # ChArUco 标定板参数：squares_x/squares_y 表示完整方格数量。
     charuco_dictionary: "DICT_4X4_50"
     charuco_squares_x: 7
     charuco_squares_y: 5
@@ -33,25 +33,25 @@ handeye_calibration_tool:
     min_charuco_corners: 8
     max_reprojection_error_px: 1.5
 
-    # eye_in_hand: camera fixed on the end effector, board fixed in the world.
-    # eye_to_hand: camera fixed outside, board fixed on the end effector.
+    # eye_in_hand：相机固定在末端，标定板固定在外部环境中。
+    # eye_to_hand：相机固定在外部环境中，标定板固定在机械臂末端。
     handeye_mode: "eye_in_hand"
     base_frame: "arm_base_link"
     gripper_frame: "tool0"
     camera_frame: "camera_optical_frame"
     target_frame: "handeye_target"
 
-    # auto: prefer /arm/pose, otherwise use joint_fk.
-    # pose_topic: only use geometry_msgs/PoseStamped.
-    # joint_fk: combine /arm/fk_position and /arm/joint_states.
+    # auto：优先使用 /arm/pose，不可用时回退到 joint_fk。
+    # pose_topic：只使用 geometry_msgs/PoseStamped。
+    # joint_fk：组合 /arm/pose_position 与 /arm/joint_states。
     arm_pose_source: "auto"
     arm_pose_topic: "/arm/pose"
     arm_joint_state_topic: "/arm/joint_states"
-    arm_fk_position_topic: "/arm/fk_position"
+    arm_fk_position_topic: "/arm/pose_position"
 
-    # joint_fk orientation mapping:
-    # [roll row (5), pitch row (5), yaw row (5)] * [q0..q4] + rpy_offset.
-    # The default matches a 5-DoF arm with q0 yaw and q1..q4 parallel pitch axes.
+    # joint_fk 姿态恢复系数：
+    # [roll 行(5), pitch 行(5), yaw 行(5)] * [q0..q4] + rpy_offset。
+    # 默认系数适配 5 自由度机械臂：q0 对应 yaw，q1..q4 为并联 pitch 轴。
     orientation_rpy_joint_coeffs: [
       0.0, 0.0, 0.0, 0.0, 0.0,
       0.0, 1.0, 1.0, 1.0, 1.0,

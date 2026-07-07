@@ -37,6 +37,7 @@ mcu_comm_bridge_node:
     arm_orientation_service: "/mcu/set_arm_orientation"
     yaw_hold_service: "/mcu/set_yaw_hold"
     yaw_target_service: "/mcu/set_yaw_target"
+    mission_result_service: "/mcu/report_mission_result"
     estop_service: "/mcu/estop"
 
     control_rate_hz: 50.0
@@ -46,6 +47,7 @@ mcu_comm_bridge_node:
     max_vy_m_s: 1.5
     max_wz_rad_s: 1.0
     arm_command_repeat_count: 3
+    mission_event_repeat_count: 3
     repeat_estop_count: 3
 
     heartbeat_rate_hz: 1.0

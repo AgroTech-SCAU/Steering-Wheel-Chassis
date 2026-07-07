@@ -5,6 +5,7 @@ uint8 STATE_MANUAL=1
 uint8 STATE_AUTO_PI=2
 uint8 STATE_FAULT=3
 uint8 STATE_ESTOP=4
+uint8 STATE_FINISHED=5
 
 uint32 mcu_stamp_ms
 uint8 app_state

@@ -21,7 +21,7 @@ ROS2 导航 / competition_fsm / 上层任务
 `chassis-pi-ws` 位于 Pi 端，主要承担三类工作：
 
 1. **MCU 数据上行**：解析 `MCU_STATUS`、`MCU_IMU`、`MCU_ODOM`、`MCU_ARM_STATE` 等帧，并发布 ROS2 话题
-2. **Pi 控制下行**：把 `/motor_cmd_vel`、yaw 控制、刹车、急停等指令打包为 `PI_CONTROL`、`PI_YAW_ACTION`、`PI_ESTOP`
+2. **Pi 控制下行**：把 `/motor_cmd_vel`、yaw 控制、刹车、急停等指令打包为 `PI_CONTROL`、`PI_YAW_ACTION`、`PI_ESTOP`、`PI_MISSION_EVENT`
 3. **通信维护**：发送 `PI_HEARTBEAT`，对 `MCU_START_SENSOR_EVENT` 自动回复 `PI_ACK`，统计协议错误和通信状态
 
 ---
@@ -51,6 +51,7 @@ chassis-pi-ws/
         mcu_comm_bridge_node.cpp
       srv/
         Estop.srv
+        ReportMissionResult.srv
         SetArmJoints.srv
         SetArmOrientation.srv
         SetArmPose.srv
@@ -74,7 +75,7 @@ MCU 通过统一二进制协议向 Pi 周期发送状态和传感器数据
 | `MCU_FAULT_EVENT` | `0x24` | 事件触发 | 故障事件预留 |
 | `MCU_IMU` | `0x25` | 100Hz | 发布 `/imu` |
 | `MCU_ODOM` | `0x26` | 50Hz | 发布 `/odom` 和可选 TF |
-| `MCU_ARM_STATE` | `0x27` | 50Hz | 发布 `/arm/joint_states` 和 `/arm/fk_position` |
+| `MCU_ARM_STATE` | `0x27` | 50Hz | 发布 `/arm/joint_states` 和 `/arm/pose_position` |
 
 ---
 
@@ -85,7 +86,7 @@ MCU 通过统一二进制协议向 Pi 周期发送状态和传感器数据
 | `/odom` | `nav_msgs/msg/Odometry` | `MCU_ODOM(0x26)` | 底盘局部里程计 |
 | `/imu` | `sensor_msgs/msg/Imu` | `MCU_IMU(0x25)` | IMU 姿态、角速度、线加速度 |
 | `/arm/joint_states` | `sensor_msgs/msg/JointState` | `MCU_ARM_STATE(0x27)` | 机械臂 q0~q4 当前关节角，单位 rad |
-| `/arm/fk_position` | `geometry_msgs/msg/PointStamped` | `MCU_ARM_STATE(0x27)` | 当前关节角正解得到的末端 xyz，单位 m |
+| `/arm/pose_position` | `geometry_msgs/msg/PointStamped` | `MCU_ARM_STATE(0x27)` | 当前关节角正解得到的末端 xyz，单位 m |
 | `odom -> base_footprint` | TF | `MCU_ODOM(0x26)` | 当 `publish_tf=true` 时发布 |
 
 ### 4.1 `/odom`
@@ -127,9 +128,9 @@ joint_4
 
 当 `MCU_ARM_STATE.status_flags` 中 `joint_valid` 为有效时才发布
 
-### 4.4 `/arm/fk_position`
+### 4.4 `/arm/pose_position`
 
-`/arm/fk_position` 来自 `MCU_ARM_STATE`，表示 MCU 根据当前关节角正运动学计算得到的末端位置
+`/arm/pose_position` 来自 `MCU_ARM_STATE`，表示 MCU 根据当前关节角正运动学计算得到的末端位置
 
 默认坐标系：
 
@@ -176,14 +177,18 @@ MCU
 | `/mcu/set_arm_orientation` | `mcu_comm_bridge/srv/SetArmOrientation` | `PI_CONTROL(0x31)` | 保持当前位置，设置 `pitch/yaw` |
 | `/mcu/set_yaw_hold` | `std_srvs/srv/SetBool` | `PI_YAW_ACTION(0x41)` | 开启或关闭 MCU 侧 yaw hold |
 | `/mcu/set_yaw_target` | `mcu_comm_bridge/srv/SetYawTarget` | `PI_YAW_ACTION(0x41)` | 设置目标 yaw，单位 rad |
+| `/mcu/report_mission_result` | `mcu_comm_bridge/srv/ReportMissionResult` | `PI_MISSION_EVENT(0x42)` | 统一上报任务完成或失败 |
 | `/mcu/estop` | `mcu_comm_bridge/srv/Estop` | `PI_ESTOP(0x43)` | 发送急停事件 |
 
 机械臂服务只在 MCU 处于 `AutoPi` 模式时允许执行；四个机械臂服务会把目标放入 bridge 本地待发送缓存，默认使用同一个 `arm_command_seq` 重发 3 次；MCU 对同一个序号只消费一次
+
+任务结果上报服务当前也只在 MCU 处于 `AutoPi`、`auto_start_latched=true`、且本地任务处于激活状态时允许调用；bridge 默认按 `mission_event_repeat_count=3` 连续发送 `PI_MISSION_EVENT`，用于降低无 ACK 场景下的一次性事件丢失概率
 
 服务返回 `success=true` 的含义需要区分：
 
 - 机械臂服务：命令已经进入 bridge 本地发送队列；不表示 MCU 已收到、IK 已成功或机械臂已到位；
 - yaw、急停服务：至少一帧已经成功写入 Pi 串口；不表示 MCU 已完成动作；
+- 任务结果服务：至少一帧 `PI_MISSION_EVENT` 已成功写入 Pi 串口；不表示 MCU 已解析、接受或已切换到 `Finished/Fault`；
 - 解除刹车：只解除 bridge 的刹车锁存，不会主动让底盘运动，后续仍需新的 `/motor_cmd_vel`
 
 `/mcu_comm_bridge_node/get_parameters` 等服务是 ROS 2 节点自动提供的参数管理接口，不是底盘或机械臂业务控制接口
@@ -221,7 +226,7 @@ map -> odom -> base_footprint -> base_link -> laser_link
 1. `odom -> base_footprint` 由 `mcu_comm_bridge` 根据 `MCU_ODOM` 发布
 2. `base_footprint -> base_link` 由机器人模型或 `robot_state_publisher` 发布
 3. `base_link -> laser_link` 由机器人模型或静态 TF 发布
-4. `/arm/fk_position` 默认使用 `arm_base_link`，可通过 `arm_frame_id` 参数修改
+4. `/arm/pose_position` 默认使用 `arm_base_link`，可通过 `arm_frame_id` 参数修改
 
 ---
 
@@ -336,7 +341,7 @@ mcu_comm_bridge_node:
     imu_topic: "/imu"
     cmd_vel_topic: "/motor_cmd_vel"
     arm_joint_state_topic: "/arm/joint_states"
-    arm_fk_topic: "/arm/fk_position"
+    arm_pose_position_topic: "/arm/pose_position"
 
     odom_frame_id: "odom"
     base_frame_id: "base_footprint"
@@ -353,6 +358,11 @@ mcu_comm_bridge_node:
     max_vx_m_s: 1.5
     max_vy_m_s: 1.5
     max_wz_rad_s: 1.0
+
+    yaw_target_service: "/mcu/set_yaw_target"
+    mission_result_service: "/mcu/report_mission_result"
+    estop_service: "/mcu/estop"
+    mission_event_repeat_count: 3
 ```
 
 ---
@@ -400,7 +410,7 @@ ros2 topic list
 ros2 topic hz /imu
 ros2 topic hz /odom
 ros2 topic hz /arm/joint_states
-ros2 topic hz /arm/fk_position
+ros2 topic hz /arm/pose_position
 ```
 
 期望频率：
@@ -410,7 +420,7 @@ ros2 topic hz /arm/fk_position
 | `/imu` | 约 100Hz |
 | `/odom` | 约 50Hz |
 | `/arm/joint_states` | 约 50Hz |
-| `/arm/fk_position` | 约 50Hz |
+| `/arm/pose_position` | 约 50Hz |
 
 查看内容：
 
@@ -418,7 +428,7 @@ ros2 topic hz /arm/fk_position
 ros2 topic echo /odom
 ros2 topic echo /imu
 ros2 topic echo /arm/joint_states
-ros2 topic echo /arm/fk_position
+ros2 topic echo /arm/pose_position
 ```
 
 ### 14.3 TF
@@ -438,11 +448,11 @@ ros2 run tf2_tools view_frames
 ```text
 serial opened: /dev/ttyUSB0 @ 1000000
 mcu_comm_bridge started: port=/dev/ttyUSB0 baudrate=1000000 odom_topic=/odom imu_topic=/imu cmd_vel_topic=/motor_cmd_vel
-stats: imu=... odom=... arm=... status=... start_evt=... ack_rx=... fault=... unknown=... bad_len=... tx_hb=... tx_ack=... tx_ctrl=... tx_yaw=... tx_estop=... tx_fail=... parser_frames=... crc_err=... len_err=... ver_err=...
+stats: imu=... odom=... arm=... status=... start_evt=... ack_rx=... fault=... unknown=... bad_len=... tx_hb=... tx_ack=... tx_ctrl=... tx_yaw=... tx_mission=... mission_accept=... mission_reject=... tx_estop=... tx_fail=... parser_frames=... crc_err=... len_err=... ver_err=...
 latest imu: stamp=... acc=[...]m/s2 gyro=[...]rad/s rpy=[...]rad flags=0x.... seq=...
 latest odom: stamp=... pose=[...] vel=[...] flags=0x.... reset=...
 latest arm: stamp=... q=[...] xyz=[...] flags=0x.... seq=...
-latest status: stamp=... app=... manual=... ready=0x.. online=0x.. fault_src=... fault_level=... fault_code=...
+latest status: stamp=... app=Finished manual=... ready=0x.. online=0x.. fault_src=... fault_level=... fault_code=...
 ```
 
 #### 启动配置日志
@@ -474,6 +484,9 @@ latest status: stamp=... app=... manual=... ready=0x.. online=0x.. fault_src=...
 | `tx_ack` | Pi 已发送的 `PI_ACK(0x44)` 数量 | 收到 `start_evt` 但不增长：`auto_ack_start_sensor_event` 可能关闭或事件未带 `NEED_ACK` |
 | `tx_ctrl` | Pi 已发送的 `PI_CONTROL(0x31)` 数量 | 发布 `/motor_cmd_vel` 后不增长：控制话题未收到、超时或节点未订阅正确话题 |
 | `tx_yaw` | Pi 已发送的 `PI_YAW_ACTION(0x41)` 数量 | 调 yaw 服务后不增长：服务未调用成功或串口写失败 |
+| `tx_mission` | Pi 已成功写入串口的 `PI_MISSION_EVENT(0x42)` 帧数 | 调任务结果服务后不增长：状态不满足、参数非法或串口写失败 |
+| `mission_accept` | 任务结果服务成功调用次数 | 调任务结果服务后应按成功次数增长 |
+| `mission_reject` | 任务结果服务失败次数 | 状态不满足、参数非法或发送失败时增长 |
 | `tx_estop` | Pi 已发送的 `PI_ESTOP(0x43)` 数量 | 调急停服务后应增长，默认会重复发送 `repeat_estop_count` 次 |
 | `tx_fail` | 串口写失败次数 | 非 0：检查串口断开、权限、线缆和 MCU 复位 |
 | `parser_frames` | 二进制解析器成功解析出的完整帧数 | 有串口字节但不增长：帧头、LEN、CRC 或版本不匹配 |
@@ -540,7 +553,7 @@ latest status: stamp=... app=... manual=... ready=0x.. online=0x.. fault_src=...
 |---:|---|---|---|
 | bit0 | `arm_ready` | 机械臂服务已初始化 | 仅用于诊断 |
 | bit1 | `joint_valid` | q0~q4 有效 | 为 1 才发布 `/arm/joint_states` |
-| bit2 | `fk_valid` | xyz 正解结果有效 | 为 1 才发布 `/arm/fk_position` |
+| bit2 | `fk_valid` | xyz 正解结果有效 | 为 1 才发布 `/arm/pose_position` |
 
 #### `latest status:` 字段
 
@@ -863,7 +876,34 @@ ros2 service call /mcu/set_yaw_target \
 
 是否需要先开启 yaw hold，以 MCU 端控制逻辑为准
 
-### 16.9 急停
+### 16.9 任务结果上报
+
+任务完成：
+
+```bash
+ros2 service call /mcu/report_mission_result \
+  mcu_comm_bridge/srv/ReportMissionResult \
+  "{result: 1, code: 0}"
+```
+
+任务失败：
+
+```bash
+ros2 service call /mcu/report_mission_result \
+  mcu_comm_bridge/srv/ReportMissionResult \
+  "{result: 2, code: -123}"
+```
+
+需要注意：
+
+1. `result=1` 表示 `DONE`
+2. `result=2` 表示 `FAIL`
+3. `DONE` 实际发送为 `event=1, code=0`
+4. `FAIL` 实际发送为 `event=2, code=request.code`
+5. `success=true` 只表示至少一帧已写入 Pi 串口
+6. 最终 MCU 是否进入 `Finished` 或 `Fault`，需要通过 `/mcu/status` 确认
+
+### 16.10 急停
 
 发送急停，`reason` 是 `uint8` 原因码：
 
@@ -875,7 +915,7 @@ ros2 service call /mcu/estop \
 
 节点默认按 `repeat_estop_count=3` 连续写入 3 帧急停消息；急停是锁存安全状态，不能通过 `/mcu/set_brake false` 解除；恢复方式由 MCU 的故障/急停状态机决定
 
-### 16.10 检查服务定义和调用结果
+### 16.11 检查服务定义和调用结果
 
 查看任意服务的类型：
 
@@ -890,6 +930,7 @@ ros2 interface show mcu_comm_bridge/srv/SetArmPose
 ros2 interface show mcu_comm_bridge/srv/SetArmPosition
 ros2 interface show mcu_comm_bridge/srv/SetArmOrientation
 ros2 interface show mcu_comm_bridge/srv/SetYawTarget
+ros2 interface show mcu_comm_bridge/srv/ReportMissionResult
 ros2 interface show mcu_comm_bridge/srv/Estop
 ros2 interface show std_srvs/srv/SetBool
 ```
@@ -898,7 +939,7 @@ ros2 interface show std_srvs/srv/SetBool
 
 ```bash
 ros2 topic echo /arm/joint_states
-ros2 topic echo /arm/fk_position
+ros2 topic echo /arm/pose_position
 ```
 
 同时观察节点日志中的：
@@ -910,6 +951,9 @@ TX arm_retry
 arm_accept
 arm_reject
 tx_yaw
+tx_mission
+mission_accept
+mission_reject
 tx_estop
 tx_fail
 ```
@@ -928,11 +972,11 @@ tx_fail
 
 1. 检查 `/dev/mcu_uart` 是否存在
 2. 启动 `mcu_comm_bridge`
-3. 检查 `/imu`、`/odom`、`/arm/joint_states`、`/arm/fk_position`
+3. 检查 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose_position`
 4. 检查 `odom -> base_footprint` TF
 5. 发布 `/motor_cmd_vel` 验证 `PI_CONTROL`
 6. 切换到 `AutoPi` 后，依次测试 `/mcu/set_arm_joints`、`/mcu/set_arm_position`、`/mcu/set_arm_pose`、`/mcu/set_arm_orientation`
-7. 调用 `/mcu/set_brake`、`/mcu/set_yaw_hold`、`/mcu/set_yaw_target`、`/mcu/estop`
+7. 调用 `/mcu/set_brake`、`/mcu/set_yaw_hold`、`/mcu/set_yaw_target`、`/mcu/report_mission_result`、`/mcu/estop`
 8. 启动 competition_fsm
 9. 启动完整导航系统
 
@@ -991,9 +1035,19 @@ base_frame_id: "base_footprint"
 5. MCU 处于 fault 或 estop
 6. 速度被 Pi 端限幅为 0
 
-### 18.6 `/arm/joint_states` 或 `/arm/fk_position` 没有数据
+### 18.6 `/arm/joint_states` 或 `/arm/pose_position` 没有数据
 
 检查 MCU 是否发送 `MCU_ARM_STATE(0x27)`，并确认 `status_flags` 中对应有效位为 1
+
+### 18.7 `/mcu/report_mission_result` 调用被拒绝
+
+优先检查：
+
+1. 是否已经收到 `/mcu/status`
+2. MCU 当前是否处于 `AutoPi`
+3. `auto_start_latched` 是否为 1
+4. 当前任务是否仍处于激活状态
+5. 是否已经成功上报过本轮 `DONE/FAIL`
 
 ---
 

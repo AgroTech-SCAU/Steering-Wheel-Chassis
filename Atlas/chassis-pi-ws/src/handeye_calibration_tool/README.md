@@ -12,7 +12,8 @@
 - 相机窗口分别显示：图案是否找到、内参是否加载、PnP 位姿是否有效；
 - 即使未加载内参，也会绘制识别到的棋盘格角点，不再统一显示为“视觉无效”；
 - 终端可直接输入 `c` 采样、`q` 退出；
-- 保留 v0.1.1 的 `/dev/tty` 修复，可通过 `ros2 launch` 交互。
+- 保留 v0.1.1 的 `/dev/tty` 修复，可通过 `ros2 launch` 交互；
+- `joint_fk` 模式默认位置话题已与 bridge 统一为 `/arm/pose_position`。
 
 ## 标定板选择
 
@@ -140,6 +141,17 @@ chessboard_inner_corners_x: 9
 chessboard_inner_corners_y: 6
 chessboard_square_length_m: 0.025
 ```
+
+与 `mcu_comm_bridge` 保持一致的默认机械臂位姿相关配置为：
+
+```yaml
+arm_pose_source: "auto"
+arm_pose_topic: "/arm/pose"
+arm_joint_state_topic: "/arm/joint_states"
+arm_fk_position_topic: "/arm/pose_position"
+```
+
+其中保留了参数名 `arm_fk_position_topic` 以兼容已有 YAML 和 launch，只修改默认值，不直接重命名参数。
 
 必须按照你的实物重新测量和配置，不能直接使用默认尺寸。
 

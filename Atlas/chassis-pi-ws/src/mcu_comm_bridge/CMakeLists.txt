@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AutoTaskEvent.msg"
   "msg/McuStatus.msg"
   "srv/Estop.srv"
+  "srv/ReportMissionResult.srv"
   "srv/SetArmJoints.srv"
   "srv/SetArmOrientation.srv"
   "srv/SetArmPose.srv"

@@ -17,7 +17,7 @@ setup(
     zip_safe=True,
     maintainer="Kaede Rei",
     maintainer_email="kaerei@foxmail.com",
-    description="Interactive UVC camera hand-eye calibration tool.",
+    description="UVC 相机与机械臂交互式手眼标定工具。",
     license="MIT",
     entry_points={
         "console_scripts": [

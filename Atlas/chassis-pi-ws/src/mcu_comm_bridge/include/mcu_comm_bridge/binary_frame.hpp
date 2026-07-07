@@ -39,8 +39,12 @@ constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;
 constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 48u;
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;
+constexpr uint16_t PAYLOAD_PI_MISSION_EVENT_LEN = 8u;
 constexpr uint16_t PAYLOAD_PI_ESTOP_LEN = 8u;
 constexpr uint16_t PAYLOAD_PI_ACK_LEN = 4u;
+
+constexpr uint8_t PI_MISSION_EVENT_DONE = 0x01u;
+constexpr uint8_t PI_MISSION_EVENT_FAIL = 0x02u;
 
 constexpr uint16_t ARM_STATE_FLAG_ARM_READY = 0x0001u;
 constexpr uint16_t ARM_STATE_FLAG_JOINT_VALID = 0x0002u;

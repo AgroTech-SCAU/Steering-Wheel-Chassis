@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive hand-eye calibration tool for a UVC camera and a ROS 2 arm."""
+"""用于 UVC 相机与 ROS 2 机械臂的交互式手眼标定工具。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 
 def _configure_qt_font_directory() -> None:
-    """Point OpenCV's bundled Qt at an existing system font directory."""
+    """为 OpenCV 自带的 Qt 指向系统中可用的字体目录。"""
     if os.environ.get("QT_QPA_FONTDIR"):
         return
     candidates = (
@@ -236,17 +236,17 @@ class AppConfig:
     camera_window_name: str = "Hand-Eye Calibration Camera"
     intrinsics_file: str = ""
 
-    # board_type: "chessboard" for a plain black/white board, or "charuco".
+    # board_type: "chessboard" 表示普通黑白棋盘格，"charuco" 表示 ChArUco 标定板。
     board_type: str = "chessboard"
 
-    # Plain chessboard parameters. These are INNER corner counts, not square counts.
-    # Example: a board with 10 x 7 black/white squares has 9 x 6 inner corners.
+    # 普通棋盘格参数。这里填写的是内角点数量，不是方格数量。
+    # 例如 10 x 7 个黑白方格，对应 9 x 6 个内角点。
     chessboard_inner_corners_x: int = 9
     chessboard_inner_corners_y: int = 6
     chessboard_square_length_m: float = 0.025
     chessboard_use_sb: bool = True
 
-    # ChArUco parameters. squares_x/squares_y are the number of squares.
+    # ChArUco 参数。squares_x/squares_y 表示完整方格数量。
     charuco_dictionary: str = "DICT_4X4_50"
     charuco_squares_x: int = 7
     charuco_squares_y: int = 5
@@ -265,7 +265,7 @@ class AppConfig:
     arm_pose_source: str = "auto"
     arm_pose_topic: str = "/arm/pose"
     arm_joint_state_topic: str = "/arm/joint_states"
-    arm_fk_position_topic: str = "/arm/fk_position"
+    arm_fk_position_topic: str = "/arm/pose_position"
     orientation_rpy_joint_coeffs: List[float] = None
     orientation_rpy_offset_rad: List[float] = None
 

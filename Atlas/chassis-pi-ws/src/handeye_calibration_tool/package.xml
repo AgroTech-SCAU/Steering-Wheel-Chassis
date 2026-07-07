@@ -2,7 +2,7 @@
 <package format="3">
   <name>handeye_calibration_tool</name>
   <version>0.1.2</version>
-  <description>Interactive terminal hand-eye calibration tool with chessboard and ChArUco support.</description>
+  <description>支持普通棋盘格与 ChArUco 的终端交互式手眼标定工具。</description>
   <maintainer email="kaerei@foxmail.com">Kaede Rei</maintainer>
   <license>MIT</license>
 

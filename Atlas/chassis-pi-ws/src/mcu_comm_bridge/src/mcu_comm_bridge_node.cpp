@@ -40,6 +40,7 @@
 #include "mcu_comm_bridge/msg/auto_task_event.hpp"
 #include "mcu_comm_bridge/msg/mcu_status.hpp"
 #include "mcu_comm_bridge/srv/estop.hpp"
+#include "mcu_comm_bridge/srv/report_mission_result.hpp"
 #include "mcu_comm_bridge/srv/set_arm_joints.hpp"
 #include "mcu_comm_bridge/srv/set_arm_orientation.hpp"
 #include "mcu_comm_bridge/srv/set_arm_pose.hpp"
@@ -188,9 +189,12 @@ struct BridgeStats {
     std::atomic<uint64_t> tx_arm_command{ 0 };
     std::atomic<uint64_t> tx_arm_command_retry{ 0 };
     std::atomic<uint64_t> tx_yaw_action{ 0 };
+    std::atomic<uint64_t> tx_mission_event{ 0 };
     std::atomic<uint64_t> tx_estop{ 0 };
     std::atomic<uint64_t> arm_service_accepted{ 0 };
     std::atomic<uint64_t> arm_service_rejected{ 0 };
+    std::atomic<uint64_t> mission_result_accepted{ 0 };
+    std::atomic<uint64_t> mission_result_rejected{ 0 };
     std::atomic<uint64_t> tx_fail{ 0 };
 };
 
@@ -233,9 +237,12 @@ struct BridgeStatsSnapshot {
     uint64_t tx_arm_command = 0;
     uint64_t tx_arm_command_retry = 0;
     uint64_t tx_yaw_action = 0;
+    uint64_t tx_mission_event = 0;
     uint64_t tx_estop = 0;
     uint64_t arm_service_accepted = 0;
     uint64_t arm_service_rejected = 0;
+    uint64_t mission_result_accepted = 0;
+    uint64_t mission_result_rejected = 0;
     uint64_t tx_fail = 0;
     ParserStats parser{};
 };
@@ -357,8 +364,21 @@ const char* app_state_name(uint8_t app_state) {
             return "Fault";
         case ::mcu_comm_bridge::msg::McuStatus::STATE_ESTOP:
             return "Estop";
+        case ::mcu_comm_bridge::msg::McuStatus::STATE_FINISHED:
+            return "Finished";
         default:
             return "Unknown";
+    }
+}
+
+const char* mission_result_name(uint8_t result) {
+    switch(result) {
+        case ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_DONE:
+            return "DONE";
+        case ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_FAIL:
+            return "FAIL";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -465,6 +485,7 @@ private:
         arm_orientation_service_ = declare_parameter<std::string>("arm_orientation_service", "/mcu/set_arm_orientation");
         yaw_hold_service_ = declare_parameter<std::string>("yaw_hold_service", "/mcu/set_yaw_hold");
         yaw_target_service_ = declare_parameter<std::string>("yaw_target_service", "/mcu/set_yaw_target");
+        mission_result_service_ = declare_parameter<std::string>("mission_result_service", "/mcu/report_mission_result");
 
         odom_frame_id_ = declare_parameter<std::string>("odom_frame_id", "odom");
         base_frame_id_ = declare_parameter<std::string>("base_frame_id", "base_footprint");
@@ -478,6 +499,7 @@ private:
         max_vy_m_s_ = declare_parameter<double>("max_vy_m_s", 1.5);
         max_wz_rad_s_ = declare_parameter<double>("max_wz_rad_s", 1.0);
         arm_command_repeat_count_ = declare_parameter<int>("arm_command_repeat_count", 3);
+        mission_event_repeat_count_ = read_repeat_count("mission_event_repeat_count", 3, 10);
         repeat_estop_count_ = declare_parameter<int>("repeat_estop_count", 3);
     }
 
@@ -496,6 +518,15 @@ private:
             return value;
         }
         RCLCPP_WARN(get_logger(), "%s must be >= 0, fallback to %d", name, fallback);
+        return fallback;
+    }
+
+    int read_repeat_count(const char* name, int fallback, int max_value) {
+        const int value = declare_parameter<int>(name, fallback);
+        if(value >= 1 && value <= max_value) {
+            return value;
+        }
+        RCLCPP_WARN(get_logger(), "%s must be in [1, %d], fallback to %d", name, max_value, fallback);
         return fallback;
     }
 
@@ -572,6 +603,13 @@ private:
             [this](const std::shared_ptr<::mcu_comm_bridge::srv::SetYawTarget::Request> request,
                     std::shared_ptr<::mcu_comm_bridge::srv::SetYawTarget::Response> response) {
                 handle_set_yaw_target(request, response);
+            });
+
+        mission_result_srv_ = create_service<::mcu_comm_bridge::srv::ReportMissionResult>(
+            mission_result_service_,
+            [this](const std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Request> request,
+                    std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Response> response) {
+                handle_report_mission_result(request, response);
             });
 
         estop_srv_ = create_service<::mcu_comm_bridge::srv::Estop>(
@@ -955,6 +993,11 @@ private:
             {
                 std::lock_guard<std::mutex> lock(auto_task_mutex_);
                 auto_task_context_.auto_start_triggered = true;
+                auto_task_context_.auto_start_consumed = true;
+                auto_task_context_.mission_active = true;
+                auto_task_context_.mission_done = false;
+                auto_task_context_.mission_failed = false;
+                auto_task_context_.pending_mission_result = false;
             }
             publish_auto_task_event(::mcu_comm_bridge::msg::AutoTaskEvent::EVENT_START, status, stamp);
             RCLCPP_INFO(
@@ -1352,6 +1395,146 @@ private:
         response->message = response->success ? "estop sent" : "failed to send estop";
     }
 
+    void handle_report_mission_result(
+        const std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Request> request,
+        std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Response> response) {
+        try {
+            handle_report_mission_result_impl(*request, response);
+        }
+        catch(const std::exception& e) {
+            response->success = false;
+            response->message = "mission result handling failed";
+            response->sent_count = 0u;
+            stats_.mission_result_rejected++;
+            RCLCPP_WARN(get_logger(), "PI mission result handling failed: %s", e.what());
+        }
+    }
+
+    void handle_report_mission_result_impl(
+        const ::mcu_comm_bridge::srv::ReportMissionResult::Request& request,
+        std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Response> response) {
+        uint8_t event = 0u;
+        int16_t code = 0;
+        if(request.result == ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_DONE) {
+            event = PI_MISSION_EVENT_DONE;
+            code = 0;
+        }
+        else if(request.result == ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_FAIL) {
+            event = PI_MISSION_EVENT_FAIL;
+            code = request.code;
+        }
+        else {
+            reject_mission_result(response, "unsupported mission result", "unsupported mission result");
+            return;
+        }
+
+        std::optional<DecodedMcuStatus> status;
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            if(has_status_) {
+                status = latest_status_;
+            }
+        }
+
+        if(!status.has_value()) {
+            reject_mission_result(response, "MCU status is not available", "MCU status is not available");
+            return;
+        }
+        if(status->app_state != ::mcu_comm_bridge::msg::McuStatus::STATE_AUTO_PI) {
+            reject_mission_result(
+                response,
+                "MCU is not in AutoPi",
+                std::string("MCU state=") + app_state_name(status->app_state));
+            return;
+        }
+        if(!status->auto_start_latched) {
+            reject_mission_result(response, "auto task is not latched", "auto task is not latched");
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(auto_task_mutex_);
+            if(!auto_task_context_.mission_active) {
+                if(auto_task_context_.mission_done || auto_task_context_.mission_failed) {
+                    reject_mission_result(response, "mission result already reported", "result already reported");
+                }
+                else {
+                    reject_mission_result(response, "no active mission", "no active mission");
+                }
+                return;
+            }
+            if(auto_task_context_.mission_done || auto_task_context_.mission_failed) {
+                reject_mission_result(response, "mission result already reported", "result already reported");
+                return;
+            }
+            if(auto_task_context_.pending_mission_result) {
+                reject_mission_result(
+                    response,
+                    "mission result report is already in progress",
+                    "mission result report is already in progress");
+                return;
+            }
+            auto_task_context_.pending_mission_result = true;
+        }
+
+        int sent_count = 0;
+        for(int i = 0; i < mission_event_repeat_count_; ++i) {
+            if(send_mission_event(event, code)) {
+                ++sent_count;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(auto_task_mutex_);
+            auto_task_context_.pending_mission_result = false;
+            if(sent_count > 0) {
+                auto_task_context_.mission_active = false;
+                auto_task_context_.mission_done =
+                    request.result == ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_DONE;
+                auto_task_context_.mission_failed =
+                    request.result == ::mcu_comm_bridge::srv::ReportMissionResult::Request::RESULT_FAIL;
+            }
+            else {
+                auto_task_context_.mission_active = true;
+                auto_task_context_.mission_done = false;
+                auto_task_context_.mission_failed = false;
+            }
+        }
+
+        response->success = sent_count > 0;
+        response->message = response->success ? "mission result sent" : "failed to send mission result";
+        response->sent_count = static_cast<uint8_t>(std::clamp(sent_count, 0, 255));
+
+        if(response->success) {
+            stats_.mission_result_accepted++;
+            RCLCPP_INFO(
+                get_logger(),
+                "PI mission result sent: result=%s code=%d sent=%d",
+                mission_result_name(request.result),
+                static_cast<int>(code),
+                sent_count);
+        }
+        else {
+            stats_.mission_result_rejected++;
+            RCLCPP_WARN(
+                get_logger(),
+                "PI mission result rejected: failed to send result=%s code=%d",
+                mission_result_name(request.result),
+                static_cast<int>(code));
+        }
+    }
+
+    void reject_mission_result(
+        std::shared_ptr<::mcu_comm_bridge::srv::ReportMissionResult::Response> response,
+        const std::string& response_message,
+        const std::string& log_reason) {
+        response->success = false;
+        response->message = response_message;
+        response->sent_count = 0u;
+        stats_.mission_result_rejected++;
+        RCLCPP_WARN(get_logger(), "PI mission result rejected: %s", log_reason.c_str());
+    }
+
     void control_timer_callback() {
         geometry_msgs::msg::Twist cmd;
         bool brake = false;
@@ -1487,6 +1670,20 @@ private:
         return false;
     }
 
+    bool send_mission_event(uint8_t event, int16_t code) {
+        std::vector<uint8_t> payload(PAYLOAD_PI_MISSION_EVENT_LEN, 0u);
+        write_u32_le(payload, 0, ros_now_ms_u32());
+        payload[4] = event;
+        payload[5] = 0u;
+        write_i16_le(payload, 6, code);
+
+        if(send_frame(MSG_PI_MISSION_EVENT, 0u, payload)) {
+            stats_.tx_mission_event++;
+            return true;
+        }
+        return false;
+    }
+
     bool send_estop(uint8_t reason) {
         std::vector<uint8_t> payload(PAYLOAD_PI_ESTOP_LEN, 0u);
         write_u32_le(payload, 0, ros_now_ms_u32());
@@ -1610,9 +1807,12 @@ private:
         snapshot.tx_arm_command = stats_.tx_arm_command.load();
         snapshot.tx_arm_command_retry = stats_.tx_arm_command_retry.load();
         snapshot.tx_yaw_action = stats_.tx_yaw_action.load();
+        snapshot.tx_mission_event = stats_.tx_mission_event.load();
         snapshot.tx_estop = stats_.tx_estop.load();
         snapshot.arm_service_accepted = stats_.arm_service_accepted.load();
         snapshot.arm_service_rejected = stats_.arm_service_rejected.load();
+        snapshot.mission_result_accepted = stats_.mission_result_accepted.load();
+        snapshot.mission_result_rejected = stats_.mission_result_rejected.load();
         snapshot.tx_fail = stats_.tx_fail.load();
 
         {
@@ -1698,13 +1898,16 @@ private:
 
         RCLCPP_INFO(
             get_logger(),
-            "TX ctrl=%.1f arm=%.1f arm_retry=%.1f arm_accept=%.1f arm_reject=%.1f yaw=%.1f estop=%.1f fail=%.1f",
+            "TX ctrl=%.1f arm=%.1f arm_retry=%.1f arm_accept=%.1f arm_reject=%.1f yaw=%.1f mission=%.1f mission_accept=%.1f mission_reject=%.1f estop=%.1f fail=%.1f",
             safe_rate(snapshot.tx_control - last_stats_snapshot_.tx_control, elapsed_sec),
             safe_rate(snapshot.tx_arm_command - last_stats_snapshot_.tx_arm_command, elapsed_sec),
             safe_rate(snapshot.tx_arm_command_retry - last_stats_snapshot_.tx_arm_command_retry, elapsed_sec),
             safe_rate(snapshot.arm_service_accepted - last_stats_snapshot_.arm_service_accepted, elapsed_sec),
             safe_rate(snapshot.arm_service_rejected - last_stats_snapshot_.arm_service_rejected, elapsed_sec),
             safe_rate(snapshot.tx_yaw_action - last_stats_snapshot_.tx_yaw_action, elapsed_sec),
+            safe_rate(snapshot.tx_mission_event - last_stats_snapshot_.tx_mission_event, elapsed_sec),
+            safe_rate(snapshot.mission_result_accepted - last_stats_snapshot_.mission_result_accepted, elapsed_sec),
+            safe_rate(snapshot.mission_result_rejected - last_stats_snapshot_.mission_result_rejected, elapsed_sec),
             safe_rate(snapshot.tx_estop - last_stats_snapshot_.tx_estop, elapsed_sec),
             safe_rate(snapshot.tx_fail - last_stats_snapshot_.tx_fail, elapsed_sec));
 
@@ -1780,6 +1983,7 @@ private:
     std::string arm_orientation_service_ = "/mcu/set_arm_orientation";
     std::string yaw_hold_service_ = "/mcu/set_yaw_hold";
     std::string yaw_target_service_ = "/mcu/set_yaw_target";
+    std::string mission_result_service_ = "/mcu/report_mission_result";
     std::string odom_frame_id_ = "odom";
     std::string base_frame_id_ = "base_footprint";
     std::string imu_frame_id_ = "imu_link";
@@ -1792,6 +1996,7 @@ private:
     double max_vy_m_s_ = 1.5;
     double max_wz_rad_s_ = 1.0;
     int arm_command_repeat_count_ = 3;
+    int mission_event_repeat_count_ = 3;
     int repeat_estop_count_ = 3;
 
     SerialPort serial_;
@@ -1847,6 +2052,7 @@ private:
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmOrientation>::SharedPtr arm_orientation_srv_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr yaw_hold_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetYawTarget>::SharedPtr yaw_target_srv_;
+    rclcpp::Service<::mcu_comm_bridge::srv::ReportMissionResult>::SharedPtr mission_result_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::Estop>::SharedPtr estop_srv_;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
