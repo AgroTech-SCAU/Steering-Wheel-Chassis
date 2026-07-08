@@ -23,11 +23,11 @@
  * @param KINEMATICS_FAILED 舵轮运动学求解失败
  * @param NOT_INITIALIZED 底盘尚未初始化
  */
-#define CHASSIS_STATUS_TABLE \
-    X(OK, "OK") \
-    X(INVALID_PARAM, "Invalid Parameter") \
-    X(INVALID_MODEL, "Invalid Model") \
-    X(DEPENDENCY_MISSING, "Chassis Dependency Missing") \
+#define CHASSIS_STATUS_TABLE                              \
+    X(OK, "OK")                                           \
+    X(INVALID_PARAM, "Invalid Parameter")                 \
+    X(INVALID_MODEL, "Invalid Model")                     \
+    X(DEPENDENCY_MISSING, "Chassis Dependency Missing")   \
     X(STEER_PREPARE_FAILED, "Steer Motor Prepare Failed") \
     X(DRIVE_PREPARE_FAILED, "Drive Motor Prepare Failed") \
     X(KINEMATICS_FAILED, "Steer Wheel Kinematics Failed") \
@@ -36,16 +36,16 @@
 /**
  * @brief 四个舵轮模块的固定顺序和总线映射
  *
- * 顺序约定为：
+ * 顺序约定为(name, index, steer_id, drive_id)：
  * - FL: Front Left
  * - FR: Front Right
  * - RR: Rear Right
  * - RL: Rear Left
  */
 #define CHASSIS_MODULE_TABLE \
-    X(FL, 0, 1, 0) \
-    X(FR, 1, 2, 1) \
-    X(RR, 2, 3, 2) \
+    X(FL, 0, 1, 0)           \
+    X(FR, 1, 2, 1)           \
+    X(RR, 2, 3, 2)           \
     X(RL, 3, 4, 3)
 
 /**
@@ -73,7 +73,7 @@ typedef enum {
 #define X(name, index, steer_id, drive_id) CHASSIS_MODULE_##name = (index),
 typedef enum {
     CHASSIS_MODULE_TABLE
-    CHASSIS_MODULE_COUNT = 4
+        CHASSIS_MODULE_COUNT = 4
 } ChassisModule;
 #undef X
 
@@ -100,8 +100,8 @@ typedef struct {
     const BusMotorInterface* drive_motor_interface;
     const BusMotorPortOps* steer_ops;
     const BusMotorPortOps* drive_ops;
-    BusMotorStatus(*prepare_steer_motor)(uint16_t id);
-    BusMotorStatus(*prepare_drive_motor)(uint16_t id);
+    BusMotorStatus (*prepare_steer_motor)(uint16_t id);
+    BusMotorStatus (*prepare_drive_motor)(uint16_t id);
     SteerWheelModel model;
     float wheel_drive_ratio;
     ChassisSteerTargetMode steer_target_mode;
@@ -142,7 +142,7 @@ extern const struct ChassisInterface {
      * @param config 底盘配置
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*init)(const ChassisConfig* config);
+    ChassisErrorCode (*init)(const ChassisConfig* config);
     /**
      * @brief 设置底盘目标速度
      * @param vx 底盘 x 方向目标线速度，单位 m/s
@@ -150,13 +150,13 @@ extern const struct ChassisInterface {
      * @param wz 底盘 z 轴目标角速度，单位 rad/s
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*set_velocity)(float vx, float vy, float wz);
+    ChassisErrorCode (*set_velocity)(float vx, float vy, float wz);
     /**
      * @brief 设置是否启用先转向到位再驱动模式
      * @param enabled true 启用，false 关闭
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*set_steer_then_drive_enabled)(bool enabled);
+    ChassisErrorCode (*set_steer_then_drive_enabled)(bool enabled);
     /**
      * @brief 执行一次底盘控制流程
      *
@@ -164,7 +164,7 @@ extern const struct ChassisInterface {
      *
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*process)(void);
+    ChassisErrorCode (*process)(void);
     /**
      * @brief 停止底盘运动
      *
@@ -172,7 +172,7 @@ extern const struct ChassisInterface {
      *
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*stop)(void);
+    ChassisErrorCode (*stop)(void);
     /**
      * @brief 请求底盘进入驻车刹车状态
      *
@@ -180,7 +180,7 @@ extern const struct ChassisInterface {
      *
      * @return ChassisErrorCode 状态码
      */
-    ChassisErrorCode(*brake)(void);
+    ChassisErrorCode (*brake)(void);
     /**
      * @brief 判断底盘是否已经就绪
      *
