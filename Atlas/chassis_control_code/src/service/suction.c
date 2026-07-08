@@ -42,9 +42,9 @@ void suction_init(void) {
     s_initialized = true;
 }
 
-AppSuctionResult suction_set(bool enable) {
+SuctionResult suction_set(bool enable) {
     if(!s_initialized) {
-        return suction_RESULT_NOT_INITIALIZED;
+        return SUCTION_RESULT_NOT_INITIALIZED;
     }
 
     if(enable) {
@@ -64,7 +64,7 @@ AppSuctionResult suction_set(bool enable) {
         }
     }
 
-    return suction_RESULT_OK;
+    return SUCTION_RESULT_OK;
 }
 
 bool suction_get_state(void) {

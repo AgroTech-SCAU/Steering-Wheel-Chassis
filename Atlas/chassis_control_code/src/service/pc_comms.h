@@ -17,7 +17,7 @@
  * @brief PC 通信服务状态码
  */
 typedef struct {
-    uint32_t(*now_ms)(void);
+    uint32_t (*now_ms)(void);
 } PcCommsPortOps;
 
 typedef enum {
@@ -43,7 +43,7 @@ typedef struct {
 
 typedef struct {
     FiveDofArmJointArray joints;
-    uint8_t end_switch;
+    bool end_set;
     uint32_t stamp_ms;
 } PcCommsMasterJoints;
 
@@ -81,7 +81,7 @@ bool pc_comms_is_online(void);
  */
 bool pc_comms_get_master_joints(FiveDofArmJointArray* joints);
 bool pc_comms_get_master_joints_snapshot(PcCommsMasterJoints* snapshot);
-bool pc_comms_get_master_end_switch(uint8_t* end_switch);
+bool pc_comms_get_master_end_set(bool* end_set);
 
 /**
  * @brief 判断 PC 主臂关节角数据是否新鲜

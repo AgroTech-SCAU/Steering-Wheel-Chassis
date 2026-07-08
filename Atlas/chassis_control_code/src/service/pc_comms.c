@@ -30,7 +30,7 @@ static FrameParser s_pc_comms_frame_parser = { 0 };
 static uint32_t s_pc_comms_last_rx_ms = 0u;
 static PcCommsConfig s_pc_comms_config = { 0 };
 static FiveDofArmJointArray s_pc_comms_master_joints = { 0 };
-static uint8_t s_pc_comms_master_end_switch = 0u;
+static bool s_pc_comms_master_end_set = false;
 static uint32_t s_pc_comms_master_joints_stamp_ms = 0u;
 static bool s_pc_comms_master_joints_valid = false;
 static PcCommsStats s_pc_comms_stats = { 0 };
@@ -64,7 +64,7 @@ PcCommsStatus pc_comms_init(const PcCommsConfig* config) {
 
     memset(&s_pc_comms_master_joints, 0, sizeof(s_pc_comms_master_joints));
     s_pc_comms_master_joints.dof = FIVE_DOF_ARM_DOF;
-    s_pc_comms_master_end_switch = 0u;
+    s_pc_comms_master_end_set = false;
     s_pc_comms_master_joints_valid = false;
     s_pc_comms_master_joints_stamp_ms = 0u;
     s_pc_comms_last_rx_ms = 0u;
@@ -138,17 +138,17 @@ bool pc_comms_get_master_joints_snapshot(PcCommsMasterJoints* snapshot) {
     }
 
     snapshot->joints = s_pc_comms_master_joints;
-    snapshot->end_switch = s_pc_comms_master_end_switch;
+    snapshot->end_set = s_pc_comms_master_end_set;
     snapshot->stamp_ms = s_pc_comms_master_joints_stamp_ms;
     return true;
 }
 
-bool pc_comms_get_master_end_switch(uint8_t* end_switch) {
-    if(end_switch == NULL || !s_pc_comms_master_joints_valid) {
+bool pc_comms_get_master_end_set(bool* end_set) {
+    if(end_set == NULL || !s_pc_comms_master_joints_valid) {
         return false;
     }
 
-    *end_switch = s_pc_comms_master_end_switch;
+    *end_set = s_pc_comms_master_end_set;
     return true;
 }
 
@@ -163,7 +163,7 @@ bool pc_comms_master_joints_is_fresh(uint32_t timeout_ms) {
 void pc_comms_clear_master_joints(void) {
     memset(&s_pc_comms_master_joints, 0, sizeof(s_pc_comms_master_joints));
     s_pc_comms_master_joints.dof = FIVE_DOF_ARM_DOF;
-    s_pc_comms_master_end_switch = 0u;
+    s_pc_comms_master_end_set = false;
     s_pc_comms_master_joints_stamp_ms = 0u;
     s_pc_comms_master_joints_valid = false;
 }
@@ -268,7 +268,7 @@ static void pc_comms_handle_master_joints(const BinaryFrameView* frame) {
     s_pc_comms_master_joints.q[2] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[12]));
     s_pc_comms_master_joints.q[3] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[16]));
     s_pc_comms_master_joints.q[4] = binary_frame_urad_to_rad(binary_frame_read_i32_le(&payload[20]));
-    s_pc_comms_master_end_switch = payload[24] ? 1u : 0u;
+    s_pc_comms_master_end_set = payload[24] ? true : false;
     s_pc_comms_master_joints_valid = true;
     s_pc_comms_master_joints_stamp_ms = now_ms;
     s_pc_comms_last_rx_ms = now_ms;

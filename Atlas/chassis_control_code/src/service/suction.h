@@ -14,10 +14,10 @@
  * @brief 吸盘控制结果
  */
 typedef enum {
-    suction_RESULT_OK = 0,
-    suction_RESULT_INVALID_PARAM,
-    suction_RESULT_NOT_INITIALIZED
-} AppSuctionResult;
+    SUCTION_RESULT_OK = 0,
+    SUCTION_RESULT_INVALID_PARAM,
+    SUCTION_RESULT_NOT_INITIALIZED
+} SuctionResult;
 
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
@@ -29,9 +29,9 @@ void suction_init(void);
 /**
  * @brief 控制吸盘继电器
  * @param enable true-打开吸盘, false-关闭吸盘
- * @return AppSuctionResult 执行结果
+ * @return SuctionResult 执行结果
  */
-AppSuctionResult suction_set(bool enable);
+SuctionResult suction_set(bool enable);
 
 /**
  * @brief 获取吸盘当前状态

@@ -6,6 +6,7 @@
 #include "app_control.h"
 
 #include "arm.h"
+#include "suction.h"
 #include "chassis.h"
 #include "chassis_yaw_hold.h"
 #include "delay.h"
@@ -103,11 +104,12 @@ static AppControlResult app_control_result_from_chassis(ChassisErrorCode status,
 
 /**
  * @brief 将机械臂返回码转换为控制层结果, 并在失败时记录告警
- * @param status 机械臂返回值
+ * @param status 机械臂状态码
+ * @param suction_result 吸盘返回值
  * @param action 当前动作描述
  * @return AppControlResult 转换后的执行结果
  */
-static AppControlResult app_control_result_from_arm(ArmStatus status, const char* action);
+static AppControlResult app_control_result_from_arm(ArmStatus arm_status, SuctionResult suction_result, const char* action);
 
 /**
  * @brief 对浮点值做绝对值限幅
@@ -387,20 +389,26 @@ static AppControlResult app_control_result_from_chassis(ChassisErrorCode status,
     return APP_CONTROL_RESULT_CHASSIS_ERROR;
 }
 
-static AppControlResult app_control_result_from_arm(ArmStatus status, const char* action) {
-    if(status == ARM_OK) {
+static AppControlResult app_control_result_from_arm(ArmStatus arm_status, SuctionResult suction_result, const char* action) {
+    if(arm_status == ARM_OK && suction_result == SUCTION_RESULT_OK) {
         return APP_CONTROL_RESULT_OK;
     }
 
-    if(status == ARM_NO_SOLUTION || status == ARM_OUT_OF_LIMIT || status == ARM_INVALID_PARAM ||
-       status == ARM_KINEMATICS_FAILED) {
+    if(arm_status == ARM_NO_SOLUTION || arm_status == ARM_OUT_OF_LIMIT || arm_status == ARM_INVALID_PARAM ||
+       arm_status == ARM_KINEMATICS_FAILED) {
         if(delay_nb_ms(&s_arm_rejected_log_timer, APP_CONTROL_ARM_REJECTED_LOG_MS)) {
-            log_warn("APP_CONTROL %s rejected: %s", action, arm.status_str(status));
+            log_warn("APP_CONTROL %s rejected: %s", action, arm.status_str(arm_status));
+        }
+        if(suction_result == SUCTION_RESULT_INVALID_PARAM) {
+            log_warn("APP_CONTROL %s rejected: suction invalid param", action);
         }
         return APP_CONTROL_RESULT_REJECTED;
     }
 
-    log_warn("APP_CONTROL %s failed: %s", action, arm.status_str(status));
+    log_warn("APP_CONTROL %s failed: %s", action, arm.status_str(arm_status));
+    if(suction_result == SUCTION_RESULT_NOT_INITIALIZED) {
+        log_warn("APP_CONTROL %s failed: suction not initialized", action);
+    }
     return APP_CONTROL_RESULT_ARM_ERROR;
 }
 
@@ -572,7 +580,7 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
         AppControlResult result = APP_CONTROL_RESULT_SKIPPED;
 
         if(s_last_arm_swc != REMOTE_SW_HIGH) {
-            result = app_control_result_from_arm(arm.move_servo_zero(speed_limit.servo_speed_rad_s),
+            result = app_control_result_from_arm(arm.move_servo_zero(speed_limit.servo_speed_rad_s), suction_set(false),
                                                  "remote arm move_servo_zero");
         }
         s_last_arm_swc = swc;
@@ -602,13 +610,13 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
         target_joints.q[3] = current_joints->q[3] + ch_right_y * 5 * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         target_joints.q[4] = current_joints->q[4] + ch_right_x * 5 * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         s_last_arm_swc = swc;
-        return app_control_result_from_arm(arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s),
+        return app_control_result_from_arm(arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s), suction_set(false),
                                            "remote arm move_joints");
     }
 
     if(ch_left_x != 0.0f) {
         const float target_base_yaw = current_joints->q[0] + ch_left_x * 5 * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        result = app_control_result_from_arm(arm.move_joint(0u, target_base_yaw, speed_limit.servo_speed_rad_s),
+        result = app_control_result_from_arm(arm.move_joint(0u, target_base_yaw, speed_limit.servo_speed_rad_s), suction_set(false),
                                              "remote arm move_joint");
         s_last_arm_swc = swc;
         if(result != APP_CONTROL_RESULT_OK) {
@@ -633,6 +641,7 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
                                                                                           target_y,
                                                                                           target_z,
                                                                                           speed_limit.servo_speed_rad_s),
+                                                                        suction_set(false),
                                                                         "remote arm move_position"));
         }
     }
@@ -642,7 +651,8 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
 }
 
 static AppControlResult app_control_apply_pc_arm(void) {
-    FiveDofArmJointArray joints;
+    // FiveDofArmJointArray joints;
+    PcCommsMasterJoints snapshot;
 
     if(!arm.is_ready()) {
         log_warn("APP_CONTROL pc arm skipped: arm not ready");
@@ -653,18 +663,22 @@ static AppControlResult app_control_apply_pc_arm(void) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    if(!pc_comms_get_master_joints(&joints)) {
+    // if(!pc_comms_get_master_joints(&joints)) {
+    //     return APP_CONTROL_RESULT_SKIPPED;
+    // }
+    if(!pc_comms_get_master_joints_snapshot(&snapshot)) {
         return APP_CONTROL_RESULT_SKIPPED;
     }
 
-    if(!app_control_arm_joints_valid(&joints)) {
+    if(!app_control_arm_joints_valid(&snapshot.joints)) {
         if(delay_nb_ms(&s_command_invalid_log_timer, APP_CONTROL_COMMAND_LOG_MS)) {
             log_warn("APP_CONTROL pc arm rejected: invalid master joints");
         }
         return APP_CONTROL_RESULT_REJECTED;
     }
 
-    return app_control_result_from_arm(arm.move_joints(&joints, app_control_get_arm_default_speed()),
+    return app_control_result_from_arm(arm.move_joints(&snapshot.joints, app_control_get_arm_default_speed()),
+                                       suction_set(snapshot.end_set),
                                        "pc arm move_joints");
 }
 
@@ -758,7 +772,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                 return app_control_stop_arm();
 
             case PI_COMMS_ARM_ACTION_ENABLE:
-                return app_control_result_from_arm(arm.enable(), "pi arm enable");
+                return app_control_result_from_arm(arm.enable(), suction_set(false), "pi arm enable");
 
             case PI_COMMS_ARM_ACTION_SEQUENCE_ID:
                 log_warn("APP_CONTROL pi arm seq unsupported: id=%u", action.sequence_id);
@@ -792,7 +806,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
     switch(cmd.mode) {
         case PI_COMMS_ARM_MODE_JOINTS:
             if(app_control_arm_joints_valid(&cmd.target.joints)) {
-                return app_control_result_from_arm(arm.move_joints(&cmd.target.joints, speed_rad_s), "pi arm move_joints");
+                return app_control_result_from_arm(arm.move_joints(&cmd.target.joints, speed_rad_s), suction_set(false), "pi arm move_joints");
             }
             break;
 
@@ -804,6 +818,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                                                                     cmd.target.pose_5d.pitch,
                                                                     cmd.target.pose_5d.yaw,
                                                                     speed_rad_s),
+                                                   suction_set(false),
                                                    "pi arm move_pose_5d");
             }
             break;
@@ -814,6 +829,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                                                                      cmd.target.position.y,
                                                                      cmd.target.position.z,
                                                                      speed_rad_s),
+                                                   suction_set(false),
                                                    "pi arm move_position");
             }
             break;
@@ -823,6 +839,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                 return app_control_result_from_arm(arm.move_orientation_2d(cmd.target.orientation_2d.pitch,
                                                                            cmd.target.orientation_2d.yaw,
                                                                            speed_rad_s),
+                                                   suction_set(false),
                                                    "pi arm move_orientation_2d");
             }
             break;
