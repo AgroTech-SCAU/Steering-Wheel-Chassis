@@ -113,6 +113,11 @@ static inline void entry_init(void) {
     log_info("BOOT arm ready");
     delay_ms(100u);
 
+    if(assemble_suction() != SYSTEM_STATUS_OK)
+        return;
+    log_info("BOOT suction ready");
+    delay_ms(100u);
+
     if(assemble_remote() != SYSTEM_STATUS_OK)
         return;
     log_info("BOOT remote ready");
