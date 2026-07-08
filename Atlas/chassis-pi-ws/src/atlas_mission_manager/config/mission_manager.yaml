@@ -1,0 +1,26 @@
+atlas_mission_manager:
+  ros__parameters:
+    mcu_status_topic: "/mcu/status"
+    auto_task_event_topic: "/mcu/auto_task_event"
+    mission_result_service: "/mcu/report_mission_result"
+    brake_service: "/mcu/set_brake"
+    cmd_vel_topic: "/motor_cmd_vel"
+    mission_status_topic: "/atlas/mission/status"
+
+    update_rate_hz: 20.0
+    status_publish_rate_hz: 5.0
+    zero_velocity_publish_rate_hz: 10.0
+
+    mcu_status_timeout_s: 0.5
+    start_confirm_timeout_s: 1.0
+    result_service_timeout_s: 1.0
+    result_confirm_timeout_s: 3.0
+    result_retry_interval_s: 0.3
+    result_report_retry_count: 2
+
+    require_arm_ready_in_common_precheck: false
+    report_fail_on_common_precheck_error: false
+
+    dry_run_mode: "hold"
+    dry_run_success_delay_s: 2.0
+    dry_run_fail_code: 1003
