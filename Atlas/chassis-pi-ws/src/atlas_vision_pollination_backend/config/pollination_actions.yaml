@@ -17,48 +17,48 @@ prepare_actions:
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_02_left:
     type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [1.601, 2.132, 5.458, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 02 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_02_right:
     type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [4.680, 2.168, 5.653, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 03 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_03_left:
     type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [1.601, 2.132, 5.458, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 03 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_03_right:
     type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [4.680, 2.168, 5.653, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 04 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_04_left:
     type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [1.601, 2.132, 5.458, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 04 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_04_right:
     type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    joints_rad: [4.680, 2.168, 5.653, 2.359, 3.141]
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 07 的左侧预识别窗口
@@ -66,7 +66,7 @@ prepare_actions:
   pre_detect_nav_07_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 07 的右侧预识别窗口
@@ -74,7 +74,7 @@ prepare_actions:
   pre_detect_nav_07_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 08 的左侧预识别窗口
@@ -82,7 +82,7 @@ prepare_actions:
   pre_detect_nav_08_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 08 的右侧预识别窗口
@@ -90,7 +90,7 @@ prepare_actions:
   pre_detect_nav_08_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 09 的左侧预识别窗口
@@ -98,7 +98,7 @@ prepare_actions:
   pre_detect_nav_09_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 09 的右侧预识别窗口
@@ -106,7 +106,7 @@ prepare_actions:
   pre_detect_nav_09_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 12 的预识别位姿
@@ -114,7 +114,7 @@ prepare_actions:
   pre_detect_nav_12:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 13 的预识别位姿
@@ -122,7 +122,7 @@ prepare_actions:
   pre_detect_nav_13:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
   # 点位 14 的预识别位姿
@@ -130,7 +130,7 @@ prepare_actions:
   pre_detect_nav_14:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 
 arrival_tasks:
@@ -169,7 +169,7 @@ arrival_tasks:
     pollination_tool_point_m: [0.05, -0.015, 0.087]
 
     # 默认动作速度，单位 rad/s
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
 
     # 单个机械臂动作等待到位超时时间，单位 s
     timeout_s: 8.0
@@ -244,7 +244,7 @@ arrival_tasks:
       # q1~q4 使用 B 区原预识别的收臂形态
       # q0 由视觉目标方位动态生成
       folded_joints_except_q0_rad: [1.591, 5.380, 2.172, 3.141]
-      speed_rad_s: 1.0
+      speed_rad_s: 3.14
       timeout_s: 8.0
 
     # 预授粉工具点偏移，单位 m
@@ -256,7 +256,7 @@ arrival_tasks:
     pollination_tool_point_m: [0.05, -0.015, 0.087]
 
     # 默认动作速度，单位 rad/s
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
 
     # 单个机械臂动作等待到位超时时间，单位 s
     timeout_s: 8.0
@@ -325,7 +325,7 @@ arrival_tasks:
     pollination_tool_point_m: [0.05, -0.015, 0.087]
 
     # 默认动作速度，单位 rad/s
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
 
     # 单个机械臂动作等待到位超时时间，单位 s
     timeout_s: 8.0

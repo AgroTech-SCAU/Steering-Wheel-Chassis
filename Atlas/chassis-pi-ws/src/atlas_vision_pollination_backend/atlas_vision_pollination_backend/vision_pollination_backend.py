@@ -93,7 +93,7 @@ def normalize_angle_positive(angle: float) -> float:
 class PrepareAction:
     action_type: str = 'noop'
     joints_rad: Optional[List[float]] = None
-    speed_rad_s: float = 1.0
+    speed_rad_s: float = 3.14
     timeout_s: float = 8.0
 
 
@@ -110,7 +110,7 @@ class ArrivalTask:
     dynamic_guard: dict = field(default_factory=dict)
     pre_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.097])
     pollination_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.087])
-    speed_rad_s: float = 1.0
+    speed_rad_s: float = 3.14
     timeout_s: float = 8.0
     dwell_pollination_s: float = 0.3
     sequence: List[dict] = field(default_factory=list)
@@ -134,8 +134,8 @@ class VisionPollinationBackend(Node):
         self.joint_state_timeout_s = float(self.declare_parameter('joint_state_timeout_s', 0.5).value)
         self.joint_tolerance_rad = float(self.declare_parameter('joint_tolerance_rad', 0.05).value)
         self.position_tolerance_m = float(self.declare_parameter('position_tolerance_m', 0.012).value)
-        self.default_speed_rad_s = float(self.declare_parameter('default_speed_rad_s', 1.0).value)
-        self.vision_timeout_s = float(self.declare_parameter('vision_timeout_s', 3.0).value)
+        self.default_speed_rad_s = float(self.declare_parameter('default_speed_rad_s', 3.14).value)
+        self.vision_timeout_s = float(self.declare_parameter('vision_timeout_s', 20.0).value)
         self.command_timeout_s = float(self.declare_parameter('command_timeout_s', 2.0).value)
         self.motion_timeout_s = float(self.declare_parameter('motion_timeout_s', 8.0).value)
         self.fk_include_tool_t = bool(self.declare_parameter('fk_include_tool_T', True).value)

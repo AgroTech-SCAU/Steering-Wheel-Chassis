@@ -2,12 +2,15 @@
 """相机目标识别服务节点
 
 本节点提供一次请求一次结果的视觉服务
-调用方发送 waypoint_id 和 task_id 后，节点会等待画面稳定，执行一次识别，播报识别结果，并返回一个相机坐标系下的目标点
+调用方发送 waypoint_id 和 task_id 后，节点会等待画面稳定，持续扫描直到命中业务逻辑或超时，
+然后播报识别结果，并返回一个或多个相机坐标系下的目标点
 """
 
 import json
 import os
+import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -21,20 +24,15 @@ from std_msgs.msg import String
 
 from atlas_mission_interfaces.srv import DetectCameraTarget
 
-try:
-    import cv2
-except Exception:  # pragma: no cover
-    cv2 = None
+# cv2 和 ultralytics 延迟到后台初始化线程里导入
+# 这样 launch 启动后 service 能尽快注册，模型加载和 NCNN 预热不会卡住服务创建
+cv2 = None
+YOLO = None
 
 try:
     from cv_bridge import CvBridge
 except Exception:  # pragma: no cover
     CvBridge = None
-
-try:
-    from ultralytics import YOLO
-except Exception:  # pragma: no cover
-    YOLO = None
 
 
 @dataclass
@@ -72,9 +70,21 @@ class CameraTargetService(Node):
         self.camera_buffer_size = int(self.declare_parameter('camera_buffer_size', 1).value)
         self.model_path = str(self.declare_parameter('model_path', '').value)
         self.stabilize_delay_s = float(self.declare_parameter('stabilize_delay_s', 1.0).value)
-        self.max_processing_s = float(self.declare_parameter('max_processing_s', 3.0).value)
-        self.frame_retry_count = int(self.declare_parameter('frame_retry_count', 10).value)
+        # max_processing_s 作为旧参数保留，max_scan_s 是当前持续扫描的真实超时时间
+        self.max_processing_s = float(self.declare_parameter('max_processing_s', 12.0).value)
+        self.max_scan_s = float(self.declare_parameter('max_scan_s', self.max_processing_s).value)
+        self.frame_retry_count = int(self.declare_parameter('frame_retry_count', 5).value)
         self.target_real_width_mm = float(self.declare_parameter('target_real_width_mm', 35.0).value)
+
+        # 调试参数：用于判断是 YOLO 没框、业务逻辑不满足，还是 HSV/3D 解算失败
+        self.debug_log_interval_s = float(self.declare_parameter('debug_log_interval_s', 0.5).value)
+        self.debug_save_on_no_target = bool(self.declare_parameter('debug_save_on_no_target', True).value)
+        self.debug_output_dir = str(self.declare_parameter('debug_output_dir', '/tmp/atlas_vision_debug').value)
+        self.model_warmup_on_start = bool(self.declare_parameter('model_warmup_on_start', True).value)
+        self.model_warmup_frames = int(self.declare_parameter('model_warmup_frames', 1).value)
+        # service 会先注册，摄像头/模型/预热在后台线程完成
+        # 如果请求到来时资源还没初始化完，最多等待这段时间，避免任务流过早判定视觉失败
+        self.service_ready_wait_s = float(self.declare_parameter('service_ready_wait_s', 45.0).value)
 
         # 语音播报参数，直接模式表示节点内部调用播报命令
         self.voice_mode = str(self.declare_parameter('voice_mode', 'topic').value)
@@ -107,14 +117,68 @@ class CameraTargetService(Node):
         self.voice_pub = self.create_publisher(String, self.voice_text_topic, 10)
         self.service = self.create_service(DetectCameraTarget, self.service_name, self.on_detect_request)
 
-        self.open_camera()
-        self.load_model()
-        self.get_logger().info('视觉服务节点已启动，等待识别请求')
+        self.last_detect_debug: Dict[str, object] = {}
+        self.vision_ready_event = threading.Event()
+        self.vision_ready_ok = False
+        self.vision_ready_message = '视觉资源尚未完成初始化'
+        self.init_thread = threading.Thread(target=self.initialize_vision_resources, daemon=True)
+        self.init_thread.start()
+        self.get_logger().info('视觉服务已注册，摄像头打开、模型加载和预热正在后台进行')
+
+    def initialize_vision_resources(self) -> None:
+        """后台初始化视觉资源
+
+        不能在 __init__ 里直接做这些重操作，否则 launch 后 service 注册会被模型加载和 NCNN 预热阻塞
+        """
+        try:
+            self.get_logger().info('视觉资源后台初始化开始: 打开摄像头 -> 加载模型 -> 预热')
+            self.open_camera()
+            self.load_model()
+            if self.model_warmup_on_start:
+                self.warmup_model()
+            self.vision_ready_ok = self.cap is not None and self.model is not None
+            if self.vision_ready_ok:
+                self.vision_ready_message = '视觉资源已就绪'
+                self.get_logger().info('视觉服务节点已就绪，等待识别请求')
+            else:
+                self.vision_ready_message = '视觉资源初始化失败，请检查摄像头或模型路径'
+                self.get_logger().error(self.vision_ready_message)
+        except Exception as exc:
+            self.vision_ready_ok = False
+            self.vision_ready_message = f'视觉资源初始化异常: {exc}'
+            self.get_logger().error(self.vision_ready_message)
+        finally:
+            self.vision_ready_event.set()
+
+    def import_cv2_if_needed(self) -> bool:
+        """延迟导入 OpenCV"""
+        global cv2
+        if cv2 is not None:
+            return True
+        try:
+            import cv2 as cv2_module
+            cv2 = cv2_module
+            return True
+        except Exception as exc:  # pragma: no cover
+            self.get_logger().error(f'无法导入 OpenCV，视觉服务会返回失败: {exc}')
+            return False
+
+    def import_yolo_if_needed(self) -> bool:
+        """延迟导入 ultralytics.YOLO"""
+        global YOLO
+        if YOLO is not None:
+            return True
+        try:
+            from ultralytics import YOLO as YOLOClass
+            YOLO = YOLOClass
+            return True
+        except Exception as exc:  # pragma: no cover
+            self.get_logger().error(f'无法导入 ultralytics，视觉服务会返回失败: {exc}')
+            return False
 
     def load_model(self) -> None:
         """加载目标检测模型"""
-        if YOLO is None:
-            self.get_logger().error('无法导入 ultralytics，视觉服务会返回失败')
+        if not self.import_yolo_if_needed():
             return
         if not self.model_path:
             self.get_logger().error('未配置模型路径，视觉服务会返回失败')
@@ -129,10 +193,29 @@ class CameraTargetService(Node):
             self.model = None
             self.get_logger().error(f'模型加载失败: {exc}')
 
+    def warmup_model(self) -> None:
+        """启动阶段预热一次 NCNN/YOLO，避免第一次任务请求把时间耗在懒加载上"""
+        if self.cap is None or self.model is None:
+            return
+        for _ in range(max(0, self.frame_retry_count)):
+            self.cap.read()
+        warmed = 0
+        for _ in range(max(0, self.model_warmup_frames)):
+            frame = self.read_frame()
+            if frame is None:
+                continue
+            try:
+                _ = self.model(frame, verbose=False)
+                warmed += 1
+            except Exception as exc:
+                self.get_logger().warn(f'模型预热失败: {exc}')
+                break
+        if warmed > 0:
+            self.get_logger().info(f'模型预热完成，帧数={warmed}')
+
     def open_camera(self) -> None:
         """打开摄像头"""
-        if cv2 is None:
-            self.get_logger().error('无法导入 OpenCV，视觉服务会返回失败')
+        if not self.import_cv2_if_needed():
             return
         self.cap = cv2.VideoCapture(self.camera_index)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.image_width)
@@ -145,14 +228,25 @@ class CameraTargetService(Node):
             self.get_logger().info(f'摄像头已打开，编号: {self.camera_index}')
 
     def on_detect_request(self, request: DetectCameraTarget.Request, response: DetectCameraTarget.Response):
-        """处理一次视觉识别请求"""
+        """处理一次视觉识别请求
+
+        与旧的独立脚本保持同一思路：
+        不是只识别一两帧，而是在 service 调用期间持续扫描，直到 A/B 业务逻辑命中或超时
+        """
         max_targets = int(getattr(request, 'max_targets', 1) or 1)
         max_targets = max(1, min(10, max_targets))
         target_class = str(getattr(request, 'target_class', '') or '')
-        self.get_logger().info(f'收到视觉识别请求，点位={request.waypoint_id}，任务={request.task_id}，最大目标数={max_targets}，目标类别={target_class}')
-        if self.cap is None or self.model is None:
+        self.get_logger().info(
+            f'收到视觉识别请求，点位={request.waypoint_id}，任务={request.task_id}，'
+            f'最大目标数={max_targets}，目标类别={target_class}，最长扫描={self.max_scan_s:.1f}s'
+        )
+        if not self.vision_ready_event.is_set():
+            self.get_logger().warn(f'视觉资源仍在后台初始化，等待最多 {self.service_ready_wait_s:.1f}s')
+            self.vision_ready_event.wait(timeout=max(0.0, self.service_ready_wait_s))
+        if not self.vision_ready_ok or self.cap is None or self.model is None:
             response.success = False
             response.message = 'VISION_NOT_READY'
+            self.get_logger().error(f'视觉服务未就绪: {self.vision_ready_message}')
             return response
 
         # 每次请求先清理相机缓存，再等待画面稳定
@@ -160,22 +254,37 @@ class CameraTargetService(Node):
         time.sleep(max(0.0, self.stabilize_delay_s))
 
         start_time = time.time()
+        next_log_time = start_time
+        frame_count = 0
         last_frame = None
-        while time.time() - start_time <= self.max_processing_s:
+        last_debug_frame = None
+        last_voice_text = ''
+        self.last_detect_debug = {}
+
+        # 持续扫描直到业务逻辑命中或超时
+        while time.time() - start_time <= self.max_scan_s:
             frame = self.read_frame()
             if frame is None:
+                time.sleep(0.02)
                 continue
+            frame_count += 1
             last_frame = frame
             targets, voice_text, debug_frame = self.detect_targets(frame)
+            last_debug_frame = debug_frame
+            last_voice_text = voice_text or last_voice_text
             self.publish_debug_image(debug_frame)
-            if voice_text:
-                self.broadcast_voice(voice_text)
+
+            now = time.time()
+            if self.debug_log_interval_s > 0.0 and now >= next_log_time:
+                self.log_scan_debug(request, frame_count, now - start_time)
+                next_log_time = now + self.debug_log_interval_s
+
             if targets:
+                if voice_text:
+                    self.broadcast_voice(voice_text)
                 selected_targets = self.select_targets(targets, max_targets)
                 if not selected_targets:
-                    response.success = False
-                    response.message = 'NO_TARGET'
-                    return response
+                    break
                 response.success = True
                 response.message = selected_targets[0].class_name
                 response.target_count = len(selected_targets)
@@ -190,22 +299,37 @@ class CameraTargetService(Node):
                 response.target_camera_m.y = response.targets_camera_m[0].y
                 response.target_camera_m.z = response.targets_camera_m[0].z
                 self.get_logger().info(
-                    f'识别成功，返回目标数={len(selected_targets)}，首个类别={selected_targets[0].class_name}，相机坐标='
+                    f'识别成功，扫描帧数={frame_count}，返回目标数={len(selected_targets)}，'
+                    f'首个类别={selected_targets[0].class_name}，相机坐标='
                     f'{response.target_camera_m.x:.4f} {response.target_camera_m.y:.4f} '
                     f'{response.target_camera_m.z:.4f} 米'
                 )
                 return response
+
+            # 命中业务逻辑但没有需要处理的雌花，等价于独立脚本中的“逻辑判定为跳过”
             if voice_text:
+                self.broadcast_voice(voice_text)
                 response.success = False
                 response.message = 'NO_TARGET'
-                self.get_logger().info('本次识别无需授粉，返回 NO_TARGET')
+                response.target_count = 0
+                self.get_logger().info(
+                    f'业务逻辑已命中但无需授粉，扫描帧数={frame_count}，返回 NO_TARGET'
+                )
                 return response
 
-        if last_frame is not None:
-            self.publish_debug_image(last_frame)
+        # 超时仍未命中业务逻辑，保存最后一帧和统计信息，便于排查类别/数量/HSV 问题
+        debug_frame = last_debug_frame if last_debug_frame is not None else last_frame
+        if debug_frame is not None:
+            self.publish_debug_image(debug_frame)
+            self.save_no_target_debug(request, debug_frame, frame_count, time.time() - start_time, last_voice_text)
         response.success = False
         response.message = 'NO_TARGET'
+        response.target_count = 0
         self.broadcast_voice('未识别到需要处理的目标')
+        self.get_logger().warn(
+            f'视觉扫描超时，未命中可处理目标，点位={request.waypoint_id}，任务={request.task_id}，'
+            f'扫描帧数={frame_count}，耗时={time.time() - start_time:.2f}s，最后统计={self.last_detect_debug}'
+        )
         return response
 
     def flush_camera(self) -> None:
@@ -225,14 +349,31 @@ class CameraTargetService(Node):
         return frame
 
     def detect_targets(self, frame: np.ndarray) -> Tuple[List[CandidateTarget], str, np.ndarray]:
-        """执行检测和业务判断"""
+        """执行检测和业务判断
+
+        返回值里的 voice_text 非空，表示 A/B 业务逻辑已经命中
+        targets 非空，表示既命中业务逻辑，又成功解算出需要处理的雌花坐标
+        """
         display = frame.copy()
         targets: List[CandidateTarget] = []
         voice_text = ''
+        debug: Dict[str, object] = {
+            'boxes_total': 0,
+            'classes': [],
+            'A_count': 0,
+            'B_count': 0,
+            'logic_hit': False,
+            'logic_group': '',
+            'female_count': 0,
+            'solved_count': 0,
+            'reason': 'no_boxes',
+        }
         try:
             results = self.model(frame, verbose=False)
             boxes = results[0].boxes
         except Exception as exc:
+            debug['reason'] = f'inference_error: {exc}'
+            self.last_detect_debug = debug
             self.get_logger().error(f'模型推理失败: {exc}')
             return targets, voice_text, display
 
@@ -240,6 +381,7 @@ class CameraTargetService(Node):
         for box in boxes:
             class_id = int(box.cls[0].item())
             class_name = self.model.names[class_id]
+            debug['classes'].append(str(class_name))
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             x1 = max(0, min(x1, frame.shape[1] - 1))
             x2 = max(0, min(x2, frame.shape[1] - 1))
@@ -264,13 +406,27 @@ class CameraTargetService(Node):
             cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
             cv2.putText(display, class_name, (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
+        debug['boxes_total'] = len(debug['classes'])
+        debug['A_count'] = len(grouped['A'])
+        debug['B_count'] = len(grouped['B'])
+        if debug['boxes_total'] > 0:
+            debug['reason'] = 'business_logic_not_hit'
+
         if len(grouped['A']) == 3:
             grouped['A'].sort(key=lambda item: item['yc'])
             names = ['雌花' if item['class'] == 'A_female' else '雄花' for item in grouped['A']]
             voice_text = '从上到下依次为，' + '，'.join(names)
             females = [item for item in grouped['A'] if item['class'] == 'A_female']
+            debug['logic_hit'] = True
+            debug['logic_group'] = 'A'
+            debug['female_count'] = len(females)
             if 0 < len(females) < 3:
                 targets.extend(self.solve_target_list(frame, display, females))
+                debug['reason'] = 'A_logic_hit_with_targets' if targets else 'A_hsv_or_3d_solve_failed'
+            else:
+                debug['reason'] = 'A_logic_hit_skip_all_female_or_no_female'
+            debug['solved_count'] = len(targets)
+            self.last_detect_debug = debug
             return targets, voice_text, display
 
         if len(grouped['B']) in (2, 3):
@@ -278,9 +434,16 @@ class CameraTargetService(Node):
             names = ['雌花' if item['class'] == 'B_female' else '雄花' for item in grouped['B']]
             voice_text = '从左到右依次为，' + '，'.join(names)
             females = [item for item in grouped['B'] if item['class'] == 'B_female']
+            debug['logic_hit'] = True
+            debug['logic_group'] = 'B'
+            debug['female_count'] = len(females)
             targets.extend(self.solve_target_list(frame, display, females))
+            debug['solved_count'] = len(targets)
+            debug['reason'] = 'B_logic_hit_with_targets' if targets else 'B_hsv_or_3d_solve_failed_or_no_female'
+            self.last_detect_debug = debug
             return targets, voice_text, display
 
+        self.last_detect_debug = debug
         return targets, voice_text, display
 
     def solve_target_list(self, frame: np.ndarray, display: np.ndarray, items: List[dict]) -> List[CandidateTarget]:
@@ -347,6 +510,60 @@ class CameraTargetService(Node):
         """选择多个目标，当前按距离从近到远排序"""
         ordered = sorted(targets, key=lambda item: item.z_mm)
         return ordered[:max(1, max_targets)]
+
+    def log_scan_debug(self, request: DetectCameraTarget.Request, frame_count: int, elapsed_s: float) -> None:
+        """周期性打印扫描统计，区分模型没框、类别数量不满足、HSV 解算失败等情况"""
+        info = self.last_detect_debug or {}
+        classes = info.get('classes', [])
+        if isinstance(classes, list) and len(classes) > 8:
+            classes_text = ','.join(str(x) for x in classes[:8]) + ',...'
+        else:
+            classes_text = ','.join(str(x) for x in classes)
+        self.get_logger().info(
+            f'视觉扫描中 point={request.waypoint_id} task={request.task_id} '
+            f'frame={frame_count} elapsed={elapsed_s:.1f}s '
+            f'boxes={info.get("boxes_total", 0)} A={info.get("A_count", 0)} B={info.get("B_count", 0)} '
+            f'logic={info.get("logic_hit", False)} group={info.get("logic_group", "")} '
+            f'female={info.get("female_count", 0)} solved={info.get("solved_count", 0)} '
+            f'reason={info.get("reason", "")} classes=[{classes_text}]'
+        )
+
+    def safe_file_token(self, text: str) -> str:
+        """把点位名和任务名转换成可安全写入文件名的字符串"""
+        token = re.sub(r'[^A-Za-z0-9_.-]+', '_', text or 'unknown')
+        return token[:96] if token else 'unknown'
+
+    def save_no_target_debug(
+        self,
+        request: DetectCameraTarget.Request,
+        frame: np.ndarray,
+        frame_count: int,
+        elapsed_s: float,
+        last_voice_text: str,
+    ) -> None:
+        """NO_TARGET 时保存最后一帧和统计 JSON，便于和独立脚本结果对比"""
+        if not self.debug_save_on_no_target or cv2 is None:
+            return
+        try:
+            os.makedirs(self.debug_output_dir, exist_ok=True)
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            prefix = f'{stamp}_{self.safe_file_token(request.waypoint_id)}_{self.safe_file_token(request.task_id)}'
+            image_path = os.path.join(self.debug_output_dir, prefix + '.jpg')
+            json_path = os.path.join(self.debug_output_dir, prefix + '.json')
+            cv2.imwrite(image_path, frame)
+            payload = {
+                'waypoint_id': str(request.waypoint_id),
+                'task_id': str(request.task_id),
+                'frame_count': int(frame_count),
+                'elapsed_s': float(elapsed_s),
+                'last_voice_text': str(last_voice_text),
+                'last_detect_debug': self.last_detect_debug,
+            }
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            self.get_logger().warn(f'已保存 NO_TARGET 调试文件: {image_path} / {json_path}')
+        except Exception as exc:
+            self.get_logger().warn(f'保存 NO_TARGET 调试文件失败: {exc}')
 
     def publish_debug_image(self, frame: np.ndarray) -> None:
         """发布调试图像"""

@@ -59,7 +59,8 @@ atlas_vision_pollination_backend:
     default_speed_rad_s: 1.0
 
     # 等待视觉服务响应的超时时间，单位 s
-    vision_timeout_s: 10.0
+    # 需要大于 camera_target.yaml 中 max_scan_s，避免持续扫描还没结束就被后端超时取消
+    vision_timeout_s: 20.0
 
     # 等待机械臂服务响应的超时时间，单位 s
     command_timeout_s: 2.0

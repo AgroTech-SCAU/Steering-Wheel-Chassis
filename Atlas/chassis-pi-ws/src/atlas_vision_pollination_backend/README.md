@@ -132,7 +132,7 @@ prepare_actions:
   pre_detect_nav_02:
     type: "joints"
     joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
+    speed_rad_s: 3.14
     timeout_s: 8.0
 ```
 
