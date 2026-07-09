@@ -1,0 +1,6 @@
+string waypoint_id
+string task_id
+---
+bool success
+string message
+geometry_msgs/Point target_camera_m

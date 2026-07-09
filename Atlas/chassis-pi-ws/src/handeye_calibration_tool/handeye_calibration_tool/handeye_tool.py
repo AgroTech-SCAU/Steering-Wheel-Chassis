@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用于 UVC 相机与 ROS 2 机械臂的交互式手眼标定工具。"""
+"""用于 UVC 相机与 ROS 2 机械臂的交互式手眼标定工具"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 
 def _configure_qt_font_directory() -> None:
-    """为 OpenCV 自带的 Qt 指向系统中可用的字体目录。"""
+    """为视觉库窗口指定系统中可用的字体目录"""
     if os.environ.get("QT_QPA_FONTDIR"):
         return
     candidates = (
@@ -47,11 +47,11 @@ from sensor_msgs.msg import JointState
 from mcu_comm_bridge.srv import SetArmJoints, SetArmPose
 
 
-# ----------------------------- math utilities -----------------------------
+# ----------------------------- 数学工具 -----------------------------
 
 
 def rpy_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """Return Rz(yaw) * Ry(pitch) * Rx(roll)."""
+    """返回按照偏航，俯仰，横滚顺序组合的旋转矩阵"""
     cr, sr = math.cos(roll), math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
     cy, sy = math.cos(yaw), math.sin(yaw)
@@ -63,7 +63,7 @@ def rpy_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
 
 
 def matrix_to_rpy(rotation: np.ndarray) -> Tuple[float, float, float]:
-    """Convert a rotation matrix to roll, pitch, yaw using ZYX convention."""
+    """将旋转矩阵转换为横滚，俯仰，偏航"""
     sy = math.sqrt(rotation[0, 0] ** 2 + rotation[1, 0] ** 2)
     singular = sy < 1e-9
     if not singular:
@@ -93,7 +93,7 @@ def quaternion_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
 
 
 def matrix_to_quaternion(rotation: np.ndarray) -> Tuple[float, float, float, float]:
-    """Return quaternion as x, y, z, w."""
+    """返回四元数，顺序为 x，y，z，w"""
     trace = float(np.trace(rotation))
     if trace > 0.0:
         s = math.sqrt(trace + 1.0) * 2.0
@@ -166,7 +166,7 @@ def parse_float_list(text: str, expected: int) -> List[float]:
 
 
 class InteractiveConsole:
-    """Read commands from the controlling terminal even under ``ros2 launch``.
+    """从控制终端读取命令，即使在启动文件下运行也可用
 
     ROS 2 launch captures a node's standard streams. ``emulate_tty=True`` only
     makes the output look like a terminal and does not reliably forward keyboard
@@ -196,7 +196,7 @@ class InteractiveConsole:
             self._owns_stream = True
             self.source = "/dev/tty"
         except OSError:
-            # Keep a final fallback for direct execution with redirected input.
+            # 保留最后的回退方式，便于重定向输入时直接运行
             self._stream = sys.stdin
             self.source = "stdin (non-tty)"
 
@@ -219,10 +219,10 @@ class InteractiveConsole:
 
 
 class MenuCancelled(Exception):
-    """Raised when the user cancels a configuration wizard."""
+    """用户取消配置向导时抛出"""
 
 
-# ------------------------------- data model -------------------------------
+# ------------------------------- 数据模型 -------------------------------
 
 
 @dataclass
@@ -236,17 +236,17 @@ class AppConfig:
     camera_window_name: str = "Hand-Eye Calibration Camera"
     intrinsics_file: str = ""
 
-    # board_type: "chessboard" 表示普通黑白棋盘格，"charuco" 表示 ChArUco 标定板。
+    # 标定板类型：普通棋盘格表示普通黑白棋盘格，编码棋盘格表示带编码标定板
     board_type: str = "chessboard"
 
-    # 普通棋盘格参数。这里填写的是内角点数量，不是方格数量。
-    # 例如 10 x 7 个黑白方格，对应 9 x 6 个内角点。
+    # 普通棋盘格参数这里填写的是内角点数量，不是方格数量
+    # 例如 10 x 7 个黑白方格，对应 9 x 6 个内角点
     chessboard_inner_corners_x: int = 9
     chessboard_inner_corners_y: int = 6
     chessboard_square_length_m: float = 0.025
     chessboard_use_sb: bool = True
 
-    # ChArUco 参数。squares_x/squares_y 表示完整方格数量。
+    # 编码棋盘格参数表示完整方格数量
     charuco_dictionary: str = "DICT_4X4_50"
     charuco_squares_x: int = 7
     charuco_squares_y: int = 5
@@ -322,11 +322,11 @@ class RobotStateSnapshot:
     frame_id: str
 
 
-# ------------------------------ ROS arm node ------------------------------
+# ------------------------------ 机械臂节点 ------------------------------
 
 
 class ArmStateNode(Node):
-    """Collect arm states and expose MCU arm command services."""
+    """采集机械臂状态，并提供微控制器机械臂控制服务"""
 
     def __init__(self, config: AppConfig) -> None:
         super().__init__("handeye_calibration_tool")
@@ -518,7 +518,7 @@ class ArmStateNode(Node):
         return bool(response.success), f"{response.message}; command_seq={response.command_seq}"
 
 
-# ------------------------------- camera UI -------------------------------
+# ------------------------------- 相机界面 -------------------------------
 
 
 class CameraWorker:
@@ -562,7 +562,7 @@ class CameraWorker:
 
     @staticmethod
     def _create_dictionary_and_board(config: AppConfig) -> Tuple[Any, Any]:
-        """Create ChArUco objects when needed; chessboard needs no board object."""
+        """需要时创建编码棋盘格对象，普通棋盘格不需要该对象"""
         board_type = config.board_type.strip().lower()
         if board_type == "chessboard":
             return None, None
@@ -733,7 +733,7 @@ class CameraWorker:
         annotated = frame.copy()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # OpenCV <= 4.6 exposes free functions, while newer versions use detector classes.
+        # 兼容不同版本视觉库的角点检测接口
         if hasattr(cv2.aruco, "CharucoDetector"):
             detector = cv2.aruco.CharucoDetector(board)
             charuco_corners, charuco_ids, marker_corners, marker_ids = detector.detectBoard(gray)
@@ -959,7 +959,7 @@ class CameraWorker:
         cv2.destroyAllWindows()
 
 
-# ---------------------------- calibration app ----------------------------
+# ---------------------------- 标定应用 ----------------------------
 
 
 class HandEyeApplication:
@@ -1177,7 +1177,7 @@ class HandEyeApplication:
                     "target_to_camera": matrix_to_list(detection.target_to_camera),
                     "board_type": detection.board_type or config.board_type,
                     "board_corner_count": detection.corner_count,
-                    # Kept for compatibility with v1.0/v1.1 sample readers.
+                    # 保留该字段以兼容旧版本样本读取器
                     "charuco_corner_count": detection.corner_count,
                     "reprojection_error_px": float(detection.reprojection_error_px),
                     "image": str(Path("images") / image_name),
@@ -1226,10 +1226,10 @@ class HandEyeApplication:
             base_to_gripper = np.asarray(sample["base_to_gripper"], dtype=np.float64)
             target_to_camera = np.asarray(sample["target_to_camera"], dtype=np.float64)
             if handeye_mode == "eye_in_hand":
-                # base_T_target = base_T_gripper * gripper_T_camera * camera_T_target
+                # 基座到目标 = 基座到末端 * 末端到相机 * 相机到目标
                 constant_transform = base_to_gripper @ result_transform @ target_to_camera
             else:
-                # gripper_T_target = gripper_T_base * base_T_camera * camera_T_target
+                # 末端到目标 = 末端到基座 * 基座到相机 * 相机到目标
                 constant_transform = invert_transform(base_to_gripper) @ result_transform @ target_to_camera
             constants.append(constant_transform)
 
@@ -1376,14 +1376,14 @@ class HandEyeApplication:
         )
         return payload
 
-    # ------------------------------ terminal UI ------------------------------
+    # ------------------------------ 终端界面 ------------------------------
 
     def _input(self, prompt: str = "") -> str:
         return self.console.input(prompt)
 
     def _ask(self, prompt: str, current: Any, converter: Callable[[str], Any] = str) -> Any:
         print(f"\n{prompt}")
-        print(f"当前值：{current}；直接按 Enter 保留当前值。")
+        print(f"当前值：{current}；直接按 Enter 保留当前值")
         text = self._input(">>> ").strip()
         if not text:
             return current
@@ -1392,7 +1392,7 @@ class HandEyeApplication:
     def _ask_bool(self, prompt: str, current: bool) -> bool:
         default = "y" if current else "n"
         print(f"\n{prompt}")
-        print(f"请输入 y 或 n；当前值：{default}；直接按 Enter 保留。")
+        print(f"请输入 y 或 n；当前值：{default}；直接按 Enter 保留")
         text = self._input(">>> ").strip().lower()
         if not text:
             return current
@@ -1414,7 +1414,7 @@ class HandEyeApplication:
         print(f"说明：{explanation}")
         print(f"当前值：{current}")
         print(f"示例输入：{example}")
-        print("直接按 Enter 保留当前值；输入 q 返回上一级。")
+        print("直接按 Enter 保留当前值；输入 q 返回上一级")
         text = self._input(">>> ").strip()
         if text.lower() in ("q", "quit", "cancel", "取消"):
             raise MenuCancelled
@@ -1432,7 +1432,7 @@ class HandEyeApplication:
         for key, description in choices.items():
             suffix = "  [当前]" if current_key == key else ""
             print(f"  {key}. {description}{suffix}")
-        print("请输入编号并按 Enter；输入 q 返回上一级。")
+        print("请输入编号并按 Enter；输入 q 返回上一级")
         while True:
             text = self._input(">>> ").strip().lower()
             if text in ("q", "quit", "cancel", "取消"):
@@ -1522,9 +1522,9 @@ class HandEyeApplication:
     def configure_board(self) -> None:
         config = self.get_config()
         print("\n========== 配置标定板 ==========")
-        print("你的标定板如果只有黑白方格、没有 ArUco 编码图案，应选择 1。")
-        print("注意：棋盘格尺寸里的横向/纵向数量是‘内角点数’，不是黑白方格数。")
-        print("例如 10×7 个黑白方格，对应 9×6 个内角点。")
+        print("你的标定板如果只有黑白方格、没有 ArUco 编码图案，应选择 1")
+        print("注意：棋盘格尺寸里的横向/纵向数量是‘内角点数’，不是黑白方格数")
+        print("例如 10×7 个黑白方格，对应 9×6 个内角点")
 
         current_choice = "1" if config.board_type == "chessboard" else "2"
         try:
@@ -1538,7 +1538,7 @@ class HandEyeApplication:
                 current_choice,
             )
             if choice == "0":
-                print("已返回，未修改标定板参数。")
+                print("已返回，未修改标定板参数")
                 return
 
             if choice == "1":
@@ -1546,28 +1546,28 @@ class HandEyeApplication:
                     "[1/4] 横向内角点数量",
                     config.chessboard_inner_corners_x,
                     int,
-                    "沿棋盘格水平方向数内部交点，不计算外边框。若横向有 10 格，则输入 9。",
+                    "沿棋盘格水平方向数内部交点，不计算外边框若横向有 10 格，则输入 9",
                     "9",
                 )
                 corners_y = self._guided_value(
                     "[2/4] 纵向内角点数量",
                     config.chessboard_inner_corners_y,
                     int,
-                    "沿棋盘格竖直方向数内部交点。若纵向有 7 格，则输入 6。",
+                    "沿棋盘格竖直方向数内部交点若纵向有 7 格，则输入 6",
                     "6",
                 )
                 square_length = self._guided_value(
                     "[3/4] 单个黑白方格的实际边长，单位 m",
                     config.chessboard_square_length_m,
                     float,
-                    "用尺或游标卡尺测量相邻两个内角点之间的实际距离。25 mm 应输入 0.025。",
+                    "用尺或游标卡尺测量相邻两个内角点之间的实际距离25 mm 应输入 0.025",
                     "0.025",
                 )
                 max_error = self._guided_value(
                     "[4/4] 最大 PnP 重投影误差，单位像素",
                     config.max_reprojection_error_px,
                     float,
-                    "误差超过该值时不允许采样。初次建议 1.5，排查时可临时设为 2.5。",
+                    "误差超过该值时不允许采样初次建议 1.5，排查时可临时设为 2.5",
                     "1.5",
                 )
                 if corners_x < 3 or corners_y < 3:
@@ -1585,13 +1585,13 @@ class HandEyeApplication:
                     max_reprojection_error_px=max_error,
                 )
                 self.camera.restart()
-                print("\n[OK] 已切换为普通黑白棋盘格检测。")
+                print("\n[OK] 已切换为普通黑白棋盘格检测")
                 print(
                     f"请将完整棋盘格放入画面，窗口应显示 pattern: FOUND "
-                    f"{corners_x * corners_y}/{corners_x * corners_y}。"
+                    f"{corners_x * corners_y}/{corners_x * corners_y}"
                 )
-                print("若角点已找到但 pose 显示 NOT READY，请在菜单 4 加载相机内参。")
-                print("警告：普通棋盘格存在 180° 对称性，采样时不要让角点编号方向发生翻转。")
+                print("若角点已找到但 pose 显示 NOT READY，请在菜单 4 加载相机内参")
+                print("警告：普通棋盘格存在 180° 对称性，采样时不要让角点编号方向发生翻转")
                 return
 
             dictionary_map = {
@@ -1616,49 +1616,49 @@ class HandEyeApplication:
                     "输入 OpenCV ArUco 字典名称",
                     config.charuco_dictionary,
                     str,
-                    "必须是 OpenCV 支持的常量名称。",
+                    "必须是 OpenCV 支持的常量名称",
                     "DICT_4X4_50",
                 )
             squares_x = self._guided_value(
                 "[2/7] 横向方格数 squares_x",
                 config.charuco_squares_x,
                 int,
-                "这里数的是完整方格数量，不是内角点。",
+                "这里数的是完整方格数量，不是内角点",
                 "7",
             )
             squares_y = self._guided_value(
                 "[3/7] 纵向方格数 squares_y",
                 config.charuco_squares_y,
                 int,
-                "这里数的是完整方格数量，不是内角点。",
+                "这里数的是完整方格数量，不是内角点",
                 "5",
             )
             square_length = self._guided_value(
                 "[4/7] 单个方格边长，单位 m",
                 config.charuco_square_length_m,
                 float,
-                "例如 30 mm 输入 0.030。",
+                "例如 30 mm 输入 0.030",
                 "0.030",
             )
             marker_length = self._guided_value(
                 "[5/7] ArUco 黑色编码区域边长，单位 m",
                 config.charuco_marker_length_m,
                 float,
-                "必须小于方格边长，例如 22 mm 输入 0.022。",
+                "必须小于方格边长，例如 22 mm 输入 0.022",
                 "0.022",
             )
             min_corners = self._guided_value(
                 "[6/7] 最少 ChArUco 角点数",
                 config.min_charuco_corners,
                 int,
-                "低于该数量不进行 PnP，建议至少 8。",
+                "低于该数量不进行 PnP，建议至少 8",
                 "8",
             )
             max_error = self._guided_value(
                 "[7/7] 最大 PnP 重投影误差，单位像素",
                 config.max_reprojection_error_px,
                 float,
-                "初次建议 1.5。",
+                "初次建议 1.5",
                 "1.5",
             )
             if squares_x < 3 or squares_y < 3:
@@ -1679,15 +1679,15 @@ class HandEyeApplication:
                 max_reprojection_error_px=max_error,
             )
             self.camera.restart()
-            print("\n[OK] 已切换为 ChArUco 检测。")
+            print("\n[OK] 已切换为 ChArUco 检测")
         except MenuCancelled:
-            print("已取消，未修改标定板参数。")
+            print("已取消，未修改标定板参数")
         except (ValueError, TypeError) as exc:
             print(f"[输入错误] {exc}")
 
     def configure_intrinsics(self) -> None:
         print("\n========== 相机内参 ==========")
-        print("手眼标定必须先有相机内参。没有内参时，程序只能识别角点，不能计算标定板位姿，也不能采样。")
+        print("手眼标定必须先有相机内参没有内参时，程序只能识别角点，不能计算标定板位姿，也不能采样")
         try:
             choice = self._guided_choice(
                 "请选择内参来源",
@@ -1700,9 +1700,9 @@ class HandEyeApplication:
             if choice == "0":
                 return
             if choice == "1":
-                print("\n请输入内参文件的完整路径。")
+                print("\n请输入内参文件的完整路径")
                 print("示例：/home/wheeltec/calibration/camera_info.yaml")
-                print("输入 q 返回上一级。")
+                print("输入 q 返回上一级")
                 path = self._input(">>> ").strip()
                 if path.lower() in ("q", "quit", "cancel", "取消"):
                     return
@@ -1713,7 +1713,7 @@ class HandEyeApplication:
                 print("K =")
                 print(intrinsics.matrix)
                 print("D =", intrinsics.distortion.reshape(-1))
-                print("现在相机窗口中的 pose 应从 NOT READY 变为 VALID（前提是棋盘格已识别）。")
+                print("现在相机窗口中的 pose 应从 NOT READY 变为 VALID（前提是棋盘格已识别）")
                 return
 
             fx, fy, cx, cy = parse_float_list(
@@ -1721,7 +1721,7 @@ class HandEyeApplication:
                     "输入 fx,fy,cx,cy",
                     "fx,fy,cx,cy",
                     str,
-                    "四个值使用英文逗号分隔。fx/fy 是焦距像素值，cx/cy 是主点坐标。",
+                    "四个值使用英文逗号分隔fx/fy 是焦距像素值，cx/cy 是主点坐标",
                     "615.2,614.8,640.0,360.0",
                 ),
                 4,
@@ -1730,7 +1730,7 @@ class HandEyeApplication:
                 "输入畸变参数",
                 "k1,k2,p1,p2,k3",
                 str,
-                "至少输入 k1,k2,p1,p2；常用五参数为 k1,k2,p1,p2,k3。",
+                "至少输入 k1,k2,p1,p2；常用五参数为 k1,k2,p1,p2,k3",
                 "-0.12,0.08,0.0,0.0,0.0",
             )
             distortion = [
@@ -1745,7 +1745,7 @@ class HandEyeApplication:
             )
             print("[OK] 已设置并保存手动内参")
         except MenuCancelled:
-            print("已取消设置相机内参。")
+            print("已取消设置相机内参")
         except Exception as exc:  # noqa: BLE001
             print(f"[失败] {exc}")
 
@@ -1874,8 +1874,8 @@ class HandEyeApplication:
         print("11. 保存当前配置")
         print("12. 重启摄像头")
         print("0. 退出")
-        print("操作说明：输入菜单编号并按 Enter；直接输入 c 可采样，输入 q 可退出。")
-        print("摄像头窗口获得焦点时，也可按 C 采样、Q 退出。")
+        print("操作说明：输入菜单编号并按 Enter；直接输入 c 可采样，输入 q 可退出")
+        print("摄像头窗口获得焦点时，也可按 C 采样、Q 退出")
         print("==========================================")
 
     def run_menu(self) -> None:
@@ -1930,7 +1930,7 @@ class HandEyeApplication:
             self.camera.stop()
 
 
-# ------------------------------- bootstrap -------------------------------
+# ------------------------------- 启动入口 -------------------------------
 
 
 def declare_and_read_config(node: Node) -> AppConfig:

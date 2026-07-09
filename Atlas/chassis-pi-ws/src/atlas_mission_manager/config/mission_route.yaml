@@ -1,0 +1,78 @@
+# 自动任务路线配置
+# 本文件由 atlas_mission_manager 读取
+# 这里描述的是任务点，预识别动作名称，到点任务名称和返航策略
+# 不在这里写具体关节角，也不在这里写伪导航控制参数
+# 具体关节角在 atlas_vision_pollination_backend/config/pollination_actions.yaml 中配置
+# 伪导航控制参数在 atlas_nav_pseudo_backend/config/pseudo_nav.yaml 中配置
+
+mission:
+  # 坐标模式
+  # task_relative 表示所有 x，y，yaw 都相对于本轮任务开始时的 /odom
+  # 任务开始时第一个点会让伪导航后端记录当前 /odom 为任务原点
+  coordinate_mode: "task_relative"
+
+  # 导航后端名称
+  # 当前只实现 pseudo
+  navigation_backend: "pseudo"
+
+  # 到点后任务后端名称
+  # 当前实现完整视觉加部分动作序列后端 vision_pollination
+  manipulation_backend: "vision_pollination"
+
+  # 前进路线最大执行点数
+  # 1 表示只执行第一个点，用于首次安全联调
+  # 2 表示执行前两个点
+  # 0 表示不限制，执行 waypoints 中所有点
+  max_forward_waypoints: 1
+
+  # 是否执行 return_waypoints
+  # 首次实车测试建议保持 false
+  # 前进路线稳定后再改为 true
+  return_home_enabled: false
+
+  # 前进路线点列表
+  # 每个点会先调用导航后端到达 x，y，yaw
+  # 到点稳定后，如果 arrival_task 不是 noop，则调用视觉和动作后端
+  waypoints:
+    # 第一个点是 7 cm 安全测试点
+    # 用于确认 /odom 方向，底盘 y 方向，刹车和 RESET 是否正常
+    - id: "pass_01"
+      x: 0.00
+      y: -0.07
+      yaw: 0.00
+      timeout_s: 20.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    # 第二个点是视觉授粉示例点
+    # 和旧 MCU 路线中的同坐标重复点语义一致，不能随意合并
+    # prepare_action 指向预识别关节位姿
+    # arrival_task 指向完整视觉授粉序列
+    - id: "area_a_02_down"
+      x: 0.71
+      y: -0.08
+      yaw: 0.00
+      timeout_s: 20.0
+      prepare_action: "area_a_left_pre_detect"
+      arrival_task: "visual_pollination"
+
+  # 返航路线点列表
+  # 只有 return_home_enabled 为 true 时才会执行
+  # 返航点同样通过导航后端执行
+  # 当前返航点默认不执行视觉和机械臂任务
+  return_waypoints:
+    - id: "return_pass"
+      x: 0.35
+      y: -1.65
+      yaw: 0.00
+      timeout_s: 30.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    - id: "return_home"
+      x: 0.01
+      y: 0.03
+      yaw: 0.00
+      timeout_s: 30.0
+      prepare_action: "noop"
+      arrival_task: "noop"

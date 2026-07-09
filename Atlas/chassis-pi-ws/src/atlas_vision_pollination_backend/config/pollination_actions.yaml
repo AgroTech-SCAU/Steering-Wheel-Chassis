@@ -1,0 +1,97 @@
+# 视觉授粉动作配置
+# 本文件由 atlas_vision_pollination_backend 读取
+# mission_route.yaml 中的 prepare_action 和 arrival_task 都要在这里能找到
+# 这里的数值是实车最需要调的部分，建议每次只改一个动作或一个偏移量
+
+# 移动前预识别动作表
+# 总任务状态机不会直接执行这些动作
+# 视觉授粉后端收到 prepare_action 名称后，在本表查找具体动作
+prepare_actions:
+  # 空动作
+  # 用于纯通过点或调试点
+  noop:
+    type: "noop"
+
+  # A 区左侧预识别位姿
+  # joints_deg 是五个关节角，单位度
+  # 如果你用 /arm/joint_states 记录的是弧度，也可以改成 joints_rad
+  # 预识别位姿必须保证相机能看到目标，并且机械臂不会干涉底盘移动
+  area_a_left_pre_detect:
+    type: "joints"
+    joints_deg: [180.0, 90.0, 360.0, 180.0, 180.0]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+# 到位后任务表
+# mission_route.yaml 中 arrival_task 字段会引用这里的名称
+arrival_tasks:
+  # 空到位任务
+  # 用于只验证导航到点，不执行视觉和机械臂
+  noop:
+    type: "noop"
+
+  # 完整视觉授粉任务
+  visual_pollination:
+    # 类型名，后端根据该字段选择执行逻辑
+    type: "visual_pollination"
+
+    # 没有目标时的策略
+    # skip 表示跳过该点并返回成功
+    # fail 表示该点任务失败，最终会导致总任务 FAIL
+    empty_target_policy: "skip"
+
+    # 视觉服务名
+    # 通常保持和 camera_target.yaml 中 service_name 一致
+    vision_service: "/vision/detect_camera_target"
+
+    # 预授粉工具点偏移，单位 m
+    # 该点表示工具末端相对于 tool0 的偏移
+    # z=0.097 是你当前手眼工具点偏移中可行的预授粉高度
+    pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+
+    # 授粉工具点偏移，单位 m
+    # 当前先给 0.087，实车可根据接触深度微调
+    # 如果接触过深，就增大 z
+    # 如果接触不到，就减小 z
+    pollination_tool_point_m: [0.05, -0.015, 0.087]
+
+    # 默认动作速度，单位 rad/s
+    speed_rad_s: 1.0
+
+    # 单个动作等待到位超时时间，单位 s
+    timeout_s: 8.0
+
+    # 授粉位姿停留时间，单位 s
+    dwell_pollination_s: 0.3
+
+    # 动作序列
+    # 当前顺序是：确认预识别位姿，预授粉，授粉，停留，回预授粉，回预识别
+    # 后续要改动作，只建议在这里增删步骤，不要改总状态机
+    sequence:
+      # 确认当前已经在 prepare_action 对应的预识别位姿
+      - type: "ensure_prepare_pose"
+
+      # 移动到预授粉位姿
+      # 使用 pre_pollination_tool_point_m 计算末端目标
+      - type: "visual_position"
+        name: "pre_pollination"
+        tool_point_ref: "pre_pollination_tool_point_m"
+
+      # 移动到授粉位姿
+      # 使用 pollination_tool_point_m 计算末端目标
+      - type: "visual_position"
+        name: "pollination"
+        tool_point_ref: "pollination_tool_point_m"
+
+      # 授粉位姿停留
+      - type: "dwell"
+        duration_s: 0.3
+
+      # 回到预授粉位姿
+      - type: "visual_position"
+        name: "pre_pollination_return"
+        tool_point_ref: "pre_pollination_tool_point_m"
+
+      # 回到本 waypoint 的 prepare_action 预识别位姿
+      - type: "joints_action"
+        action_ref: "prepare_action"

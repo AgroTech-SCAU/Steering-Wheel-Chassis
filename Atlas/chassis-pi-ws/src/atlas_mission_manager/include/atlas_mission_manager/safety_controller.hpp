@@ -22,6 +22,8 @@ class SafetyController {
   void allow_motion(const std::string& reason);
   void tick(const rclcpp::Time& now);
   void publish_zero_velocity();
+  bool publish_motion_command(const geometry_msgs::msg::Twist& command);
+  bool safe_stop_active() const;
 
  private:
   void request_brake(bool enable);
@@ -30,7 +32,7 @@ class SafetyController {
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr brake_client_;
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   bool safe_stop_active_{false};
   bool brake_request_in_flight_{false};
   bool brake_target_{true};

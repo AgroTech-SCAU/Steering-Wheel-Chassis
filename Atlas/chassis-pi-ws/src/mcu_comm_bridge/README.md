@@ -1,189 +1,331 @@
-# mcu_comm_bridge
+# mcu_comm_bridge 说明
 
-`mcu_comm_bridge` 是 Atlas Pi 端的 ROS 2 通信桥，负责在 ROS 2 接口与 MCU 二进制协议之间做双向转换。
+本包负责 pi 与 mcu 之间的串口协议桥接
 
-## 1. 负责范围
+它把 mcu 的二进制协议转换成 ROS2 话题和服务，也把 pi 端控制服务转换成 mcu 能识别的二进制控制帧
 
-本包负责：
+## 一，包定位
 
-- 解析 `MCU_IMU`、`MCU_ODOM`、`MCU_ARM_STATE`、`MCU_STATUS`
-- 发布 `/imu`、`/odom`、`/arm/joint_states`、`/arm/pose`、`/arm/pose_position`
-- 发布 `/mcu/status` 和 `/mcu/auto_task_event`
-- 订阅 `/motor_cmd_vel` 并按周期发送 `PI_CONTROL`
-- 提供刹车、急停、Yaw、机械臂控制和任务结果上报服务
+本包是底层通信桥，不是任务管理器
 
-本包不负责：
+负责
 
-- 主动请求 MCU 进入 `AutoPi`
-- 直接启动 Nav2
-- 直接取消 Nav2 goal
-- 实现完整的 mission manager
+```text
+解析 MCU_STATUS
+解析 MCU_IMU
+解析 MCU_ODOM
+解析 MCU_ARM_STATE
+发布 /mcu/status
+发布 /mcu/auto_task_event
+发布 /odom
+发布 /imu
+发布 /arm/joint_states
+发布 /arm/pose
+发布 /arm/pose_position
+订阅 /motor_cmd_vel 并发送 PI_CONTROL 底盘部分
+提供机械臂目标服务并发送 PI_CONTROL arm 部分
+提供任务结果服务并发送 PI_MISSION_EVENT
+提供急停服务并发送 PI_ESTOP
+发送 PI_HEARTBEAT
+```
 
-## 2. MCU 状态所有权
+不负责
 
-MCU 是以下内容的唯一所有者：
+```text
+不请求 mcu 进入 AutoPi
+不实现自动任务流程
+不执行导航
+不执行视觉
+不执行授粉动作序列
+不根据业务逻辑判断 DONE 或 FAIL
+```
 
-- 本地应用状态机
-- `AutoPi` 进入权限
-- `Finished` 与 `Fault` 状态切换
-- `auto_start_latched`
-- 安全边界与急停逻辑
+## 二，与协议的关系
 
-Pi bridge 只负责：
+本包遵守 `comms_protocol.md` 中的约束
 
-1. 接收 `MCU_STATUS`
-2. 解析 `auto_start_latched`
-3. 检测 `START` / `RESET` 边沿
-4. 清理本地自动任务上下文
-5. 向上层发布一次性事件
+关键约束
 
-## 3. 主要话题
+```text
+mcu 是状态机唯一所有者
+pi 不具备切换 mcu 模式的线协议权限
+AutoPi 的启动真值来自 MCU_STATUS.app_state 和 auto_start_latched
+DONE 和 FAIL 只通过 PI_MISSION_EVENT 上报
+clear/reset 只能由遥控器手势触发
+```
 
-### 3.1 `/mcu/status`
+## 三，发布话题
 
-消息类型：
+### /mcu/status
+
+类型
 
 ```text
 mcu_comm_bridge/msg/McuStatus
 ```
 
-当前状态常量：
+用途
 
 ```text
-STATE_IDLE=0
-STATE_MANUAL=1
-STATE_AUTO_PI=2
-STATE_FAULT=3
-STATE_ESTOP=4
-STATE_FINISHED=5
+持续发布 mcu 状态，ready 位，在线位，故障信息，自动启动锁存
 ```
 
-当 MCU 上报 `app_state=5` 时，bridge 会记录为 `Finished`。
-
-### 3.2 `/mcu/auto_task_event`
-
-该话题只发布一次性边沿事件：
-
-- `EVENT_START`
-- `EVENT_RESET`
-
-上层应基于该话题触发自动任务，而不是仅仅因为 `app_state == AutoPi` 就重复启动任务。
-
-## 4. 任务结果上报服务
-
-服务名：
+QoS 建议
 
 ```text
-/mcu/report_mission_result
+可靠
+只保留最新一帧
+瞬态本地
 ```
 
-服务类型：
+后启动的任务节点可以立即拿到最近一次 mcu 状态
+
+### /mcu/auto_task_event
+
+类型
 
 ```text
-mcu_comm_bridge/srv/ReportMissionResult
+mcu_comm_bridge/msg/AutoTaskEvent
 ```
 
-定义：
+用途
 
 ```text
-uint8 RESULT_DONE=1
-uint8 RESULT_FAIL=2
-
-uint8 result
-int16 code
----
-bool success
-string message
-uint8 sent_count
+把 auto_start_latched 和 app_state 的边沿变化转换为一次性 START 或 RESET
 ```
 
-调用示例。
+事件
 
-任务完成：
+```text
+EVENT_START
+EVENT_RESET
+```
+
+注意
+
+```text
+这个话题不能使用瞬态本地
+避免新订阅者把旧 START 当成新任务
+```
+
+### /odom
+
+类型
+
+```text
+nav_msgs/msg/Odometry
+```
+
+来源
+
+```text
+MCU_ODOM
+```
+
+用途
+
+```text
+伪导航后端使用该话题闭环移动
+```
+
+### /imu
+
+类型
+
+```text
+sensor_msgs/msg/Imu
+```
+
+来源
+
+```text
+MCU_IMU
+```
+
+### /arm/joint_states
+
+类型
+
+```text
+sensor_msgs/msg/JointState
+```
+
+来源
+
+```text
+MCU_ARM_STATE 中的五个关节角
+```
+
+### /arm/pose
+
+类型
+
+```text
+geometry_msgs/msg/PoseStamped
+```
+
+来源
+
+```text
+MCU_ARM_STATE 中末端位姿
+```
+
+### /arm/pose_position
+
+类型
+
+```text
+geometry_msgs/msg/PointStamped
+```
+
+用途
+
+```text
+手眼标定工具和视觉授粉后端可使用该话题读取末端位置
+```
+
+## 四，订阅话题
+
+### /motor_cmd_vel
+
+类型
+
+```text
+geometry_msgs/msg/Twist
+```
+
+用途
+
+```text
+接收总任务状态机安全门控后的最终底盘速度
+```
+
+注意
+
+```text
+导航后端不能直接发布 /motor_cmd_vel
+导航后端应发布 /atlas/navigation/cmd_vel
+由 atlas_mission_manager 决定是否转发
+```
+
+## 五，服务接口
+
+### /mcu/set_brake
+
+用途
+
+```text
+请求底盘刹车或解除刹车
+```
+
+### /mcu/set_arm_joints
+
+用途
+
+```text
+发送五关节目标
+```
+
+说明
+
+```text
+服务成功只表示命令写入串口，不表示 mcu 已执行完成
+上层必须通过 /arm/joint_states 判断到位
+```
+
+### /mcu/set_arm_position
+
+用途
+
+```text
+发送末端位置目标 x，y，z
+```
+
+说明
+
+```text
+服务成功只表示命令写入串口，不表示 IK 成功或动作完成
+上层必须通过 /arm/pose_position 判断是否到位
+```
+
+### /mcu/report_mission_result
+
+用途
+
+```text
+pi 上报任务 DONE 或 FAIL
+```
+
+约束
+
+```text
+DONE 后 mcu 进入 Finished
+FAIL 后 mcu 进入 recoverable Fault
+DONE 和 FAIL 都不会清除 auto_start_latched
+下一轮必须通过遥控器 clear/reset 手势解锁
+```
+
+### /mcu/estop
+
+用途
+
+```text
+pi 主动发送急停事件
+```
+
+## 六，配置文件
+
+配置文件
+
+```text
+config/mcu_comm_bridge.yaml
+```
+
+重点字段
+
+| 字段 | 说明 |
+|---|---|
+| `port` | 串口设备路径 |
+| `baudrate` | 串口波特率 |
+| `publish_tf` | 是否发布 odom 到 base_footprint 的坐标变换 |
+| `cmd_vel_timeout_ms` | 底盘速度超时时间 |
+| `control_rate_hz` | PI_CONTROL 发送频率 |
+| `arm_command_repeat_count` | 机械臂目标重复发送次数 |
+| `mission_event_repeat_count` | DONE 或 FAIL 重复发送次数 |
+| `auto_ack_start_sensor_event` | 是否自动确认未来启动传感器事件 |
+
+## 七，单独启动
 
 ```bash
-ros2 service call /mcu/report_mission_result \
-  mcu_comm_bridge/srv/ReportMissionResult \
-  "{result: 1, code: 0}"
+ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
 ```
 
-任务失败：
+## 八，联调检查
+
+确认 mcu 状态
 
 ```bash
-ros2 service call /mcu/report_mission_result \
-  mcu_comm_bridge/srv/ReportMissionResult \
-  "{result: 2, code: -123}"
+ros2 topic echo /mcu/status \
+  --qos-reliability reliable \
+  --qos-durability transient_local
 ```
 
-映射规则：
-
-- `result=1` -> `DONE`
-- `result=2` -> `FAIL`
-- `DONE` 一律编码为 `event=1, code=0`
-- `FAIL` 一律编码为 `event=2, code=request.code`
-
-## 5. 服务接受条件
-
-调用 `/mcu/report_mission_result` 前，bridge 会检查：
-
-- 已收到 `MCU_STATUS`
-- MCU 当前处于 `STATE_AUTO_PI`
-- MCU `auto_start_latched == true`
-- Pi 本地 `mission_active == true`
-- 当前任务结果尚未成功上报
-- 当前没有并发中的任务结果上报
-
-典型拒绝原因包括：
-
-- `MCU status is not available`
-- `MCU is not in AutoPi`
-- `auto task is not latched`
-- `no active mission`
-- `mission result already reported`
-- `mission result report is already in progress`
-- `unsupported mission result`
-
-## 6. 任务结果发送语义
-
-`PI_MISSION_EVENT` 当前没有 MCU ACK。
-
-因此：
-
-- `success=true` 只表示至少有一帧成功写入 Pi 串口
-- 不表示 MCU 已解析
-- 不表示 MCU 已接受
-- 不表示 MCU 已切换到 `Finished` 或 `Fault`
-
-最终结果必须通过 `/mcu/status` 确认：
-
-- `DONE` 后应观察到 `STATE_FINISHED=5`
-- `FAIL` 后应观察到 `STATE_FAULT=3`
-
-## 7. 参数
-
-当前与本次任务相关的关键参数如下：
-
-```yaml
-mcu_comm_bridge_node:
-  ros__parameters:
-    arm_pose_position_topic: "/arm/pose_position"
-    mission_result_service: "/mcu/report_mission_result"
-    mission_event_repeat_count: 3
-```
-
-其中：
-
-- `mission_result_service` 默认为 `/mcu/report_mission_result`
-- `mission_event_repeat_count` 默认为 `3`
-- `mission_event_repeat_count` 最小值为 `1`
-- 当前代码将其限制在 `1..10`
-- 非法值会回退到 `3`
-
-## 8. 构建
+确认里程计
 
 ```bash
-source /opt/ros/humble/setup.bash
-colcon build \
-  --packages-select mcu_comm_bridge \
-  --symlink-install
+ros2 topic hz /odom
+ros2 topic echo /odom
+```
+
+确认机械臂反馈
+
+```bash
+ros2 topic hz /arm/joint_states
+ros2 topic echo /arm/pose_position
+```
+
+确认刹车服务
+
+```bash
+ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: true}"
 ```

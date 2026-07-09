@@ -1,6 +1,6 @@
-# 目标 yaw，单位 rad，节点内部转换为 urad 后写入 PI_YAW_ACTION.target_yaw_urad
+# 目标偏航角，单位弧度，节点内部转换为微弧度后写入二进制偏航动作帧
 float64 yaw_rad
 ---
-# true 表示 PI_YAW_ACTION 已成功写入串口
+# 真表示偏航动作帧已成功写入串口
 bool success
 string message

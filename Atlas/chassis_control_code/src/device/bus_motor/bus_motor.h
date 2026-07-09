@@ -82,10 +82,10 @@ typedef struct {
     uint8_t retry_count;        /**< 预留重试次数，具体驱动按需使用 */
 
     /**
-     * @brief 具体驱动的私有配置。
+     * @brief 具体驱动的私有配置
      *
-     * 通用 bus_motor 层不解释该指针，直接传递给具体驱动。
-     * 允许为 NULL，由具体驱动决定默认行为。
+     * 通用 bus_motor 层不解释该指针，直接传递给具体驱动
+     * 允许为 NULL，由具体驱动决定默认行为
      */
     const void* driver_config;
 } BusMotorConfig;

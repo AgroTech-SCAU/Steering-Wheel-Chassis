@@ -1,56 +1,153 @@
+# mcu_comm_bridge 配置
+# 本配置决定 pi 与 mcu 串口通信，话题映射，服务名，频率和安全超时
+# 修改前请确认 comms_protocol.md 中的协议字段和当前 mcu 固件一致
+
 mcu_comm_bridge_node:
   ros__parameters:
+    # 串口设备
+    # 树莓派上可能是 /dev/ttyUSB0，/dev/ttyACM0，或自定义 udev 名称
     port: "/dev/ttyUSB0"
+
+    # 串口波特率
+    # 必须和 mcu 端 pi_comms 波特率一致
     baudrate: 1000000
 
+    # 单帧 body 最大长度
+    # 当前协议 payload 最大 48 字节，256 足够
     max_body_len: 256
+
+    # 串口解析原始缓存容量
     parser_raw_buffer_capacity: 4096
+
+    # 已解析帧队列容量
     frame_queue_capacity: 512
 
+    # IMU 发布频率，来源是 MCU_IMU
     imu_publish_rate_hz: 100.0
+
+    # odom 发布频率，来源是 MCU_ODOM
     odom_publish_rate_hz: 50.0
+
+    # IMU 样本最大复用时间，单位 ms
     imu_max_reuse_age_ms: 100
+
+    # odom 样本最大复用时间，单位 ms
     odom_max_reuse_age_ms: 200
+
+    # 复用样本时间戳策略
+    # preserve_source 表示尽量保留源时间语义
     reused_message_stamp_mode: "preserve_source"
 
+    # 定期检查串口参数的周期，单位 s
     verify_termios_period_s: 5.0
 
+    # odom 话题名
     odom_topic: "/odom"
+
+    # imu 话题名
     imu_topic: "/imu"
+
+    # 机械臂关节反馈话题名
     arm_joint_state_topic: "/arm/joint_states"
+
+    # 机械臂末端位姿话题名
     arm_pose_topic: "/arm/pose"
+
+    # 机械臂末端位置话题名
     arm_pose_position_topic: "/arm/pose_position"
+
+    # mcu 状态话题名
     mcu_status_topic: "/mcu/status"
+
+    # 自动任务边沿事件话题名
     auto_task_event_topic: "/mcu/auto_task_event"
 
+    # odom 坐标系名称
     odom_frame_id: "odom"
+
+    # 底盘坐标系名称
     base_frame_id: "base_footprint"
+
+    # imu 坐标系名称
     imu_frame_id: "imu_link"
+
+    # 机械臂基座坐标系名称
     arm_frame_id: "arm_base_link"
+
+    # 是否发布 odom 到 base_footprint 的 TF
+    # 如果后续完整导航或定位系统也发布该 TF，需要只保留一个发布者
     publish_tf: true
 
+    # 最终底盘速度输入话题
+    # 该话题由 atlas_mission_manager 发布
     cmd_vel_topic: "/motor_cmd_vel"
+
+    # 刹车服务名
     brake_service: "/mcu/set_brake"
+
+    # 机械臂关节目标服务名
     arm_joints_service: "/mcu/set_arm_joints"
+
+    # 机械臂五维位姿目标服务名
     arm_pose_service: "/mcu/set_arm_pose"
+
+    # 机械臂三维位置目标服务名
     arm_position_service: "/mcu/set_arm_position"
+
+    # 机械臂二维姿态目标服务名
     arm_orientation_service: "/mcu/set_arm_orientation"
+
+    # 偏航保持服务名
     yaw_hold_service: "/mcu/set_yaw_hold"
+
+    # 偏航目标服务名
     yaw_target_service: "/mcu/set_yaw_target"
+
+    # 任务结果上报服务名
     mission_result_service: "/mcu/report_mission_result"
+
+    # 急停服务名
     estop_service: "/mcu/estop"
 
+    # PI_CONTROL 发送频率
     control_rate_hz: 50.0
+
+    # 速度命令超时时是否发送刹车请求
     send_brake_on_cmd_timeout: true
+
+    # 速度命令超时时间，单位 ms
+    # 必须小于 mcu 端 PI_CONTROL fresh timeout 或与其一致
     cmd_vel_timeout_ms: 200
+
+    # x 方向速度限幅，单位 m/s
     max_vx_m_s: 1.5
+
+    # y 方向速度限幅，单位 m/s
     max_vy_m_s: 1.5
+
+    # 角速度限幅，单位 rad/s
     max_wz_rad_s: 1.0
+
+    # 单个机械臂目标重复发送次数
+    # 用于提高串口瞬态丢帧下的命令到达概率
     arm_command_repeat_count: 3
+
+    # DONE 或 FAIL 事件重复发送次数
     mission_event_repeat_count: 3
+
+    # 急停帧重复发送次数
     repeat_estop_count: 3
 
+    # pi 心跳发送频率
     heartbeat_rate_hz: 1.0
+
+    # 通信统计日志频率
     stats_rate_hz: 1.0
+
+    # 是否自动确认 MCU_START_SENSOR_EVENT
+    # 当前遥控器启动不依赖该消息，该字段主要为未来传感器启动预留
     auto_ack_start_sensor_event: true
+
+    # 是否打印最近样本
+    # 实车调试时可临时打开，但不要长期高频刷屏
     log_latest_sample: false

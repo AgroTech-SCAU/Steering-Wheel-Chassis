@@ -1,0 +1,91 @@
+# atlas_nav_pseudo_backend 伪导航后端配置
+# 本节点只基于 /odom 做局部定点移动
+# 不使用地图，不避障，不做路径规划
+# 输出速度先到 /atlas/navigation/cmd_vel，再由 atlas_mission_manager 安全门控后转发到 /motor_cmd_vel
+
+atlas_nav_pseudo_backend:
+  ros__parameters:
+    # 后端名称
+    # 必须和 mission_manager.yaml 中 navigation_backend 一致
+    backend_name: "pseudo"
+
+    # 里程计输入话题
+    # 来源是 mcu_comm_bridge 发布的 MCU_ODOM
+    odom_topic: "/odom"
+
+    # 导航速度输出话题
+    # 不要改成 /motor_cmd_vel
+    # /motor_cmd_vel 只能由 atlas_mission_manager 发布
+    cmd_vel_topic: "/atlas/navigation/cmd_vel"
+
+    # 导航状态输出话题
+    status_topic: "/atlas/navigation/status"
+
+    # 启动服务
+    # 每个 waypoint 由 atlas_mission_manager 调用一次
+    start_service: "/atlas/navigation/start"
+
+    # 取消服务
+    # RESET，Manual，Fault，EStop 时由 atlas_mission_manager 调用
+    cancel_service: "/atlas/navigation/cancel"
+
+    # 控制循环频率
+    # mcu 的 PI_CONTROL 推荐 20 Hz 到 50 Hz
+    # 这里保持 50 Hz，便于低速平滑控制
+    control_rate_hz: 50.0
+
+    # odom 最大允许延迟
+    # 超过该时间认为里程计失效，立即失败并输出零速
+    odom_timeout_s: 0.30
+
+    # waypoint 默认超时时间
+    # StartNavigation 请求中的 timeout_s 小于等于 0 时使用该值
+    default_waypoint_timeout_s: 20.0
+
+    # 平面位置比例系数
+    # 过大容易震荡，过小到点慢
+    kp_xy: 0.8
+
+    # 偏航比例系数
+    # 过大容易自旋震荡，过小角度收敛慢
+    kp_yaw: 1.5
+
+    # 最大平移速度，单位 m/s
+    # 首次实车建议不超过 0.20
+    max_linear_speed_m_s: 0.20
+
+    # 最大角速度，单位 rad/s
+    max_angular_speed_rad_s: 0.40
+
+    # 最大线加速度，单位 m/s^2
+    # 限制速度突变，降低底盘冲击
+    max_linear_accel_m_s2: 0.30
+
+    # 最大角加速度，单位 rad/s^2
+    max_angular_accel_rad_s2: 0.80
+
+    # 减速距离，单位 m
+    # 距离目标小于该值时逐渐降低速度上限
+    slowdown_distance_m: 0.25
+
+    # 到点位置阈值，单位 m
+    # 轮式底盘不建议设置到毫米级
+    position_tolerance_m: 0.04
+
+    # 到点角度阈值，单位 rad
+    yaw_tolerance_rad: 0.08
+
+    # 稳定判定线速度阈值，单位 m/s
+    # 到点后速度低于该值才开始累计稳定时间
+    settle_linear_speed_m_s: 0.015
+
+    # 稳定判定角速度阈值，单位 rad/s
+    settle_angular_speed_rad_s: 0.03
+
+    # 稳定保持时间，单位 s
+    # 连续满足速度阈值这么久才发布 SUCCEEDED
+    settle_duration_s: 0.50
+
+    # 到点后等待稳定的最大时间，单位 s
+    # 超过该值仍不稳定则认为失败
+    settle_timeout_s: 2.0

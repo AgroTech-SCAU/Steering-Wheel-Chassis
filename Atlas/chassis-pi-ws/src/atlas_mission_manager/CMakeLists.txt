@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(mcu_comm_bridge REQUIRED)
 find_package(atlas_mission_interfaces REQUIRED)
@@ -32,9 +34,14 @@ target_include_directories(atlas_mission_manager_node PUBLIC
 ament_target_dependencies(atlas_mission_manager_node
   rclcpp
   geometry_msgs
+  sensor_msgs
   std_srvs
   mcu_comm_bridge
   atlas_mission_interfaces
+)
+
+target_link_libraries(atlas_mission_manager_node
+  yaml-cpp
 )
 
 install(TARGETS atlas_mission_manager_node

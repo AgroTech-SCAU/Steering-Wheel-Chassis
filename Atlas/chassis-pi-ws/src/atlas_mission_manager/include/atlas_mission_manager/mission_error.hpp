@@ -25,4 +25,11 @@ constexpr std::int32_t kDoneConfirmationTimeout = 1412;
 constexpr std::int32_t kFailConfirmationTimeout = 1413;
 constexpr std::int32_t kMissingRunContext = 1414;
 
+constexpr std::int32_t kRouteConfigError = 1501;
+constexpr std::int32_t kTaskFlowUnavailable = 1502;
+constexpr std::int32_t kArmCommandRejected = 1503;
+constexpr std::int32_t kArmMotionTimeout = 1504;
+constexpr std::int32_t kVisionTargetUnavailable = 1505;
+constexpr std::int32_t kCoordinateTransformFailed = 1506;
+
 }  // namespace atlas_mission_manager::error

@@ -8,24 +8,17 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
-    default_config = str(
-        Path(get_package_share_directory("atlas_mission_manager"))
-        / "config"
-        / "mission_manager.yaml"
-    )
-
-    config_arg = DeclareLaunchArgument(
-        "config",
-        default_value=default_config,
-        description="Path to atlas_mission_manager parameter YAML",
-    )
-
-    node = Node(
-        package="atlas_mission_manager",
-        executable="atlas_mission_manager_node",
-        name="atlas_mission_manager",
-        output="screen",
-        parameters=[LaunchConfiguration("config")],
-    )
-
-    return LaunchDescription([config_arg, node])
+    share = Path(get_package_share_directory("atlas_mission_manager"))
+    default_config = str(share / "config" / "mission_manager.yaml")
+    default_route = str(share / "config" / "mission_route.yaml")
+    return LaunchDescription([
+        DeclareLaunchArgument("config", default_value=default_config),
+        DeclareLaunchArgument("route", default_value=default_route),
+        Node(
+            package="atlas_mission_manager",
+            executable="atlas_mission_manager_node",
+            name="atlas_mission_manager",
+            output="screen",
+            parameters=[LaunchConfiguration("config"), {"route_yaml_path": LaunchConfiguration("route")}],
+        ),
+    ])

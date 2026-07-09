@@ -2,7 +2,7 @@
 <package format="3">
     <name>mcu_comm_bridge</name>
     <version>0.2.0</version>
-    <description>ROS2 serial communication bridge for Atlas chassis Pi to MCU binary protocol.</description>
+    <description>阿特拉斯树莓派到微控制器二进制协议通信桥</description>
     <maintainer email="kaerei@foxmail.com">Kaede Rei</maintainer>
     <license>MIT</license>
 

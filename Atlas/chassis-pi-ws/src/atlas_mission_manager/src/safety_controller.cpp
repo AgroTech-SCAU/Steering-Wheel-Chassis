@@ -122,4 +122,21 @@ void SafetyController::request_brake(const bool enable) {
       });
 }
 
+
+bool SafetyController::publish_motion_command(const geometry_msgs::msg::Twist& command) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (safe_stop_active_) {
+      return false;
+    }
+  }
+  cmd_vel_publisher_->publish(command);
+  return true;
+}
+
+bool SafetyController::safe_stop_active() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return safe_stop_active_;
+}
+
 }  // namespace atlas_mission_manager
