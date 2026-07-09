@@ -33,6 +33,8 @@ static SerialArmStatus build_atlas_arm_model(SerialArmModel* model);
 static void tf_identity(SerialArmTransform* T);
 static void tf_transl(SerialArmTransform* T, float x, float y, float z);
 static void tf_set(SerialArmTransform* T, const float m[4][4]);
+
+#if ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM == 0
 static BusServoStatus virtual_servo_init(const void* config);
 static const char* virtual_servo_status_str(BusServoStatus status);
 static BusServoStatus virtual_servo_set_speed(uint8_t id, float speed);
@@ -54,6 +56,7 @@ static BusServoStatus virtual_servo_batch_update_feedback(const uint8_t* ids,
                                                           uint8_t feedback_cap);
 static bool virtual_servo_id_valid(uint8_t id);
 static uint8_t virtual_servo_index_from_id(uint8_t id);
+#endif
 
 #if ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM
 static const BusServoPortOps servo_port_ops = {
@@ -72,6 +75,7 @@ static const FtScsServoConfig servo_config = {
 };
 #endif
 
+#if ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM == 0
 static BusServoFeedback s_virtual_feedbacks[ARM_DOF] = { 0 };
 
 static const BusServoInterface virtual_servo_instance = {
@@ -85,6 +89,7 @@ static const BusServoInterface virtual_servo_instance = {
     .get_torque = virtual_servo_get_torque,
     .update_feedback = virtual_servo_update_feedback,
 };
+#endif
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -305,6 +310,7 @@ static void tf_set(SerialArmTransform* T, const float m[4][4]) {
     }
 }
 
+#if ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM == 0
 static BusServoStatus virtual_servo_init(const void* config) {
     (void)config;
 
@@ -465,3 +471,4 @@ static bool virtual_servo_id_valid(uint8_t id) {
 static uint8_t virtual_servo_index_from_id(uint8_t id) {
     return (uint8_t)(id - 1u);
 }
+#endif
