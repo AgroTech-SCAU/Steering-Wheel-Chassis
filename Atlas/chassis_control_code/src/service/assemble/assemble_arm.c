@@ -16,7 +16,7 @@
 // ! ========================= 变 量 声 明 ========================= ! //
 
 /** @brief 是否启用真实机械臂 */
-#define ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM 0
+#define ASSEMBLE_ARM_ENABLE_MECHANICAL_ARM 1
 #define ARM_SERVO_SPEED_RAD_S 3.14f
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //

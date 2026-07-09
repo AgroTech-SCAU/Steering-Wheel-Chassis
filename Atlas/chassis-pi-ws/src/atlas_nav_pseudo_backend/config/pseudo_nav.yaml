@@ -31,7 +31,7 @@ atlas_nav_pseudo_backend:
 
     # 控制循环频率
     # mcu 的 PI_CONTROL 推荐 20 Hz 到 50 Hz
-    # 这里保持 50 Hz，便于低速平滑控制
+    # 这里保持 50 Hz，便于和 mcu_comm_bridge 的 50 Hz 底盘控制帧对齐
     control_rate_hz: 50.0
 
     # odom 最大允许延迟
@@ -42,30 +42,46 @@ atlas_nav_pseudo_backend:
     # StartNavigation 请求中的 timeout_s 小于等于 0 时使用该值
     default_waypoint_timeout_s: 20.0
 
-    # 平面位置比例系数
-    # 过大容易震荡，过小到点慢
-    kp_xy: 0.8
+    # 控制模式
+    # s_curve_tracking: 贴近旧 MCU 的 task_nav_control_follow_s_curve
+    # p_slowdown: 保留上一版纯 P + 减速区控制，必要时回退使用
+    control_mode: "s_curve_tracking"
 
-    # 偏航比例系数
-    # 过大容易自旋震荡，过小角度收敛慢
-    kp_yaw: 1.5
+    # 速度坐标语义
+    # odom_aligned: 直接输出 S 曲线算出的平面 vx/vy，尽量贴近旧 MCU 代码
+    # body: 将平面速度旋转到当前车体坐标系后输出
+    velocity_frame: "odom_aligned"
+
+    # 到点模式
+    # position_brake_hold: 位置到阈值后零速保持 brake_hold_s，再发布 SUCCEEDED
+    # position_velocity_settle: 速度稳定判定模式
+    arrival_mode: "position_brake_hold"
+
+    # 是否要求 yaw 也进入阈值后才算到点
+    require_yaw_reached: false
+
+    # 每个点默认按 1 秒轨迹完成，短距离点不会因为纯 P 减速而蠕动
+    s_curve_reach_time_s: 1.0
+
+    # S 曲线两端加减速比例
+    s_curve_accel_ratio: 0.05
+
+    # 轨迹跟踪 P 修正，越大越贴近期望轨迹，但过大可能抖动
+    s_curve_track_kp: 4.0
+
+    # 速度上限 = 段巡航速度 + 该裕量
+    s_curve_speed_margin_m_s: 0.04
 
     # 最大平移速度，单位 m/s
+    # S 曲线速度上限还会受该值限制
     max_linear_speed_m_s: 1.0
 
     # 最大角速度，单位 rad/s
+    # 当前主要用于保持起始 yaw，默认不参与到点判定
     max_angular_speed_rad_s: 0.40
 
-    # 最大线加速度，单位 m/s^2
-    # 限制速度突变，降低底盘冲击
-    max_linear_accel_m_s2: 0.30
-
-    # 最大角加速度，单位 rad/s^2
-    max_angular_accel_rad_s2: 0.80
-
-    # 减速距离，单位 m
-    # 距离目标小于该值时逐渐降低速度上限
-    slowdown_distance_m: 0.25
+    # 偏航比例系数
+    kp_yaw: 1.5
 
     # 到点位置阈值，单位 m
     position_tolerance_m: 0.005
@@ -73,17 +89,36 @@ atlas_nav_pseudo_backend:
     # 到点角度阈值，单位 rad
     yaw_tolerance_rad: 0.08
 
+    # 到点后零速保持时间，单位 s
+    brake_hold_s: 0.30
+
+    # 到点后最大刹停等待时间，单位 s
+    brake_timeout_s: 1.50
+
+    # 导航运行时调试日志周期，单位 s
+    # 会打印 dist、yaw_err、cmd 和 control_mode，便于判断是否方向反了或速度太小
+    debug_log_period_s: 1.0
+
+    # 平面位置比例系数
+    kp_xy: 0.8
+
+    # 最大线加速度，单位 m/s^2
+    max_linear_accel_m_s2: 0.30
+
+    # 最大角加速度，单位 rad/s^2
+    max_angular_accel_rad_s2: 0.80
+
+    # 减速距离，单位 m
+    slowdown_distance_m: 0.25
+
     # 稳定判定线速度阈值，单位 m/s
-    # 到点后速度低于该值才开始累计稳定时间
     settle_linear_speed_m_s: 0.015
 
     # 稳定判定角速度阈值，单位 rad/s
     settle_angular_speed_rad_s: 0.03
 
     # 稳定保持时间，单位 s
-    # 连续满足速度阈值这么久才发布 SUCCEEDED
     settle_duration_s: 0.50
 
     # 到点后等待稳定的最大时间，单位 s
-    # 超过该值仍不稳定则认为失败
     settle_timeout_s: 5.0
