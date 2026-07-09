@@ -59,7 +59,7 @@ atlas_vision_pollination_backend:
     default_speed_rad_s: 1.0
 
     # 等待视觉服务响应的超时时间，单位 s
-    vision_timeout_s: 3.0
+    vision_timeout_s: 10.0
 
     # 等待机械臂服务响应的超时时间，单位 s
     command_timeout_s: 2.0

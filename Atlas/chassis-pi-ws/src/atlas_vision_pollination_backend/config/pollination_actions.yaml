@@ -61,43 +61,11 @@ prepare_actions:
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 05 的左侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_05_left:
-    type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 05 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_05_right:
-    type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 06 的左侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_06_left:
-    type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 06 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_06_right:
-    type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
   # 点位 07 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_07_left:
     type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
@@ -105,125 +73,61 @@ prepare_actions:
   # 总任务会先执行该动作，让相机进入可识别视角
   pre_detect_nav_07_right:
     type: "joints"
-    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 10 的左侧预识别窗口
+  # 点位 08 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_10_left:
+  pre_detect_nav_08_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 10 的右侧预识别窗口
+  # 点位 08 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_10_right:
+  pre_detect_nav_08_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 11 的左侧预识别窗口
+  # 点位 09 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_11_left:
+  pre_detect_nav_09_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 11 的右侧预识别窗口
+  # 点位 09 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_11_right:
+  pre_detect_nav_09_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 12 的左侧预识别窗口
+  # 点位 12 的预识别位姿
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_12_left:
-    type: "joints"
-    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 12 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_12_right:
-    type: "joints"
-    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 13 的左侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_13_left:
-    type: "joints"
-    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 13 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_13_right:
-    type: "joints"
-    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 14 的左侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_14_left:
-    type: "joints"
-    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 14 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_14_right:
-    type: "joints"
-    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 15 的左侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_15_left:
-    type: "joints"
-    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 15 的右侧预识别窗口
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_15_right:
-    type: "joints"
-    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
-    speed_rad_s: 1.0
-    timeout_s: 8.0
-
-  # 点位 18 的预识别位姿
-  # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_18:
+  pre_detect_nav_12:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 19 的预识别位姿
+  # 点位 13 的预识别位姿
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_19:
+  pre_detect_nav_13:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 20 的预识别位姿
+  # 点位 14 的预识别位姿
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_20:
+  pre_detect_nav_14:
     type: "joints"
     joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
     speed_rad_s: 1.0
