@@ -51,8 +51,7 @@ atlas_nav_pseudo_backend:
     kp_yaw: 1.5
 
     # 最大平移速度，单位 m/s
-    # 首次实车建议不超过 0.20
-    max_linear_speed_m_s: 0.20
+    max_linear_speed_m_s: 1.0
 
     # 最大角速度，单位 rad/s
     max_angular_speed_rad_s: 0.40
@@ -69,8 +68,7 @@ atlas_nav_pseudo_backend:
     slowdown_distance_m: 0.25
 
     # 到点位置阈值，单位 m
-    # 轮式底盘不建议设置到毫米级
-    position_tolerance_m: 0.04
+    position_tolerance_m: 0.005
 
     # 到点角度阈值，单位 rad
     yaw_tolerance_rad: 0.08
@@ -88,4 +86,4 @@ atlas_nav_pseudo_backend:
 
     # 到点后等待稳定的最大时间，单位 s
     # 超过该值仍不稳定则认为失败
-    settle_timeout_s: 2.0
+    settle_timeout_s: 5.0

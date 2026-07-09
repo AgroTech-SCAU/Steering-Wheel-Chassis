@@ -23,18 +23,6 @@ static bool s_initialized = false;
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
 void suction_init(void) {
-    GPIO_InitTypeDef GPIO_InitStruct = { 0 };
-
-    // 使能GPIOE时钟
-    __HAL_RCC_GPIOE_CLK_ENABLE();
-
-    // 配置GPIO引脚为推挽输出
-    GPIO_InitStruct.Pin = SUCTION_RELAY_PIN | SUCTION_RELAY_PIN2;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(SUCTION_RELAY_PORT, &GPIO_InitStruct);
-
     // 默认关闭吸盘（继电器低电平驱动，所以输出高电平关闭）
     HAL_GPIO_WritePin(SUCTION_RELAY_PORT, SUCTION_RELAY_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(SUCTION_RELAY_PORT2, SUCTION_RELAY_PIN2, GPIO_PIN_SET);
