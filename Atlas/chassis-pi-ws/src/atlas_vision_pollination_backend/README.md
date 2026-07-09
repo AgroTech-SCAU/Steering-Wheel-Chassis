@@ -366,3 +366,15 @@ ros2 service call /atlas/manipulation/cancel atlas_mission_interfaces/srv/Cancel
 检查工具点偏移符号
 检查识别时的预识别位姿是否稳定
 ```
+
+## 动作配置补充
+
+`pollination_actions.yaml` 已经补齐 `src(141).zip` 中全部预识别动作和旧 MCU 纯关节授粉序列
+
+`pre_detect_nav_XX` 对应旧路线 `nav_index=XX` 的预识别位姿
+
+`visual_pollination` 是当前默认视觉授粉流程
+
+`legacy_pollination_nav_XX` 是从旧 `pollen_route.c` 迁移过来的纯关节序列，默认不启用
+
+如果某个点要复刻旧关节动作，把 `mission_route.yaml` 里该点的 `arrival_task` 改成对应 `legacy_pollination_nav_XX`

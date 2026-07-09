@@ -501,3 +501,276 @@ ros2 topic echo /motor_cmd_vel
 检查 pollination_actions.yaml 中工具点偏移是否合理
 检查 mcu 日志中是否有 IK 无解或目标越界
 ```
+
+## 十一，地图点位配置方法
+
+地图点位统一配置在
+
+```text
+src/atlas_mission_manager/config/mission_route.yaml
+```
+
+这个文件只描述路线和动作引用，不写具体机械臂关节角，不写视觉模型参数，不写伪导航控制参数
+
+每个前进点使用下面的结构
+
+```yaml
+- nav_index: 2
+  id: "area_a_02_down"
+  x: 0.71
+  y: -0.08
+  yaw: 0.00
+  area: "AREA_A"
+  flower_pattern:
+    direction: "Y"
+    up: false
+    mid: false
+    down: true
+  timeout_s: 20.0
+  prepare_action: "pre_detect_nav_02"
+  arrival_task: "visual_pollination"
+```
+
+字段说明
+
+| 字段 | 作用 |
+|---|---|
+| `nav_index` | 旧 MCU 路线索引，只用于对照和记录 |
+| `id` | 当前 pi 任务系统使用的点位名，必须唯一 |
+| `x` | 任务相对坐标 x，单位 m |
+| `y` | 任务相对坐标 y，单位 m |
+| `yaw` | 任务相对航向角，单位 rad |
+| `area` | 区域标签，可写 `PASS_BY`，`AREA_A`，`AREA_B`，`AREA_C` |
+| `flower_pattern` | 从旧 MCU 路线迁移过来的目标分布记录，当前主要用于说明和后续视觉策略 |
+| `timeout_s` | 伪导航执行该点允许的最长时间 |
+| `prepare_action` | 该点到位后视觉识别前使用的预识别机械臂位姿 |
+| `arrival_task` | 该点到位后执行的任务 |
+
+点位执行顺序就是 YAML 中 `waypoints` 的书写顺序
+
+重复坐标不能随便合并，例如 `area_a_02_down` 和 `area_a_03_up_mid` 坐标相同，但预识别动作和目标分布不同
+
+首次实车联调建议这样配置
+
+```yaml
+max_forward_waypoints: 1
+return_home_enabled: false
+```
+
+这只执行第一个 7 cm 过渡点，适合确认底盘方向，/odom 方向，刹车和 RESET
+
+验证第一个授粉点时可以改为
+
+```yaml
+max_forward_waypoints: 2
+return_home_enabled: false
+```
+
+完整执行全部前进点时改为
+
+```yaml
+max_forward_waypoints: 0
+return_home_enabled: false
+```
+
+前进点稳定后再打开返航
+
+```yaml
+return_home_enabled: true
+```
+
+## 十二，预识别动作配置方法
+
+预识别动作统一配置在
+
+```text
+src/atlas_vision_pollination_backend/config/pollination_actions.yaml
+```
+
+`mission_route.yaml` 中的 `prepare_action` 必须能在 `prepare_actions` 中找到同名动作
+
+示例
+
+```yaml
+prepare_actions:
+  pre_detect_nav_02:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+```
+
+字段说明
+
+| 字段 | 作用 |
+|---|---|
+| `type` | 当前支持 `noop` 和 `joints` |
+| `joints_rad` | 五个关节目标角，单位 rad |
+| `speed_rad_s` | 下发给 mcu 的动作速度，单位 rad/s |
+| `timeout_s` | 等待该关节动作到位的最长时间 |
+
+当前已经从 `src(141).zip` 的 `navigation_route.c` 迁移了全部 `pre_detect_joints`
+
+命名规则是
+
+```text
+pre_detect_nav_02
+pre_detect_nav_03
+...
+pre_detect_nav_20
+```
+
+其中数字对应旧 MCU 的 `nav_index`
+
+如果要修改某个点的预识别位姿，优先只改该点的 `pre_detect_nav_XX`，不要直接改通用视觉授粉序列
+
+## 十三，视觉授粉动作序列配置方法
+
+到位后任务同样配置在
+
+```text
+src/atlas_vision_pollination_backend/config/pollination_actions.yaml
+```
+
+默认任务名是
+
+```yaml
+arrival_task: "visual_pollination"
+```
+
+该任务的默认流程是
+
+```text
+到达预识别位姿
+  ↓
+调用 /vision/detect_camera_target
+  ↓
+用手眼变换计算目标在 arm_base_link 下的位置
+  ↓
+到达预授粉位姿
+  ↓
+到达授粉位姿
+  ↓
+停留
+  ↓
+回到预授粉位姿
+  ↓
+回到预识别位姿
+```
+
+对应 YAML 是
+
+```yaml
+sequence:
+  - type: "ensure_prepare_pose"
+    name: "到达预识别位姿"
+
+  - type: "visual_position"
+    name: "到达预授粉位姿"
+    tool_point_ref: "pre_pollination_tool_point_m"
+
+  - type: "visual_position"
+    name: "到达授粉位姿"
+    tool_point_ref: "pollination_tool_point_m"
+
+  - type: "dwell"
+    name: "授粉停留"
+    duration_s: 0.3
+
+  - type: "visual_position"
+    name: "回到预授粉位姿"
+    tool_point_ref: "pre_pollination_tool_point_m"
+
+  - type: "joints_action"
+    name: "回到预识别位姿"
+    action_ref: "prepare_action"
+```
+
+当前支持的步骤类型
+
+| 步骤类型 | 作用 |
+|---|---|
+| `ensure_prepare_pose` | 执行当前 waypoint 的 `prepare_action` |
+| `visual_position` | 根据视觉目标和工具点偏移计算机械臂位置目标 |
+| `dwell` | 原地等待一段时间 |
+| `joints_action` | 执行某个已定义的关节动作 |
+
+工具点偏移配置
+
+```yaml
+pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+pollination_tool_point_m: [0.05, -0.015, 0.087]
+```
+
+含义
+
+| 字段 | 作用 |
+|---|---|
+| `pre_pollination_tool_point_m` | 预授粉工具点偏移，单位 m |
+| `pollination_tool_point_m` | 授粉工具点偏移，单位 m |
+
+调参原则
+
+```text
+如果授粉动作接触过深，增大 pollination_tool_point_m 的 z
+如果授粉动作接触不到，减小 pollination_tool_point_m 的 z
+如果预授粉离目标太近，增大 pre_pollination_tool_point_m 的 z
+如果预授粉离目标太远，减小 pre_pollination_tool_point_m 的 z
+```
+
+重要约束
+
+```text
+视觉目标只在预识别位姿下计算一次
+预授粉，授粉和回退都复用同一个 target_base
+不要让机械臂移动后再拿旧相机坐标重新计算目标
+```
+
+## 十四，旧 MCU 纯关节授粉序列配置方法
+
+为了保留 `src(141).zip` 中 `pollen_route.c` 的旧任务流，当前已经把旧关节序列迁移为
+
+```text
+legacy_pollination_nav_02
+legacy_pollination_nav_03
+...
+legacy_pollination_nav_20
+```
+
+这些任务默认不启用
+
+如果你想让某个点不用视觉伺服，而是临时复刻旧 MCU 纯关节序列，只需要把该点改成
+
+```yaml
+arrival_task: "legacy_pollination_nav_02"
+```
+
+对应序列会按下面方式执行
+
+```yaml
+legacy_pollination_nav_02:
+  type: "joint_sequence"
+  sequence:
+    - type: "joints_action"
+      name: "legacy_nav_02_step_01"
+      action_ref: "legacy_nav_02_step_01"
+```
+
+对应关节动作定义在 `prepare_actions` 里
+
+```yaml
+legacy_nav_02_step_01:
+  type: "joints"
+  joints_rad: [1.485, 3.106, 5.410, 1.930, 3.141]
+  speed_rad_s: 1.0
+  timeout_s: 8.0
+```
+
+建议使用方式
+
+```text
+正式路线默认使用 visual_pollination
+旧纯关节序列只用于对照，回归测试或视觉暂时不可用时的临时验证
+不要同时在一个点中混用 visual_position 和旧固定关节序列，除非已经明确验证安全空间
+```
+

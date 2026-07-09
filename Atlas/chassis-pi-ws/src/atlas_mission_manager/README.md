@@ -306,3 +306,15 @@ arrival_task: "visual_pollination"
 第四步验证视觉和授粉动作
 
 第五步逐步打开更多点位和返航
+
+## 地图点位配置补充
+
+`mission_route.yaml` 已经按 `src(141).zip` 的路线补齐 20 个前进点和 2 个返航点
+
+`nav_index` 用于对照旧 MCU 代码，`id` 用于当前 ROS2 任务流
+
+`prepare_action` 只写动作名称，具体关节角在 `atlas_vision_pollination_backend/config/pollination_actions.yaml` 中配置
+
+`arrival_task` 默认使用 `visual_pollination`，过渡点使用 `noop`
+
+首次实车联调保持 `max_forward_waypoints: 1`，确认后再逐步增加

@@ -1,27 +1,30 @@
 # 自动任务路线配置
 # 本文件由 atlas_mission_manager 读取
-# 这里描述的是任务点，预识别动作名称，到点任务名称和返航策略
-# 不在这里写具体关节角，也不在这里写伪导航控制参数
-# 具体关节角在 atlas_vision_pollination_backend/config/pollination_actions.yaml 中配置
-# 伪导航控制参数在 atlas_nav_pseudo_backend/config/pseudo_nav.yaml 中配置
+# 这里统一描述地图点位，点位顺序，预识别动作名称，到点任务名称和返航策略
+# 本文件只写点位和动作引用，不写具体关节角，不写伪导航控制参数
+# 具体关节角放在 atlas_vision_pollination_backend/config/pollination_actions.yaml
+# 伪导航控制参数放在 atlas_nav_pseudo_backend/config/pseudo_nav.yaml
+# 索引 0 是起点参考，不作为真正执行点，因此这里从 nav_index 1 开始
 
 mission:
   # 坐标模式
-  # task_relative 表示所有 x，y，yaw 都相对于本轮任务开始时的 /odom
-  # 任务开始时第一个点会让伪导航后端记录当前 /odom 为任务原点
+  # task_relative 表示 x，y，yaw 都相对于本轮自动任务开始时的 /odom
+  # 第一个导航点启动时，伪导航后端会记录当前 /odom 作为任务原点
   coordinate_mode: "task_relative"
 
   # 导航后端名称
   # 当前只实现 pseudo
+  # 后续接完整导航时可以改为 full_nav，并让总状态机调用完整导航后端
   navigation_backend: "pseudo"
 
   # 到点后任务后端名称
   # 当前实现完整视觉加部分动作序列后端 vision_pollination
+  # 后续若使用视觉只选择动作序列的方案，可以新增后端并在这里切换
   manipulation_backend: "vision_pollination"
 
   # 前进路线最大执行点数
   # 1 表示只执行第一个点，用于首次安全联调
-  # 2 表示执行前两个点
+  # 2 表示执行前两个点，可以开始验证第一个授粉点前的底盘方向
   # 0 表示不限制，执行 waypoints 中所有点
   max_forward_waypoints: 1
 
@@ -31,29 +34,349 @@ mission:
   return_home_enabled: false
 
   # 前进路线点列表
-  # 每个点会先调用导航后端到达 x，y，yaw
-  # 到点稳定后，如果 arrival_task 不是 noop，则调用视觉和动作后端
+  # nav_index 保留旧 MCU 路线索引，方便和 src(141).zip 对照
+  # id 是 ROS 任务流使用的点位名，需要全局唯一
+  # x，y，yaw 是任务相对坐标，单位分别是 m，m，rad
+  # timeout_s 是该点伪导航最大允许时间
+  # prepare_action 是该点的预识别位姿名称，会在 pollination_actions.yaml 中查找
+  # arrival_task 是到点后任务名称，noop 表示只到点不执行视觉和机械臂
+  # PASS_BY 点一般使用 noop
+  # AREA_A，AREA_B，AREA_C 点默认使用 visual_pollination
+  # 如果要复刻旧 MCU 的纯关节授粉序列，可以把 arrival_task 改成 legacy_pollination_nav_XX
   waypoints:
-    # 第一个点是 7 cm 安全测试点
-    # 用于确认 /odom 方向，底盘 y 方向，刹车和 RESET 是否正常
-    - id: "pass_01"
+    # nav_index 1
+    # 区域 PASS_BY
+    # 过渡点，不执行视觉授粉任务
+    - nav_index: 1
+      id: "pass_01"
       x: 0.00
       y: -0.07
       yaw: 0.00
+      area: "PASS_BY"
       timeout_s: 20.0
       prepare_action: "noop"
       arrival_task: "noop"
 
-    # 第二个点是视觉授粉示例点
-    # 和旧 MCU 路线中的同坐标重复点语义一致，不能随意合并
-    # prepare_action 指向预识别关节位姿
-    # arrival_task 指向完整视觉授粉序列
-    - id: "area_a_02_down"
+    # nav_index 2
+    # 区域 AREA_A
+    # Y 向花型，下位目标
+    - nav_index: 2
+      id: "area_a_02_down"
       x: 0.71
       y: -0.08
       yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: false
+        mid: false
+        down: true
       timeout_s: 20.0
-      prepare_action: "area_a_left_pre_detect"
+      prepare_action: "pre_detect_nav_02"
+      arrival_task: "visual_pollination"
+
+    # nav_index 3
+    # 区域 AREA_A
+    # Y 向花型，上位和中位目标
+    - nav_index: 3
+      id: "area_a_03_up_mid"
+      x: 0.71
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: true
+        mid: true
+        down: false
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_03"
+      arrival_task: "visual_pollination"
+
+    # nav_index 4
+    # 区域 AREA_A
+    # Y 向花型，旧表记录为空目标
+    - nav_index: 4
+      id: "area_a_04_none"
+      x: 1.28
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: false
+        mid: false
+        down: false
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_04"
+      arrival_task: "visual_pollination"
+
+    # nav_index 5
+    # 区域 AREA_A
+    # Y 向花型，下位目标
+    - nav_index: 5
+      id: "area_a_05_down"
+      x: 1.28
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: false
+        mid: false
+        down: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_05"
+      arrival_task: "visual_pollination"
+
+    # nav_index 6
+    # 区域 AREA_A
+    # Y 向花型，下位目标
+    - nav_index: 6
+      id: "area_a_06_down"
+      x: 1.83
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: false
+        mid: false
+        down: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_06"
+      arrival_task: "visual_pollination"
+
+    # nav_index 7
+    # 区域 AREA_A
+    # Y 向花型，上中下全部目标
+    - nav_index: 7
+      id: "area_a_07_all"
+      x: 1.83
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      flower_pattern:
+        direction: "Y"
+        up: true
+        mid: true
+        down: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_07"
+      arrival_task: "visual_pollination"
+
+    # nav_index 8
+    # 区域 PASS_BY
+    # 过渡点，不执行视觉授粉任务
+    - nav_index: 8
+      id: "pass_08_turn_entry"
+      x: 2.19
+      y: -0.08
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    # nav_index 9
+    # 区域 PASS_BY
+    # 过渡点，不执行视觉授粉任务
+    - nav_index: 9
+      id: "pass_09_turn_down"
+      x: 2.19
+      y: -0.89
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    # nav_index 10
+    # 区域 AREA_B
+    # X 向花型，右侧目标
+    - nav_index: 10
+      id: "area_b_10_right"
+      x: 1.77
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: false
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_10"
+      arrival_task: "visual_pollination"
+
+    # nav_index 11
+    # 区域 AREA_B
+    # X 向花型，左侧和右侧目标
+    - nav_index: 11
+      id: "area_b_11_left_right"
+      x: 1.77
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: true
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_11"
+      arrival_task: "visual_pollination"
+
+    # nav_index 12
+    # 区域 AREA_B
+    # X 向花型，右侧目标
+    - nav_index: 12
+      id: "area_b_12_right"
+      x: 1.20
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: false
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_12"
+      arrival_task: "visual_pollination"
+
+    # nav_index 13
+    # 区域 AREA_B
+    # X 向花型，左侧和右侧目标
+    - nav_index: 13
+      id: "area_b_13_left_right"
+      x: 1.20
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: true
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_13"
+      arrival_task: "visual_pollination"
+
+    # nav_index 14
+    # 区域 AREA_B
+    # X 向花型，右侧目标
+    - nav_index: 14
+      id: "area_b_14_right"
+      x: 0.70
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: false
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_14"
+      arrival_task: "visual_pollination"
+
+    # nav_index 15
+    # 区域 AREA_B
+    # X 向花型，左侧和右侧目标
+    - nav_index: 15
+      id: "area_b_15_left_right"
+      x: 0.70
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      flower_pattern:
+        direction: "X"
+        left: true
+        mid: false
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_15"
+      arrival_task: "visual_pollination"
+
+    # nav_index 16
+    # 区域 PASS_BY
+    # 过渡点，不执行视觉授粉任务
+    - nav_index: 16
+      id: "pass_16_turn_entry"
+      x: 0.35
+      y: -0.89
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    # nav_index 17
+    # 区域 PASS_BY
+    # 过渡点，不执行视觉授粉任务
+    - nav_index: 17
+      id: "pass_17_turn_down"
+      x: 0.35
+      y: -1.65
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.0
+      prepare_action: "noop"
+      arrival_task: "noop"
+
+    # nav_index 18
+    # 区域 AREA_C
+    # X 向花型，中间目标
+    - nav_index: 18
+      id: "area_c_18_mid"
+      x: 0.83
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      flower_pattern:
+        direction: "X"
+        left: false
+        mid: true
+        right: false
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_18"
+      arrival_task: "visual_pollination"
+
+    # nav_index 19
+    # 区域 AREA_C
+    # X 向花型，中间和右侧目标
+    - nav_index: 19
+      id: "area_c_19_mid_right"
+      x: 1.21
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      flower_pattern:
+        direction: "X"
+        left: false
+        mid: true
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_19"
+      arrival_task: "visual_pollination"
+
+    # nav_index 20
+    # 区域 AREA_C
+    # X 向花型，左中右全部目标
+    - nav_index: 20
+      id: "area_c_20_all"
+      x: 1.70
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      flower_pattern:
+        direction: "X"
+        left: true
+        mid: true
+        right: true
+      timeout_s: 20.0
+      prepare_action: "pre_detect_nav_20"
       arrival_task: "visual_pollination"
 
   # 返航路线点列表
@@ -61,18 +384,24 @@ mission:
   # 返航点同样通过导航后端执行
   # 当前返航点默认不执行视觉和机械臂任务
   return_waypoints:
-    - id: "return_pass"
+    # 返航过渡点，对应 src(141).zip 中 nav_return_route_points[0]
+    - nav_index: 101
+      id: "return_pass"
       x: 0.35
       y: -1.65
       yaw: 0.00
+      area: "PASS_BY"
       timeout_s: 30.0
       prepare_action: "noop"
       arrival_task: "noop"
 
-    - id: "return_home"
+    # 返回起点附近，对应 src(141).zip 中 nav_return_route_points[1]
+    - nav_index: 102
+      id: "return_home"
       x: 0.01
       y: 0.03
       yaw: 0.00
+      area: "START_END"
       timeout_s: 30.0
       prepare_action: "noop"
       arrival_task: "noop"

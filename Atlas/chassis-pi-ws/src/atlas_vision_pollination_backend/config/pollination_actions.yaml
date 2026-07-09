@@ -1,97 +1,686 @@
 # 视觉授粉动作配置
 # 本文件由 atlas_vision_pollination_backend 读取
-# mission_route.yaml 中的 prepare_action 和 arrival_task 都要在这里能找到
-# 这里的数值是实车最需要调的部分，建议每次只改一个动作或一个偏移量
+# mission_route.yaml 中的 prepare_action 和 arrival_task 都会引用这里的名称
+# 所有关节角单位都是 rad
+# 每次实车调参建议只改一个点位或一个动作，避免无法判断问题来源
 
-# 移动前预识别动作表
-# 总任务状态机不会直接执行这些动作
-# 视觉授粉后端收到 prepare_action 名称后，在本表查找具体动作
 prepare_actions:
   # 空动作
-  # 用于纯通过点或调试点
+  # 用于 PASS_BY 点或只验证导航的点
   noop:
     type: "noop"
 
-  # A 区左侧预识别位姿
-  # joints_deg 是五个关节角，单位度
-  # 如果你用 /arm/joint_states 记录的是弧度，也可以改成 joints_rad
-  # 预识别位姿必须保证相机能看到目标，并且机械臂不会干涉底盘移动
-  area_a_left_pre_detect:
+  # 预识别动作
+  # 名称 pre_detect_nav_XX 中的 XX 对应旧 MCU 路线 nav_index
+  # 这些动作来自 src(141).zip 的 navigation_route.c 中 pre_detect_joints
+  # 总任务到达 AREA 点后，视觉授粉后端会先执行该动作，让相机进入可识别视角
+  # nav_index 2 的预识别位姿
+  pre_detect_nav_02:
     type: "joints"
-    joints_deg: [180.0, 90.0, 360.0, 180.0, 180.0]
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-# 到位后任务表
-# mission_route.yaml 中 arrival_task 字段会引用这里的名称
+  # nav_index 3 的预识别位姿
+  pre_detect_nav_03:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 4 的预识别位姿
+  pre_detect_nav_04:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 5 的预识别位姿
+  pre_detect_nav_05:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 6 的预识别位姿
+  pre_detect_nav_06:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 7 的预识别位姿
+  pre_detect_nav_07:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 10 的预识别位姿
+  pre_detect_nav_10:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 11 的预识别位姿
+  pre_detect_nav_11:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 12 的预识别位姿
+  pre_detect_nav_12:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 13 的预识别位姿
+  pre_detect_nav_13:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 14 的预识别位姿
+  pre_detect_nav_14:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 15 的预识别位姿
+  pre_detect_nav_15:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 18 的预识别位姿
+  pre_detect_nav_18:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 19 的预识别位姿
+  pre_detect_nav_19:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # nav_index 20 的预识别位姿
+  pre_detect_nav_20:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 旧 MCU 纯关节授粉序列步骤
+  # 这些步骤来自 src(141).zip 的 pollen_route.c
+  # 当前默认视觉授粉流程不会用到这些动作
+  # 如果某个点想临时复刻旧 MCU 关节动作，把 mission_route.yaml 中对应点的 arrival_task 改成 legacy_pollination_nav_XX
+  legacy_nav_02_step_01:
+    type: "joints"
+    joints_rad: [1.485, 3.106, 5.410, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_02_step_02:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_02_step_03:
+    type: "joints"
+    joints_rad: [1.480, 3.037, 5.645, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_02_step_04:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_03_step_01:
+    type: "joints"
+    joints_rad: [4.608, 2.810, 6.114, 1.927, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_03_step_02:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_01:
+    type: "joints"
+    joints_rad: [1.459, 3.195, 5.381, 1.928, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_02:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_03:
+    type: "joints"
+    joints_rad: [1.453, 3.114, 5.613, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_04:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_05:
+    type: "joints"
+    joints_rad: [1.411, 3.109, 5.800, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_04_step_06:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_05_step_01:
+    type: "joints"
+    joints_rad: [4.737, 2.873, 5.610, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_05_step_02:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_05_step_03:
+    type: "joints"
+    joints_rad: [4.738, 2.777, 5.860, 1.930, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_05_step_04:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_06_step_01:
+    type: "joints"
+    joints_rad: [1.451, 3.235, 5.283, 1.924, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_06_step_02:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_06_step_03:
+    type: "joints"
+    joints_rad: [1.445, 3.148, 5.539, 1.928, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_06_step_04:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_10_step_01:
+    type: "joints"
+    joints_rad: [0.904, 1.910, 4.705, 2.888, 2.229]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_10_step_02:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_10_step_03:
+    type: "joints"
+    joints_rad: [0.043, 1.994, 5.127, 2.338, 3.625]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_10_step_04:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_11_step_01:
+    type: "joints"
+    joints_rad: [3.198, 2.043, 5.008, 2.526, 2.471]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_11_step_02:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_12_step_01:
+    type: "joints"
+    joints_rad: [0.445, 2.005, 4.854, 2.603, 2.164]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_12_step_02:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_12_step_03:
+    type: "joints"
+    joints_rad: [5.944, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_12_step_04:
+    type: "joints"
+    joints_rad: [5.944, 2.054, 4.660, 3.112, 4.120]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_12_step_05:
+    type: "joints"
+    joints_rad: [5.944, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_13_step_01:
+    type: "joints"
+    joints_rad: [3.163, 2.128, 4.665, 3.123, 2.077]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_13_step_02:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_14_step_01:
+    type: "joints"
+    joints_rad: [0.494, 1.916, 4.909, 2.622, 2.240]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_14_step_02:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_14_step_03:
+    type: "joints"
+    joints_rad: [6.116, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_14_step_04:
+    type: "joints"
+    joints_rad: [6.116, 2.066, 4.837, 2.628, 4.326]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_14_step_05:
+    type: "joints"
+    joints_rad: [6.116, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_15_step_01:
+    type: "joints"
+    joints_rad: [3.853, 1.930, 4.877, 2.622, 2.187]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_15_step_02:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_18_step_01:
+    type: "joints"
+    joints_rad: [1.048, 4.162, 4.742, 2.051, 3.335]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_18_step_02:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_18_step_03:
+    type: "joints"
+    joints_rad: [1.589, 3.964, 5.136, 2.052, 3.336]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_18_step_04:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_19_step_01:
+    type: "joints"
+    joints_rad: [1.256, 3.953, 5.143, 2.063, 3.335]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  legacy_nav_19_step_02:
+    type: "joints"
+    joints_rad: [1.536, 2.511, 5.660, 2.424, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
 arrival_tasks:
   # 空到位任务
-  # 用于只验证导航到点，不执行视觉和机械臂
+  # 用于 PASS_BY 点或纯导航调试点
   noop:
     type: "noop"
 
-  # 完整视觉授粉任务
+  # 默认完整视觉授粉任务
+  # 该任务会先执行当前 waypoint 的 prepare_action
+  # 然后调用 /vision/detect_camera_target 获取相机坐标目标
+  # 再用手眼变换和工具点偏移计算预授粉与授粉位置
   visual_pollination:
-    # 类型名，后端根据该字段选择执行逻辑
     type: "visual_pollination"
 
     # 没有目标时的策略
     # skip 表示跳过该点并返回成功
-    # fail 表示该点任务失败，最终会导致总任务 FAIL
+    # fail 表示该点任务失败，并由总任务状态机上报 FAIL
     empty_target_policy: "skip"
 
     # 视觉服务名
-    # 通常保持和 camera_target.yaml 中 service_name 一致
+    # 由 atlas_camera_target_service 提供
     vision_service: "/vision/detect_camera_target"
 
     # 预授粉工具点偏移，单位 m
-    # 该点表示工具末端相对于 tool0 的偏移
-    # z=0.097 是你当前手眼工具点偏移中可行的预授粉高度
+    # 工具点偏移写在 tool0 坐标系下
+    # z=0.097 是当前 hand_eye_ok.py 中验证可行的预授粉高度
     pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
 
     # 授粉工具点偏移，单位 m
-    # 当前先给 0.087，实车可根据接触深度微调
-    # 如果接触过深，就增大 z
-    # 如果接触不到，就减小 z
+    # z 越小，末端越靠近目标
+    # 如果接触过深就增大 z，如果接触不到就减小 z
     pollination_tool_point_m: [0.05, -0.015, 0.087]
 
     # 默认动作速度，单位 rad/s
     speed_rad_s: 1.0
 
-    # 单个动作等待到位超时时间，单位 s
+    # 单个机械臂动作等待到位超时时间，单位 s
     timeout_s: 8.0
 
     # 授粉位姿停留时间，单位 s
     dwell_pollination_s: 0.3
 
-    # 动作序列
-    # 当前顺序是：确认预识别位姿，预授粉，授粉，停留，回预授粉，回预识别
-    # 后续要改动作，只建议在这里增删步骤，不要改总状态机
+    # 视觉授粉动作序列
+    # ensure_prepare_pose 会执行当前 waypoint 的 prepare_action
+    # 第一个 visual_position 会在预识别位姿下触发视觉服务，并把目标转换到 arm_base_link
+    # 后续 visual_position 使用同一个目标 base 坐标和检测时刻的工具坐标方向
+    # 这样可以避免机械臂移动后重复使用旧相机坐标导致误差
     sequence:
-      # 确认当前已经在 prepare_action 对应的预识别位姿
       - type: "ensure_prepare_pose"
+        name: "到达预识别位姿"
 
-      # 移动到预授粉位姿
-      # 使用 pre_pollination_tool_point_m 计算末端目标
       - type: "visual_position"
-        name: "pre_pollination"
+        name: "到达预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
 
-      # 移动到授粉位姿
-      # 使用 pollination_tool_point_m 计算末端目标
       - type: "visual_position"
-        name: "pollination"
+        name: "到达授粉位姿"
         tool_point_ref: "pollination_tool_point_m"
 
-      # 授粉位姿停留
       - type: "dwell"
+        name: "授粉停留"
         duration_s: 0.3
 
-      # 回到预授粉位姿
       - type: "visual_position"
-        name: "pre_pollination_return"
+        name: "回到预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
 
-      # 回到本 waypoint 的 prepare_action 预识别位姿
       - type: "joints_action"
+        name: "回到预识别位姿"
         action_ref: "prepare_action"
+
+  # 旧 MCU 纯关节授粉序列
+  # 这些任务默认不被 mission_route.yaml 使用
+  # 如果要让某个点使用旧纯关节序列，将该点 arrival_task 改成对应 legacy_pollination_nav_XX
+  # 这些序列不调用视觉服务，只按 joints_action 依次执行
+  # nav_index 2 的旧 MCU 授粉序列
+  legacy_pollination_nav_02:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_02_step_01"
+        action_ref: "legacy_nav_02_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_02_step_02"
+        action_ref: "legacy_nav_02_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_02_step_03"
+        action_ref: "legacy_nav_02_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_02_step_04"
+        action_ref: "legacy_nav_02_step_04"
+
+  # nav_index 3 的旧 MCU 授粉序列
+  legacy_pollination_nav_03:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_03_step_01"
+        action_ref: "legacy_nav_03_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_03_step_02"
+        action_ref: "legacy_nav_03_step_02"
+
+  # nav_index 4 的旧 MCU 授粉序列
+  legacy_pollination_nav_04:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_04_step_01"
+        action_ref: "legacy_nav_04_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_04_step_02"
+        action_ref: "legacy_nav_04_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_04_step_03"
+        action_ref: "legacy_nav_04_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_04_step_04"
+        action_ref: "legacy_nav_04_step_04"
+      - type: "joints_action"
+        name: "legacy_nav_04_step_05"
+        action_ref: "legacy_nav_04_step_05"
+      - type: "joints_action"
+        name: "legacy_nav_04_step_06"
+        action_ref: "legacy_nav_04_step_06"
+
+  # nav_index 5 的旧 MCU 授粉序列
+  legacy_pollination_nav_05:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_05_step_01"
+        action_ref: "legacy_nav_05_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_05_step_02"
+        action_ref: "legacy_nav_05_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_05_step_03"
+        action_ref: "legacy_nav_05_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_05_step_04"
+        action_ref: "legacy_nav_05_step_04"
+
+  # nav_index 6 的旧 MCU 授粉序列
+  legacy_pollination_nav_06:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_06_step_01"
+        action_ref: "legacy_nav_06_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_06_step_02"
+        action_ref: "legacy_nav_06_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_06_step_03"
+        action_ref: "legacy_nav_06_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_06_step_04"
+        action_ref: "legacy_nav_06_step_04"
+
+  # nav_index 7 的旧 MCU 授粉序列
+  legacy_pollination_nav_07:
+    type: "noop"
+
+  # nav_index 10 的旧 MCU 授粉序列
+  legacy_pollination_nav_10:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_10_step_01"
+        action_ref: "legacy_nav_10_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_10_step_02"
+        action_ref: "legacy_nav_10_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_10_step_03"
+        action_ref: "legacy_nav_10_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_10_step_04"
+        action_ref: "legacy_nav_10_step_04"
+
+  # nav_index 11 的旧 MCU 授粉序列
+  legacy_pollination_nav_11:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_11_step_01"
+        action_ref: "legacy_nav_11_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_11_step_02"
+        action_ref: "legacy_nav_11_step_02"
+
+  # nav_index 12 的旧 MCU 授粉序列
+  legacy_pollination_nav_12:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_12_step_01"
+        action_ref: "legacy_nav_12_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_12_step_02"
+        action_ref: "legacy_nav_12_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_12_step_03"
+        action_ref: "legacy_nav_12_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_12_step_04"
+        action_ref: "legacy_nav_12_step_04"
+      - type: "joints_action"
+        name: "legacy_nav_12_step_05"
+        action_ref: "legacy_nav_12_step_05"
+
+  # nav_index 13 的旧 MCU 授粉序列
+  legacy_pollination_nav_13:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_13_step_01"
+        action_ref: "legacy_nav_13_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_13_step_02"
+        action_ref: "legacy_nav_13_step_02"
+
+  # nav_index 14 的旧 MCU 授粉序列
+  legacy_pollination_nav_14:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_14_step_01"
+        action_ref: "legacy_nav_14_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_14_step_02"
+        action_ref: "legacy_nav_14_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_14_step_03"
+        action_ref: "legacy_nav_14_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_14_step_04"
+        action_ref: "legacy_nav_14_step_04"
+      - type: "joints_action"
+        name: "legacy_nav_14_step_05"
+        action_ref: "legacy_nav_14_step_05"
+
+  # nav_index 15 的旧 MCU 授粉序列
+  legacy_pollination_nav_15:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_15_step_01"
+        action_ref: "legacy_nav_15_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_15_step_02"
+        action_ref: "legacy_nav_15_step_02"
+
+  # nav_index 18 的旧 MCU 授粉序列
+  legacy_pollination_nav_18:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_18_step_01"
+        action_ref: "legacy_nav_18_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_18_step_02"
+        action_ref: "legacy_nav_18_step_02"
+      - type: "joints_action"
+        name: "legacy_nav_18_step_03"
+        action_ref: "legacy_nav_18_step_03"
+      - type: "joints_action"
+        name: "legacy_nav_18_step_04"
+        action_ref: "legacy_nav_18_step_04"
+
+  # nav_index 19 的旧 MCU 授粉序列
+  legacy_pollination_nav_19:
+    type: "joint_sequence"
+    sequence:
+      - type: "joints_action"
+        name: "legacy_nav_19_step_01"
+        action_ref: "legacy_nav_19_step_01"
+      - type: "joints_action"
+        name: "legacy_nav_19_step_02"
+        action_ref: "legacy_nav_19_step_02"
+
+  # nav_index 20 的旧 MCU 授粉序列
+  legacy_pollination_nav_20:
+    type: "noop"
+
