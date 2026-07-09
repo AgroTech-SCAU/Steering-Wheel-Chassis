@@ -30,7 +30,7 @@ atlas_camera_target_service:
     image_height: 720
 
     # 相机缓存帧数
-    # 设置为 1 可以尽量减少旧画面影响
+    # 设置为 1 可以尽量减少缓存画面影响
     camera_buffer_size: 1
 
     # 目标检测模型路径
@@ -52,7 +52,7 @@ atlas_camera_target_service:
     max_processing_s: 3.0
 
     # 每次请求前丢弃的缓存帧数量
-    # 用于减少旧图像导致的错误识别
+    # 用于减少缓存图像导致的错误识别
     frame_retry_count: 10
 
     # 语音模式

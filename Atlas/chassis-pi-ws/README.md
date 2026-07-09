@@ -1,342 +1,155 @@
-# chassis-pi-ws 工作区说明
+# chassis-pi-ws
 
-本工作区是农业机器人树莓派端任务系统，负责把 mcu 提供的底盘，机械臂，里程计，遥控启动和安全状态，与 pi 端的导航，视觉，手眼变换，动作序列和任务上报连接起来
+本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，伪导航，视觉识别，手眼变换，机械臂授粉序列连接成一条可配置的自动任务链路
 
-本说明面向实车联调，重点说明每个包的职责，任务流程，配置方式，启动方式和排错方法
-
-## 一，系统职责边界
-
-mcu 负责
+当前默认任务链路为
 
 ```text
-底盘真实执行
-机械臂真实执行
-遥控器输入和启动仲裁
-pc 与 pi 串口通信
-系统状态机
-急停，故障，安全停车
-自动任务启动锁存 auto_start_latched
-```
-
-pi 负责
-
-```text
-监听 /mcu/status 与 /mcu/auto_task_event
-执行总任务状态机
-按配置选择导航后端和视觉后端
-执行伪导航或未来完整导航
-执行视觉识别，手眼变换和授粉动作序列
-把任务完成或失败上报给 mcu
-```
-
-pc 负责
-
-```text
-主臂遥操作
-人工示教
-人工调试
-必要时人工接管
-```
-
-重要约束
-
-```text
-pi 不主动请求 mcu 进入 AutoPi
-全自动启动权只在 mcu
-pi 只在 mcu 已进入 AutoPi 且 auto_start_latched=1 时启动本地任务
-任务完成或失败后 auto_start_latched 不会自动清零
-下一轮任务必须使用遥控器 clear/reset 手势解锁
-```
-
-## 二，工作区目录
-
-```text
-chassis-pi-ws/
-├── README.md
-└── src/
-    ├── mcu_comm_bridge
-    ├── atlas_mission_interfaces
-    ├── atlas_mission_manager
-    ├── atlas_nav_pseudo_backend
-    ├── atlas_vision_pollination_backend
-    └── handeye_calibration_tool
-```
-
-旧的独立 vision 示例目录已经删除
-
-视觉服务，语音文本，手眼变换和授粉动作序列都放在
-
-```text
-src/atlas_vision_pollination_backend
-```
-
-## 三，包职责总览
-
-| 包名 | 主要职责 | 不负责的内容 |
-|---|---|---|
-| `mcu_comm_bridge` | 串口协议桥接，发布 mcu 状态，里程计，机械臂反馈，提供底盘和机械臂控制服务 | 不实现任务流程，不启动导航，不启动视觉 |
-| `atlas_mission_interfaces` | 保存任务系统公共消息和服务接口 | 不包含执行逻辑 |
-| `atlas_mission_manager` | 总任务状态机，后端选择，速度安全门控，任务结果上报 | 不写具体导航算法，不写视觉模型，不写授粉序列 |
-| `atlas_nav_pseudo_backend` | 基于 /odom 的伪导航后端，输出导航速度 | 不直接控制 /motor_cmd_vel，不做地图避障 |
-| `atlas_vision_pollination_backend` | 相机目标服务，手眼变换，视觉授粉动作序列 | 不管理 mcu 自动启动，不控制底盘导航 |
-| `handeye_calibration_tool` | 单目手眼标定采样，求解，结果保存 | 不参与自动任务运行 |
-
-## 四，完整任务流程
-
-正常自动任务流程如下
-
-```text
-遥控器自动启动
+遥控器触发自动任务
   ↓
-mcu 接受启动条件
+MCU 进入 AutoPi 并通过 /mcu/status 通知 Pi
   ↓
-mcu 设置 auto_start_latched=1
-  ↓
-mcu 进入 AutoPi
-  ↓
-mcu_comm_bridge 发布 /mcu/auto_task_event 的 START
-  ↓
-atlas_mission_manager 进入 PRECHECK
+atlas_mission_manager 接收 START
   ↓
 读取 mission_route.yaml
   ↓
-按点循环执行
+调用伪导航后端移动到点位
   ↓
-调用导航后端 /atlas/navigation/start
+调用视觉授粉后端执行预识别，视觉识别，预授粉，授粉，回退
   ↓
-等待导航后端到点成功
-  ↓
-调用视觉授粉后端 /atlas/manipulation/start
-  ↓
-等待视觉授粉后端成功
-  ↓
-进入下一点或返航点
-  ↓
-全部完成后调用 /mcu/report_mission_result 上报 DONE
-  ↓
-mcu 从 AutoPi 进入 Finished
-  ↓
-等待遥控器 clear/reset 手势
+全部点位完成后上报 DONE
 ```
 
-中止流程如下
+当前已实现
 
 ```text
-收到 RESET，Manual，Fault，EStop，mcu 状态超时，导航失败，视觉失败
-  ↓
-atlas_mission_manager 取消导航后端
-  ↓
-atlas_mission_manager 取消视觉授粉后端
-  ↓
-atlas_mission_manager 屏蔽非零速度
-  ↓
-atlas_mission_manager 发布零速并请求刹车
-  ↓
-必要时上报 FAIL
-  ↓
-等待 mcu Fault 或等待 RESET
+总任务状态机
+伪导航后端
+视觉授粉后端
+视觉目标 service
+手眼变换
+可配置地图点位
+可配置预识别动作
+可配置工具点偏移
+可配置授粉动作序列
 ```
 
-## 五，速度链路
-
-底盘速度只有一个最终出口
+当前暂未实现
 
 ```text
-atlas_nav_pseudo_backend
-  ↓ /atlas/navigation/cmd_vel
-atlas_mission_manager
-  ↓ /motor_cmd_vel
-mcu_comm_bridge
-  ↓ PI_CONTROL
-mcu
+完整导航后端
+视觉只选择动作序列后端
+多目标连续授粉策略
+动态避障
 ```
 
-约束
+---
+
+## 一，功能包总览
 
 ```text
-导航后端只能发布 /atlas/navigation/cmd_vel
-只有 atlas_mission_manager 可以发布 /motor_cmd_vel
-一旦总状态机不允许运动，manager 会无条件输出零速
-RESET，Manual，Fault，EStop 时 manager 会取消后端并请求刹车
+src/
+├── mcu_comm_bridge
+├── atlas_mission_interfaces
+├── atlas_mission_manager
+├── atlas_nav_pseudo_backend
+├── atlas_vision_pollination_backend
+└── handeye_calibration_tool
 ```
 
-## 六，视觉授粉链路
+| 功能包 | 作用 |
+|---|---|
+| `mcu_comm_bridge` | 串口协议桥接，发布 MCU 状态，里程计，机械臂状态，提供机械臂和任务结果服务 |
+| `atlas_mission_interfaces` | 定义任务层消息和 service |
+| `atlas_mission_manager` | 总任务状态机，后端选择，安全门控，DONE 和 FAIL 上报 |
+| `atlas_nav_pseudo_backend` | 伪导航后端，使用 `/odom` 做任务相对点位移动 |
+| `atlas_vision_pollination_backend` | 视觉目标 service，手眼变换，预授粉和授粉动作序列 |
+| `handeye_calibration_tool` | 手眼标定辅助工具，生成视觉授粉所需的手眼参数 |
 
-当前实现的是完整视觉加部分动作序列后端
+---
 
-```text
-atlas_mission_manager
-  ↓ /atlas/manipulation/start
-atlas_vision_pollination_backend
-  ↓ /vision/detect_camera_target
-atlas_camera_target_service
-  ↓ 返回 camera 坐标目标
-atlas_vision_pollination_backend
-  ↓ 手眼变换
-atlas_vision_pollination_backend
-  ↓ /mcu/set_arm_position 与 /mcu/set_arm_joints
-mcu_comm_bridge
-  ↓ PI_CONTROL.arm
-mcu
-```
+## 二，总任务流程
 
-当前动作序列
+### 1，启动条件
 
-```text
-预识别位姿
-  ↓
-视觉识别
-  ↓
-预授粉位姿，工具点 z=0.097
-  ↓
-授粉位姿
-  ↓
-停留
-  ↓
-回到预授粉位姿
-  ↓
-回到预识别位姿
-```
+Pi 不主动请求 MCU 进入 AutoPi
 
-后续如果改为“视觉只负责选择动作序列”，可以新增另一个 manipulation 后端，并复用现有 `/atlas/manipulation/start` 接口
+自动任务启动由 MCU 根据遥控器输入，Pi 在线状态，底盘 ready，odom ready 等条件决定
 
-## 七，主要话题和服务
-
-mcu 通信桥输出
+Pi 端只监听
 
 ```text
 /mcu/status
 /mcu/auto_task_event
-/odom
-/imu
-/arm/joint_states
-/arm/pose
-/arm/pose_position
 ```
 
-mcu 通信桥服务
+当看到
 
 ```text
-/mcu/set_brake
-/mcu/set_arm_joints
-/mcu/set_arm_pose
-/mcu/set_arm_position
-/mcu/set_arm_orientation
-/mcu/set_yaw_hold
-/mcu/set_yaw_target
+app_state = AutoPi
+auto_start_latched = true
+```
+
+并且 START 尚未消费时，`atlas_mission_manager` 才启动一轮任务
+
+### 2，任务执行
+
+每个点位执行顺序为
+
+```text
+读取当前 waypoint
+  ↓
+调用导航后端移动到 waypoint
+  ↓
+导航后端到点并稳定
+  ↓
+如果 arrival_task = noop，进入下一个点
+  ↓
+如果 arrival_task = visual_pollination，调用视觉授粉后端
+  ↓
+视觉授粉后端执行完整授粉序列
+  ↓
+进入下一个点
+```
+
+### 3，任务结束
+
+全部点位完成后，`atlas_mission_manager` 调用
+
+```text
 /mcu/report_mission_result
-/mcu/estop
 ```
 
-任务系统接口
+上报
 
 ```text
-/atlas/mission/status
-/atlas/navigation/start
-/atlas/navigation/cancel
-/atlas/navigation/status
-/atlas/navigation/cmd_vel
-/atlas/manipulation/start
-/atlas/manipulation/cancel
-/atlas/manipulation/status
-/vision/detect_camera_target
+DONE
 ```
 
-## 八，配置文件位置
-
-总任务配置
+如果导航，视觉，机械臂任一阶段失败，则上报
 
 ```text
-src/atlas_mission_manager/config/mission_manager.yaml
-src/atlas_mission_manager/config/mission_route.yaml
+FAIL
 ```
 
-伪导航配置
+### 4，任务复位
 
-```text
-src/atlas_nav_pseudo_backend/config/pseudo_nav.yaml
-```
+下一轮任务必须等 MCU 清除 `auto_start_latched`
 
-视觉授粉配置
+Pi 收到 RESET 后会清理本地任务上下文，取消导航和视觉授粉后端，停止底盘速度输出
 
-```text
-src/atlas_vision_pollination_backend/config/camera_target.yaml
-src/atlas_vision_pollination_backend/config/pollination.yaml
-src/atlas_vision_pollination_backend/config/pollination_actions.yaml
-```
+---
 
-通信桥配置
+## 三，编译与启动
 
-```text
-src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
-```
-
-手眼标定配置
-
-```text
-src/handeye_calibration_tool/config/handeye_tool.yaml
-```
-
-## 九，首次实车安全配置
-
-首次联调建议保持
-
-```yaml
-max_forward_waypoints: 1
-return_home_enabled: false
-```
-
-这表示只执行第一个 7 cm 测试点
-
-确认方向，刹车，里程计和遥控 reset 都正常后，再逐步调整
-
-```yaml
-max_forward_waypoints: 2
-```
-
-最后完整打开全部前进点
-
-```yaml
-max_forward_waypoints: 0
-```
-
-返航确认安全后再打开
-
-```yaml
-return_home_enabled: true
-```
-
-## 十，依赖安装
-
-基础依赖
+安装依赖
 
 ```bash
 sudo apt update
-sudo apt install -y \
-  ros-humble-ros-base \
-  python3-colcon-common-extensions \
-  python3-yaml \
-  python3-numpy \
-  python3-opencv \
-  python3-cv-bridge \
-  libyaml-cpp-dev
+sudo apt install -y python3-yaml python3-opencv python3-numpy libyaml-cpp-dev
 ```
 
-视觉模型依赖需要根据实际模型部署方式安装
-
-如果使用 ultralytics
-
-```bash
-pip3 install ultralytics
-```
-
-语音播报如果使用 espeak
-
-```bash
-sudo apt install -y espeak alsa-utils
-```
-
-## 十一，编译
+编译
 
 ```bash
 cd ~/chassis-pi-ws
@@ -355,177 +168,58 @@ colcon build \
 source install/setup.bash
 ```
 
-## 十二，启动
-
-启动 mcu 通信桥
+启动串口桥
 
 ```bash
 ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
 ```
 
-启动任务栈
+启动完整任务栈
 
 ```bash
 ros2 launch atlas_mission_manager mission_stack.launch.py
 ```
 
-单独启动伪导航后端
-
-```bash
-ros2 launch atlas_nav_pseudo_backend pseudo_nav.launch.py
-```
-
-单独启动视觉授粉后端
-
-```bash
-ros2 launch atlas_vision_pollination_backend vision_pollination.launch.py
-```
-
-单独启动总任务状态机
-
-```bash
-ros2 launch atlas_mission_manager mission_manager.launch.py
-```
-
-## 十三，常用查看命令
-
-查看 mcu 状态
-
-```bash
-ros2 topic echo /mcu/status \
-  --qos-reliability reliable \
-  --qos-durability transient_local
-```
-
-查看自动任务边沿事件
-
-```bash
-ros2 topic echo /mcu/auto_task_event
-```
-
-查看总任务状态
+查看状态
 
 ```bash
 ros2 topic echo /atlas/mission/status
-```
-
-查看导航后端状态
-
-```bash
 ros2 topic echo /atlas/navigation/status
-```
-
-查看视觉授粉后端状态
-
-```bash
 ros2 topic echo /atlas/manipulation/status
 ```
 
-查看导航速度
+---
 
-```bash
-ros2 topic echo /atlas/navigation/cmd_vel
-```
+## 四，核心配置文件
 
-查看最终给 mcu 的速度
+| 文件 | 内容 |
+|---|---|
+| `src/atlas_mission_manager/config/mission_manager.yaml` | 总状态机参数，后端服务名，安全停止参数 |
+| `src/atlas_mission_manager/config/mission_route.yaml` | 地图点位，点位顺序，预识别动作名称，到点任务名称 |
+| `src/atlas_nav_pseudo_backend/config/pseudo_nav.yaml` | 伪导航控制参数，速度限制，到点阈值，超时 |
+| `src/atlas_vision_pollination_backend/config/pollination_actions.yaml` | 预识别关节位姿，工具点偏移，授粉序列 |
+| `src/atlas_vision_pollination_backend/config/pollination.yaml` | 视觉授粉后端参数，手眼参数，等待阈值 |
+| `src/atlas_vision_pollination_backend/config/camera_target.yaml` | 相机和目标检测参数 |
+| `src/mcu_comm_bridge/config/mcu_comm_bridge.yaml` | 串口和 ROS 话题参数 |
 
-```bash
-ros2 topic echo /motor_cmd_vel
-```
+---
 
-## 十四，联调顺序
+## 五，如何配置地图点位
 
-推荐按下面顺序联调
-
-```text
-1，启动 mcu_comm_bridge，确认 /mcu/status 正常
-2，确认 /odom 频率约 50 Hz
-3，确认 /arm/joint_states 和 /arm/pose_position 正常
-4，启动 mission_stack
-5，先保持 max_forward_waypoints=1，确认 7 cm 测试点方向正确
-6，测试移动中 clear/reset，确认立即停车
-7，打开 area_a_02_down，确认预识别位姿能执行
-8，配置视觉模型路径和相机编号
-9，调用 /vision/detect_camera_target 做单次视觉验证
-10，打开 visual_pollination，验证手眼变换和授粉序列
-11，逐步增加 waypoint 数量
-12，最后打开 return_home_enabled
-```
-
-## 十五，常见问题
-
-没有 START
-
-```text
-检查 mcu 是否 AutoPi
-检查 /mcu/status 中 auto_start_latched 是否为 true
-检查 pi_online，chassis_ready，odom_ready 是否为 true
-检查遥控器启动手势是否先经过非自动状态再进入自动状态
-```
-
-机器人不动
-
-```text
-检查 /atlas/navigation/cmd_vel 是否有速度
-检查 /motor_cmd_vel 是否有速度
-如果前者有，后者没有，说明 manager 安全门控不允许运动
-检查 mcu 是否仍处于 AutoPi
-检查 /mcu/set_brake 是否被持续请求
-```
-
-伪导航方向反了
-
-```text
-先不要打开多点路线
-只用第一个 7 cm 点
-检查 /odom 的 x，y，yaw 方向
-检查底盘 vx，vy 方向和 mcu 里程计方向是否一致
-```
-
-视觉服务失败
-
-```text
-检查 camera_target.yaml 中 camera_index 是否正确
-检查 model_path 是否存在
-检查是否能打开相机
-检查 /vision/debug_image 是否有图像
-检查 target_camera_m 单位是否为米
-```
-
-机械臂到位失败
-
-```text
-检查 /arm/joint_states 是否新鲜
-检查 /arm/pose_position 是否新鲜
-检查目标点是否在机械臂工作空间内
-检查 pollination_actions.yaml 中工具点偏移是否合理
-检查 mcu 日志中是否有 IK 无解或目标越界
-```
-
-## 十一，地图点位配置方法
-
-地图点位统一配置在
+地图点位写在
 
 ```text
 src/atlas_mission_manager/config/mission_route.yaml
 ```
 
-这个文件只描述路线和动作引用，不写具体机械臂关节角，不写视觉模型参数，不写伪导航控制参数
-
-每个前进点使用下面的结构
+每个点位格式如下
 
 ```yaml
-- nav_index: 2
-  id: "area_a_02_down"
+- id: "area_a_02_down"
   x: 0.71
   y: -0.08
   yaw: 0.00
   area: "AREA_A"
-  flower_pattern:
-    direction: "Y"
-    up: false
-    mid: false
-    down: true
   timeout_s: 20.0
   prepare_action: "pre_detect_nav_02"
   arrival_task: "visual_pollination"
@@ -533,63 +227,70 @@ src/atlas_mission_manager/config/mission_route.yaml
 
 字段说明
 
-| 字段 | 作用 |
+| 字段 | 说明 |
 |---|---|
-| `nav_index` | 旧 MCU 路线索引，只用于对照和记录 |
-| `id` | 当前 pi 任务系统使用的点位名，必须唯一 |
-| `x` | 任务相对坐标 x，单位 m |
-| `y` | 任务相对坐标 y，单位 m |
-| `yaw` | 任务相对航向角，单位 rad |
-| `area` | 区域标签，可写 `PASS_BY`，`AREA_A`，`AREA_B`，`AREA_C` |
-| `flower_pattern` | 从旧 MCU 路线迁移过来的目标分布记录，当前主要用于说明和后续视觉策略 |
-| `timeout_s` | 伪导航执行该点允许的最长时间 |
-| `prepare_action` | 该点到位后视觉识别前使用的预识别机械臂位姿 |
-| `arrival_task` | 该点到位后执行的任务 |
+| `id` | 点位名称，需要全局唯一 |
+| `x` | 任务相对 x 坐标，单位 m |
+| `y` | 任务相对 y 坐标，单位 m |
+| `yaw` | 任务相对航向，单位 rad |
+| `area` | 区域标签，只用于日志和调试 |
+| `timeout_s` | 该点伪导航最大允许时间 |
+| `prepare_action` | 到点任务开始前使用的预识别动作名称 |
+| `arrival_task` | 到点后任务名称，`noop` 或 `visual_pollination` |
 
-点位执行顺序就是 YAML 中 `waypoints` 的书写顺序
+坐标模式默认为
 
-重复坐标不能随便合并，例如 `area_a_02_down` 和 `area_a_03_up_mid` 坐标相同，但预识别动作和目标分布不同
+```yaml
+coordinate_mode: "task_relative"
+```
 
-首次实车联调建议这样配置
+含义是，任务开始后，伪导航后端把当前 `/odom` 记录为任务原点，后续所有点位都是相对这个原点的坐标
+
+首次测试建议保持
 
 ```yaml
 max_forward_waypoints: 1
 return_home_enabled: false
 ```
 
-这只执行第一个 7 cm 过渡点，适合确认底盘方向，/odom 方向，刹车和 RESET
-
-验证第一个授粉点时可以改为
+逐步打开方式
 
 ```yaml
+# 执行前两个前进点
 max_forward_waypoints: 2
-return_home_enabled: false
-```
 
-完整执行全部前进点时改为
-
-```yaml
+# 执行全部前进点
 max_forward_waypoints: 0
-return_home_enabled: false
-```
 
-前进点稳定后再打开返航
-
-```yaml
+# 开启返航点
 return_home_enabled: true
 ```
 
-## 十二，预识别动作配置方法
+过渡点写法
 
-预识别动作统一配置在
+```yaml
+prepare_action: "noop"
+arrival_task: "noop"
+```
+
+作业点写法
+
+```yaml
+prepare_action: "pre_detect_nav_02"
+arrival_task: "visual_pollination"
+```
+
+---
+
+## 六，如何配置预识别动作
+
+预识别动作写在
 
 ```text
 src/atlas_vision_pollination_backend/config/pollination_actions.yaml
 ```
 
-`mission_route.yaml` 中的 `prepare_action` 必须能在 `prepare_actions` 中找到同名动作
-
-示例
+格式如下
 
 ```yaml
 prepare_actions:
@@ -602,63 +303,59 @@ prepare_actions:
 
 字段说明
 
-| 字段 | 作用 |
+| 字段 | 说明 |
 |---|---|
 | `type` | 当前支持 `noop` 和 `joints` |
 | `joints_rad` | 五个关节目标角，单位 rad |
-| `speed_rad_s` | 下发给 mcu 的动作速度，单位 rad/s |
-| `timeout_s` | 等待该关节动作到位的最长时间 |
+| `speed_rad_s` | 动作速度，单位 rad/s |
+| `timeout_s` | 等待到位超时时间，单位 s |
 
-当前已经从 `src(141).zip` 的 `navigation_route.c` 迁移了全部 `pre_detect_joints`
+点位如何引用预识别动作
 
-命名规则是
-
-```text
-pre_detect_nav_02
-pre_detect_nav_03
-...
-pre_detect_nav_20
+```yaml
+prepare_action: "pre_detect_nav_02"
 ```
 
-其中数字对应旧 MCU 的 `nav_index`
+视觉授粉后端执行 `visual_pollination` 时，会先执行当前点的 `prepare_action`，然后才触发视觉识别
 
-如果要修改某个点的预识别位姿，优先只改该点的 `pre_detect_nav_XX`，不要直接改通用视觉授粉序列
+---
 
-## 十三，视觉授粉动作序列配置方法
+## 七，如何配置工具点和授粉序列
 
-到位后任务同样配置在
+工具点和授粉序列写在
 
 ```text
 src/atlas_vision_pollination_backend/config/pollination_actions.yaml
 ```
 
-默认任务名是
+当前最终授粉工具点为
 
 ```yaml
-arrival_task: "visual_pollination"
+pollination_tool_point_m: [0.05, -0.015, 0.087]
 ```
 
-该任务的默认流程是
+它位于
 
-```text
-到达预识别位姿
-  ↓
-调用 /vision/detect_camera_target
-  ↓
-用手眼变换计算目标在 arm_base_link 下的位置
-  ↓
-到达预授粉位姿
-  ↓
-到达授粉位姿
-  ↓
-停留
-  ↓
-回到预授粉位姿
-  ↓
-回到预识别位姿
+```yaml
+arrival_tasks:
+  visual_pollination:
+    pollination_tool_point_m: [0.05, -0.015, 0.087]
 ```
 
-对应 YAML 是
+预授粉工具点为
+
+```yaml
+pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+```
+
+两者含义
+
+| 字段 | 说明 |
+|---|---|
+| `pre_pollination_tool_point_m` | 预授粉偏移，用于先靠近目标 |
+| `pollination_tool_point_m` | 授粉偏移，用于真正接触目标 |
+
+动作序列如下
 
 ```yaml
 sequence:
@@ -686,91 +383,330 @@ sequence:
     action_ref: "prepare_action"
 ```
 
-当前支持的步骤类型
+执行逻辑
 
-| 步骤类型 | 作用 |
+```text
+预识别位姿
+  ↓
+视觉 service 返回相机坐标目标
+  ↓
+手眼变换得到 arm_base_link 下的目标点
+  ↓
+根据 pre_pollination_tool_point_m 计算预授粉末端位置
+  ↓
+根据 pollination_tool_point_m 计算授粉末端位置
+  ↓
+停留
+  ↓
+回到预授粉
+  ↓
+回到预识别
+```
+
+视觉目标的 base 坐标只在预识别位姿下计算一次，后续动作使用同一个目标 base 坐标和检测时刻的工具坐标方向，避免机械臂移动后重复使用过期相机坐标导致误差
+
+---
+
+## 八，如何配置伪导航
+
+伪导航参数写在
+
+```text
+src/atlas_nav_pseudo_backend/config/pseudo_nav.yaml
+```
+
+常用参数
+
+| 参数 | 说明 |
 |---|---|
-| `ensure_prepare_pose` | 执行当前 waypoint 的 `prepare_action` |
-| `visual_position` | 根据视觉目标和工具点偏移计算机械臂位置目标 |
-| `dwell` | 原地等待一段时间 |
-| `joints_action` | 执行某个已定义的关节动作 |
+| `control_rate_hz` | 控制频率 |
+| `odom_timeout_s` | `/odom` 超时时间 |
+| `waypoint_timeout_s` | 单点最大移动时间 |
+| `kp_xy` | 平面位置比例系数 |
+| `kp_yaw` | 航向比例系数 |
+| `max_linear_speed_m_s` | 最大线速度 |
+| `max_angular_speed_rad_s` | 最大角速度 |
+| `max_linear_accel_m_s2` | 最大线加速度 |
+| `max_angular_accel_rad_s2` | 最大角加速度 |
+| `position_tolerance_m` | 到点位置误差阈值 |
+| `yaw_tolerance_rad` | 到点航向误差阈值 |
+| `settle_duration_s` | 刹车稳定等待时间 |
 
-工具点偏移配置
+首次实车建议保持低速
 
 ```yaml
-pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+max_linear_speed_m_s: 0.20
+max_angular_speed_rad_s: 0.40
+position_tolerance_m: 0.04
+yaw_tolerance_rad: 0.08
+```
+
+---
+
+## 九，各功能包说明
+
+### mcu_comm_bridge
+
+负责串口协议桥接，不做任务决策
+
+主要输出
+
+```text
+/mcu/status
+/mcu/auto_task_event
+/odom
+/imu
+/arm/joint_states
+/arm/pose
+/arm/pose_position
+```
+
+主要输入和服务
+
+```text
+/motor_cmd_vel
+/mcu/set_arm_joints
+/mcu/set_arm_position
+/mcu/report_mission_result
+/mcu/estop
+```
+
+### atlas_mission_interfaces
+
+定义任务层接口
+
+主要接口
+
+```text
+MissionStatus.msg
+NavigationStatus.msg
+ManipulationStatus.msg
+StartNavigation.srv
+CancelNavigation.srv
+StartManipulation.srv
+CancelManipulation.srv
+DetectCameraTarget.srv
+```
+
+### atlas_mission_manager
+
+负责总任务状态机和安全门控
+
+它负责
+
+```text
+监听 START 和 RESET
+读取 mission_route.yaml
+选择 navigation_backend 和 manipulation_backend
+按点位调用导航后端
+按点位调用视觉授粉后端
+发布最终 /motor_cmd_vel
+上报 DONE 或 FAIL
+```
+
+它不负责
+
+```text
+直接计算伪导航速度
+直接调用视觉模型
+直接计算手眼变换
+直接生成授粉末端点
+```
+
+### atlas_nav_pseudo_backend
+
+负责伪导航
+
+它负责
+
+```text
+接收目标点
+读取 /odom
+计算任务相对目标
+输出 /atlas/navigation/cmd_vel
+判断到点和稳定
+```
+
+它不直接发布 `/motor_cmd_vel`，最终速度必须经过 `atlas_mission_manager` 安全门控
+
+### atlas_vision_pollination_backend
+
+负责视觉授粉
+
+它负责
+
+```text
+提供 /vision/detect_camera_target
+调用视觉识别
+执行预识别动作
+计算手眼变换
+计算预授粉和授粉位置
+调用 /mcu/set_arm_position
+等待机械臂到位
+发布 /atlas/manipulation/status
+```
+
+### handeye_calibration_tool
+
+负责手眼标定辅助
+
+输出结果用于配置视觉授粉后端中的手眼参数
+
+---
+
+## 十，首次实车联调建议
+
+### 第一步，只验证启动和状态
+
+```yaml
+max_forward_waypoints: 1
+return_home_enabled: false
+```
+
+第一个点保持
+
+```yaml
+arrival_task: "noop"
+```
+
+观察
+
+```bash
+ros2 topic echo /atlas/mission/status
+ros2 topic echo /atlas/navigation/status
+```
+
+### 第二步，验证伪导航方向
+
+把第一个点设置成小距离移动
+
+```yaml
+x: 0.00
+y: -0.07
+yaw: 0.00
+```
+
+确认机器人移动方向和预期一致
+
+### 第三步，打开第一个作业点
+
+```yaml
+max_forward_waypoints: 2
+```
+
+如果要先验证底盘，不执行授粉，可以把第二个点临时设为
+
+```yaml
+arrival_task: "noop"
+```
+
+### 第四步，打开视觉授粉
+
+把作业点设置为
+
+```yaml
+arrival_task: "visual_pollination"
+```
+
+观察
+
+```bash
+ros2 topic echo /atlas/manipulation/status
+```
+
+### 第五步，逐步打开全部点
+
+```yaml
+max_forward_waypoints: 0
+```
+
+前进路线稳定后再开启返航
+
+```yaml
+return_home_enabled: true
+```
+
+---
+
+## 十一，常见问题
+
+### 没有启动任务
+
+检查
+
+```bash
+ros2 topic echo /mcu/status
+ros2 topic echo /mcu/auto_task_event
+```
+
+确认
+
+```text
+app_state = AutoPi
+auto_start_latched = true
+```
+
+### 机器人不动
+
+检查
+
+```bash
+ros2 topic echo /atlas/navigation/cmd_vel
+ros2 topic echo /motor_cmd_vel
+ros2 topic echo /odom
+```
+
+如果 `/atlas/navigation/cmd_vel` 有速度但 `/motor_cmd_vel` 没有速度，说明总状态机安全门控没有放行
+
+### 到点后不执行视觉授粉
+
+检查点位配置
+
+```yaml
+arrival_task: "visual_pollination"
+```
+
+检查服务
+
+```bash
+ros2 service list | grep vision
+```
+
+### 机械臂不到位
+
+检查
+
+```bash
+ros2 topic echo /arm/joint_states
+ros2 topic echo /arm/pose_position
+```
+
+确认 `pollination_actions.yaml` 中的动作目标在机械臂工作空间内
+
+### 授粉深度不合适
+
+修改
+
+```yaml
 pollination_tool_point_m: [0.05, -0.015, 0.087]
 ```
 
-含义
+接触过深就增大 z，接触不到就减小 z
 
-| 字段 | 作用 |
-|---|---|
-| `pre_pollination_tool_point_m` | 预授粉工具点偏移，单位 m |
-| `pollination_tool_point_m` | 授粉工具点偏移，单位 m |
+---
 
-调参原则
+## 十二，后续扩展方式
 
-```text
-如果授粉动作接触过深，增大 pollination_tool_point_m 的 z
-如果授粉动作接触不到，减小 pollination_tool_point_m 的 z
-如果预授粉离目标太近，增大 pre_pollination_tool_point_m 的 z
-如果预授粉离目标太远，减小 pre_pollination_tool_point_m 的 z
-```
-
-重要约束
-
-```text
-视觉目标只在预识别位姿下计算一次
-预授粉，授粉和回退都复用同一个 target_base
-不要让机械臂移动后再拿旧相机坐标重新计算目标
-```
-
-## 十四，旧 MCU 纯关节授粉序列配置方法
-
-为了保留 `src(141).zip` 中 `pollen_route.c` 的旧任务流，当前已经把旧关节序列迁移为
-
-```text
-legacy_pollination_nav_02
-legacy_pollination_nav_03
-...
-legacy_pollination_nav_20
-```
-
-这些任务默认不启用
-
-如果你想让某个点不用视觉伺服，而是临时复刻旧 MCU 纯关节序列，只需要把该点改成
+切换完整导航后端时，只需要新增导航后端功能包，并在 `mission_route.yaml` 中修改
 
 ```yaml
-arrival_task: "legacy_pollination_nav_02"
+navigation_backend: "full_nav"
 ```
 
-对应序列会按下面方式执行
+切换新的视觉任务后端时，只需要新增 manipulation 后端功能包，并在 `mission_route.yaml` 中修改
 
 ```yaml
-legacy_pollination_nav_02:
-  type: "joint_sequence"
-  sequence:
-    - type: "joints_action"
-      name: "legacy_nav_02_step_01"
-      action_ref: "legacy_nav_02_step_01"
+manipulation_backend: "new_backend_name"
 ```
 
-对应关节动作定义在 `prepare_actions` 里
-
-```yaml
-legacy_nav_02_step_01:
-  type: "joints"
-  joints_rad: [1.485, 3.106, 5.410, 1.930, 3.141]
-  speed_rad_s: 1.0
-  timeout_s: 8.0
-```
-
-建议使用方式
-
-```text
-正式路线默认使用 visual_pollination
-旧纯关节序列只用于对照，回归测试或视觉暂时不可用时的临时验证
-不要同时在一个点中混用 visual_position 和旧固定关节序列，除非已经明确验证安全空间
-```
-
+总任务状态机只依赖标准 service 和 status 话题，不需要改动主流程

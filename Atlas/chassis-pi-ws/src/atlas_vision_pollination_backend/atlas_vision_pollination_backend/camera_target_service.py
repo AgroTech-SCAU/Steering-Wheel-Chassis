@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """相机目标识别服务节点
 
-本节点把旧的话题触发式视觉脚本重构为一次请求一次结果的服务节点
+本节点提供一次请求一次结果的视觉服务
 调用方发送 waypoint_id 和 task_id 后，节点会等待画面稳定，执行一次识别，播报识别结果，并返回一个相机坐标系下的目标点
 """
 
@@ -85,7 +85,7 @@ class CameraTargetService(Node):
         self.voice_volume = str(self.declare_parameter('voice_volume', '200').value)
         self.voice_timeout_s = float(self.declare_parameter('voice_timeout_s', 4.0).value)
 
-        # 相机内参，默认沿用旧视觉脚本中的标定结果
+        # 相机内参，默认使用当前标定结果
         self.camera_matrix = np.array([
             [788.700613, 0.0, 619.294928],
             [0.0, 794.129618, 250.945769],
@@ -93,7 +93,7 @@ class CameraTargetService(Node):
         ], dtype=float)
         self.dist_coeff = np.array([[0.123914, -0.169189, 0.003153, 0.001719, 0.0]], dtype=float)
 
-        # 颜色阈值，默认沿用旧脚本，后续可以再改成配置文件读入
+        # 颜色阈值，后续可以继续改成配置文件读入
         self.lower_yellow_a = np.array([11, 30, 0], dtype=np.uint8)
         self.upper_yellow_a = np.array([67, 255, 255], dtype=np.uint8)
         self.lower_yellow_b = np.array([22, 27, 36], dtype=np.uint8)
@@ -196,7 +196,7 @@ class CameraTargetService(Node):
         return response
 
     def flush_camera(self) -> None:
-        """清空摄像头缓存，避免使用旧画面"""
+        """清空摄像头缓存，避免使用缓存画面"""
         if self.cap is None:
             return
         for _ in range(max(1, self.frame_retry_count)):

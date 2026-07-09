@@ -1,320 +1,195 @@
-# atlas_mission_manager 说明
+# atlas_mission_manager
 
-本包是 pi 端总任务状态机
+`atlas_mission_manager` 是 Pi 端自动任务总状态机
 
-它负责自动任务生命周期，后端选择，速度安全门控，结果上报和恢复等待
+它只负责任务生命周期，后端选择，安全门控和任务结果上报
 
-它不直接实现伪导航，不直接实现视觉识别，不直接实现授粉动作
+它不直接实现伪导航，不直接实现视觉识别，也不直接计算机械臂授粉目标
 
-## 一，包定位
+---
 
-负责
+## 一，职责
+
+本包负责
 
 ```text
-订阅 /mcu/status
-订阅 /mcu/auto_task_event
-读取 mission_manager.yaml
+监听 /mcu/status
+监听 /mcu/auto_task_event
 读取 mission_route.yaml
-根据配置选择导航后端
-根据配置选择视觉授粉后端
-按 waypoint 顺序调用导航后端
-每个点到位后调用视觉授粉后端
-把导航速度安全转发到 /motor_cmd_vel
-在 RESET，Manual，Fault，EStop，状态超时时取消后端并刹车
-通过 /mcu/report_mission_result 上报 DONE 或 FAIL
-等待 mcu 进入 Finished 或 Fault
-等待遥控器 clear/reset 后进入下一轮
+按点位调用导航后端
+按点位调用视觉授粉后端
+统一发布 /motor_cmd_vel
+调用 /mcu/report_mission_result 上报 DONE 或 FAIL
+处理 RESET，Fault，EStop，Manual 抢占和状态超时
 ```
 
-不负责
+本包不负责
 
 ```text
-不计算伪导航速度
-不做地图导航
-不打开相机
-不加载视觉模型
-不做手眼矩阵计算
-不直接生成授粉序列
+串口协议解析
+伪导航速度计算
+视觉模型推理
+手眼变换
+机械臂目标生成
 ```
 
-## 二，状态机流程
+---
 
-主要状态
+## 二，主流程
 
 ```text
-BOOTSTRAP
-  ↓
-WAIT_MCU_STATUS
-  ↓
 WAIT_START
   ↓
 PRECHECK
   ↓
-INITIALIZING
+LOAD_ROUTE
   ↓
-RUNNING
+START_NAVIGATION
   ↓
-REPORTING_DONE 或 REPORTING_FAIL
+WAIT_NAVIGATION
   ↓
-WAIT_MCU_FINISHED 或 WAIT_MCU_FAULT
+START_MANIPULATION
   ↓
-WAIT_RESET
+WAIT_MANIPULATION
+  ↓
+NEXT_WAYPOINT
+  ↓
+REPORT_DONE
 ```
 
-异常状态
+异常路径
 
 ```text
-ABORTING
-RECOVERY_REQUIRED
-SHUTTING_DOWN
+RESET / Fault / EStop / Manual / 状态超时
+  ↓
+取消后端任务
+  ↓
+发布零速
+  ↓
+请求刹车
+  ↓
+等待下一轮 RESET 或 START
 ```
 
-## 三，启动条件
+---
 
-进入任务前必须满足
-
-```text
-mcu 状态新鲜
-mcu_app_state 为 AutoPi
-auto_start_latched 为 true
-pi 已收到 START 或从 /mcu/status 恢复出 START
-chassis_ready 为 true
-odom_ready 为 true
-如果 require_arm_ready_in_common_precheck=true，则 arm_ready 也必须为 true
-```
-
-注意
-
-```text
-pi 不负责请求 mcu 进入 AutoPi
-如果 mcu 没有进入 AutoPi，manager 只等待
-```
-
-## 四，路线执行方式
-
-路线文件
-
-```text
-config/mission_route.yaml
-```
-
-执行顺序
-
-```text
-读取 waypoints
-根据 max_forward_waypoints 截断前进点
-对每个点调用导航后端
-导航成功后检查 arrival_task
-arrival_task 为 noop 时直接进入下一点
-arrival_task 非 noop 时调用视觉授粉后端
-前进点完成后根据 return_home_enabled 判断是否执行 return_waypoints
-全部完成后上报 DONE
-```
-
-点位字段
-
-| 字段 | 说明 |
-|---|---|
-| `id` | 点位唯一编号 |
-| `x` | 任务相对 x，单位米 |
-| `y` | 任务相对 y，单位米 |
-| `yaw` | 任务相对偏航角，单位弧度 |
-| `timeout_s` | 单点导航超时时间 |
-| `prepare_action` | 该点对应的预识别动作名称 |
-| `arrival_task` | 到点后的任务名称 |
-
-## 五，后端选择
-
-配置文件
+## 三，配置文件
 
 ```text
 config/mission_manager.yaml
+config/mission_route.yaml
 ```
 
-当前默认
+### mission_manager.yaml
+
+用于配置总状态机参数
+
+常用字段
+
+| 字段 | 说明 |
+|---|---|
+| `status_timeout_s` | MCU 状态超时时间 |
+| `safe_stop_publish_hz` | 安全停止速度发布频率 |
+| `navigation_start_service` | 导航后端启动服务 |
+| `navigation_cancel_service` | 导航后端取消服务 |
+| `manipulation_start_service` | 视觉授粉后端启动服务 |
+| `manipulation_cancel_service` | 视觉授粉后端取消服务 |
+
+### mission_route.yaml
+
+用于配置点位和任务
+
+点位示例
+
+```yaml
+- id: "area_a_02_down"
+  x: 0.71
+  y: -0.08
+  yaw: 0.00
+  area: "AREA_A"
+  timeout_s: 20.0
+  prepare_action: "pre_detect_nav_02"
+  arrival_task: "visual_pollination"
+```
+
+字段说明
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 点位名称，需要全局唯一 |
+| `x` | 任务相对 x 坐标，单位 m |
+| `y` | 任务相对 y 坐标，单位 m |
+| `yaw` | 任务相对航向，单位 rad |
+| `area` | 区域标签，只用于日志和调试 |
+| `timeout_s` | 该点最大导航时间 |
+| `prepare_action` | 到点任务使用的预识别动作名称 |
+| `arrival_task` | 到点任务名称，支持 `noop` 和 `visual_pollination` |
+
+---
+
+## 四，后端选择
+
+在 `mission_route.yaml` 中配置
 
 ```yaml
 navigation_backend: "pseudo"
 manipulation_backend: "vision_pollination"
 ```
 
-当前已经实现
+当前实现
 
 ```text
 pseudo
-  由 atlas_nav_pseudo_backend 提供
-
 vision_pollination
-  由 atlas_vision_pollination_backend 提供
 ```
 
-后续完整导航接入方式
+后续新增后端时，总状态机只需要读取新的后端名称和服务名
 
-```text
-新增导航后端包
-实现 StartNavigation，CancelNavigation 和 NavigationStatus
-把 navigation_backend 改成新后端名称
-把 navigation_start_service，navigation_cancel_service，navigation_status_topic 改成新后端接口
-```
+---
 
-后续视觉只选择动作序列的接入方式
+## 五，速度安全门控
 
-```text
-新增 manipulation 后端包
-实现 StartManipulation，CancelManipulation 和 ManipulationStatus
-把 manipulation_backend 改成新后端名称
-把 manipulation_start_service，manipulation_cancel_service，manipulation_status_topic 改成新后端接口
-```
-
-## 六，速度安全门控
-
-manager 是 `/motor_cmd_vel` 的唯一发布者
-
-输入
+导航后端只发布
 
 ```text
 /atlas/navigation/cmd_vel
 ```
 
-输出
+本包接收该速度后，根据当前任务状态决定是否转发到
 
 ```text
 /motor_cmd_vel
 ```
 
-允许运动的条件
+只有以下条件满足时才允许非零速度
 
 ```text
-任务处于 RUNNING
-mcu 状态新鲜
-mcu_app_state 为 AutoPi
-auto_start_latched 为 true
-没有 Fault
-没有 EStop
-导航后端正在执行
+MCU 状态为 AutoPi
+任务处于导航阶段
+后端状态正常
+没有 RESET，Fault，EStop，Manual 抢占
 ```
 
-不允许运动时
+否则本包持续发布零速并请求刹车
 
-```text
-发布零速
-请求 /mcu/set_brake
-忽略导航后端的非零速度
-```
+---
 
-## 七，结果上报
+## 六，启动
 
-任务成功
-
-```text
-调用 /mcu/report_mission_result
-result=RESULT_DONE
-code=0
-等待 mcu_app_state 变为 Finished
-```
-
-任务失败
-
-```text
-调用 /mcu/report_mission_result
-result=RESULT_FAIL
-code=错误码
-等待 mcu_app_state 变为 Fault
-```
-
-如果结果上报成功但 mcu 未在超时内确认
-
-```text
-进入 RECOVERY_REQUIRED
-不重复执行任务
-等待人工处理和 clear/reset
-```
-
-## 八，配置文件
-
-### mission_manager.yaml
-
-控制总状态机的接口名，后端名，超时和安全策略
-
-### mission_route.yaml
-
-控制任务路线，前进点，返航点，预识别动作名和到点任务名
-
-## 九，启动
-
-启动整个任务栈
+通常不单独启动本包，推荐使用总启动文件
 
 ```bash
 ros2 launch atlas_mission_manager mission_stack.launch.py
 ```
 
-只启动总状态机
+单独启动
 
 ```bash
 ros2 launch atlas_mission_manager mission_manager.launch.py
 ```
 
-启动时替换配置
-
-```bash
-ros2 launch atlas_mission_manager mission_stack.launch.py \
-  manager_config:=/home/wheeltec/my_config/mission_manager.yaml \
-  route:=/home/wheeltec/my_config/mission_route.yaml
-```
-
-## 十，状态查看
+查看状态
 
 ```bash
 ros2 topic echo /atlas/mission/status
 ```
-
-常用状态含义
-
-| 状态 | 含义 |
-|---|---|
-| `WAIT_MCU_STATUS` | 等待 mcu 状态 |
-| `WAIT_START` | 等待自动任务 START |
-| `PRECHECK` | 检查 ready 和锁存 |
-| `RUNNING` | 任务执行中 |
-| `REPORTING_DONE` | 上报完成 |
-| `WAIT_MCU_FINISHED` | 等待 mcu 进入 Finished |
-| `REPORTING_FAIL` | 上报失败 |
-| `WAIT_RESET` | 等待遥控器 clear/reset |
-| `RECOVERY_REQUIRED` | 需要人工恢复 |
-
-## 十一，联调建议
-
-第一步只开一个点
-
-```yaml
-max_forward_waypoints: 1
-return_home_enabled: false
-```
-
-第二步打开第二个点但保持 arrival_task 为 noop
-
-```yaml
-max_forward_waypoints: 2
-```
-
-第三步把目标点的 arrival_task 改为
-
-```yaml
-arrival_task: "visual_pollination"
-```
-
-第四步验证视觉和授粉动作
-
-第五步逐步打开更多点位和返航
-
-## 地图点位配置补充
-
-`mission_route.yaml` 已经按 `src(141).zip` 的路线补齐 20 个前进点和 2 个返航点
-
-`nav_index` 用于对照旧 MCU 代码，`id` 用于当前 ROS2 任务流
-
-`prepare_action` 只写动作名称，具体关节角在 `atlas_vision_pollination_backend/config/pollination_actions.yaml` 中配置
-
-`arrival_task` 默认使用 `visual_pollination`，过渡点使用 `noop`
-
-首次实车联调保持 `max_forward_waypoints: 1`，确认后再逐步增加

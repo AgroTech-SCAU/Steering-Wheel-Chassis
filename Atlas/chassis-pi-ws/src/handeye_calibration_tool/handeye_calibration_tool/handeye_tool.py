@@ -1177,7 +1177,7 @@ class HandEyeApplication:
                     "target_to_camera": matrix_to_list(detection.target_to_camera),
                     "board_type": detection.board_type or config.board_type,
                     "board_corner_count": detection.corner_count,
-                    # 保留该字段以兼容旧版本样本读取器
+                    # 保留该字段以兼容已有样本读取器
                     "charuco_corner_count": detection.corner_count,
                     "reprojection_error_px": float(detection.reprojection_error_px),
                     "image": str(Path("images") / image_name),
@@ -1838,7 +1838,7 @@ class HandEyeApplication:
         print(f"\n当前样本数：{len(self.samples)}")
         for sample in self.samples:
             print(
-                f"#{sample['id']:>3} | board={sample.get('board_type', 'legacy'):<10} | "
+                f"#{sample['id']:>3} | board={sample.get('board_type', 'unknown'):<10} | "
                 f"corners={sample.get('board_corner_count', sample.get('charuco_corner_count', 0)):>3} | "
                 f"reproj={sample['reprojection_error_px']:.3f}px | "
                 f"source={sample['robot_pose_source']}"
