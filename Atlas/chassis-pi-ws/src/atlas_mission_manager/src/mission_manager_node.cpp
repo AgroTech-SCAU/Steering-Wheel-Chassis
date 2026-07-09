@@ -103,7 +103,7 @@ MissionManagerNode::MissionManagerNode(const rclcpp::NodeOptions& options)
   result_service_timeout_s_ = std::max(0.05, declare_parameter<double>("result_service_timeout_s", 1.0));
   result_confirm_timeout_s_ = std::max(0.1, declare_parameter<double>("result_confirm_timeout_s", 3.0));
   result_retry_interval_s_ = std::max(0.0, declare_parameter<double>("result_retry_interval_s", 0.3));
-  result_report_retry_count_ = std::clamp(declare_parameter<int>("result_report_retry_count", 2), 0, 10);
+  result_report_retry_count_ = std::clamp<int>(static_cast<int>(declare_parameter<int>("result_report_retry_count", 2)), 0, 10);
   require_arm_ready_in_common_precheck_ = declare_parameter<bool>("require_arm_ready_in_common_precheck", true);
   report_fail_on_common_precheck_error_ = declare_parameter<bool>("report_fail_on_common_precheck_error", false);
 
