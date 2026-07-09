@@ -120,14 +120,14 @@ class CameraTargetService(Node):
             self.get_logger().error('未配置模型路径，视觉服务会返回失败')
             return
         if not os.path.exists(self.model_path):
-            self.get_logger().error('模型路径不存在: %s', self.model_path)
+            self.get_logger().error(f'模型路径不存在: {self.model_path}')
             return
         try:
             self.model = YOLO(self.model_path)
-            self.get_logger().info('模型加载完成: %s', self.model_path)
+            self.get_logger().info(f'模型加载完成: {self.model_path}')
         except Exception as exc:
             self.model = None
-            self.get_logger().error('模型加载失败: %s', exc)
+            self.get_logger().error(f'模型加载失败: {exc}')
 
     def open_camera(self) -> None:
         """打开摄像头"""
@@ -139,14 +139,14 @@ class CameraTargetService(Node):
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.image_height)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.camera_buffer_size)
         if not self.cap.isOpened():
-            self.get_logger().error('摄像头打开失败，编号: %d', self.camera_index)
+            self.get_logger().error(f'摄像头打开失败，编号: {self.camera_index}')
             self.cap = None
         else:
-            self.get_logger().info('摄像头已打开，编号: %d', self.camera_index)
+            self.get_logger().info(f'摄像头已打开，编号: {self.camera_index}')
 
     def on_detect_request(self, request: DetectCameraTarget.Request, response: DetectCameraTarget.Response):
         """处理一次视觉识别请求"""
-        self.get_logger().info('收到视觉识别请求，点位=%s，任务=%s', request.waypoint_id, request.task_id)
+        self.get_logger().info(f'收到视觉识别请求，点位={request.waypoint_id}，任务={request.task_id}')
         if self.cap is None or self.model is None:
             response.success = False
             response.message = 'VISION_NOT_READY'
@@ -175,11 +175,9 @@ class CameraTargetService(Node):
                 response.target_camera_m.y = target.y_mm / 1000.0
                 response.target_camera_m.z = target.z_mm / 1000.0
                 self.get_logger().info(
-                    '识别成功，类别=%s，相机坐标=%.4f %.4f %.4f 米',
-                    target.class_name,
-                    response.target_camera_m.x,
-                    response.target_camera_m.y,
-                    response.target_camera_m.z,
+                    f'识别成功，类别={target.class_name}，相机坐标='
+                    f'{response.target_camera_m.x:.4f} {response.target_camera_m.y:.4f} '
+                    f'{response.target_camera_m.z:.4f} 米'
                 )
                 return response
             if voice_text:
@@ -220,7 +218,7 @@ class CameraTargetService(Node):
             results = self.model(frame, verbose=False)
             boxes = results[0].boxes
         except Exception as exc:
-            self.get_logger().error('模型推理失败: %s', exc)
+            self.get_logger().error(f'模型推理失败: {exc}')
             return targets, voice_text, display
 
         grouped: Dict[str, List[dict]] = {'A': [], 'B': []}
@@ -348,7 +346,7 @@ class CameraTargetService(Node):
         msg = String()
         msg.data = text
         self.voice_pub.publish(msg)
-        self.get_logger().info('语音文本: %s', text)
+        self.get_logger().info(f'语音文本: {text}')
         if self.voice_mode != 'direct':
             return
         try:
@@ -366,7 +364,7 @@ class CameraTargetService(Node):
                 espeak.stdout.close()
             aplay.communicate(timeout=self.voice_timeout_s)
         except Exception as exc:
-            self.get_logger().warn('语音播报失败: %s', exc)
+            self.get_logger().warn(f'语音播报失败: {exc}')
 
     def destroy_node(self) -> bool:
         """释放摄像头资源"""

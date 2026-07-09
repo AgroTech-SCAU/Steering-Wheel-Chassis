@@ -166,7 +166,7 @@ class VisionPollinationBackend(Node):
             with open(path, 'r', encoding='utf-8') as f:
                 data = yaml.safe_load(f) or {}
         except Exception as exc:
-            self.get_logger().error('授粉配置读取失败 %s: %s', path, exc)
+            self.get_logger().error(f'授粉配置读取失败 {path}: {exc}')
             return
         for name, node in (data.get('prepare_actions') or {}).items():
             action_type = node.get('type', 'noop')
@@ -188,7 +188,7 @@ class VisionPollinationBackend(Node):
             task.dwell_pollination_s = float(node.get('dwell_pollination_s', 0.3))
             task.sequence = list(node.get('sequence', []))
             self.arrival_tasks[name] = task
-        self.get_logger().info('授粉配置已读取，预备动作=%d，到位任务=%d', len(self.prepare_actions), len(self.arrival_tasks))
+        self.get_logger().info(f'授粉配置已读取，预备动作={len(self.prepare_actions)}，到位任务={len(self.arrival_tasks)}')
 
     def on_joint_state(self, msg: JointState) -> None:
         if len(msg.position) < 5:
@@ -308,7 +308,7 @@ class VisionPollinationBackend(Node):
         step = self.sequence[self.step_index]
         self.step_name = step.get('name', step.get('type', f'step_{self.step_index}'))
         self.message = f'{self.step_name}: {reason}'
-        self.get_logger().info('step %d/%d: %s', self.step_index + 1, len(self.sequence), self.step_name)
+        self.get_logger().info(f'step {self.step_index + 1}/{len(self.sequence)}: {self.step_name}')
         self.start_current_step()
 
     def start_current_step(self) -> None:
@@ -382,7 +382,7 @@ class VisionPollinationBackend(Node):
         target_base = transform_point(t_base_tool0, target_tool0)
         self.target_base = target_base
         self.rotation_at_detection = t_base_tool0[:3, :3].copy()
-        self.get_logger().info('vision target camera=[%.4f %.4f %.4f] base=[%.4f %.4f %.4f]', camera_point[0], camera_point[1], camera_point[2], target_base[0], target_base[1], target_base[2])
+        self.get_logger().info(f'vision target camera=[{camera_point[0]:.4f} {camera_point[1]:.4f} {camera_point[2]:.4f}] base=[{target_base[0]:.4f} {target_base[1]:.4f} {target_base[2]:.4f}]')
         self.start_visual_position(self.sequence[self.step_index])
 
     def start_visual_position(self, step: dict) -> None:
@@ -402,7 +402,7 @@ class VisionPollinationBackend(Node):
         self.command_future = self.position_client.call_async(req)
         self.step_started_at = self.get_clock().now()
         self.message = f'发送视觉位置 {self.step_name}'
-        self.get_logger().info('visual position %s goal=[%.4f %.4f %.4f] tool=[%.4f %.4f %.4f]', self.step_name, goal[0], goal[1], goal[2], tool[0], tool[1], tool[2])
+        self.get_logger().info(f'visual position {self.step_name} goal=[{goal[0]:.4f} {goal[1]:.4f} {goal[2]:.4f}] tool=[{tool[0]:.4f} {tool[1]:.4f} {tool[2]:.4f}]')
 
     def on_timer(self) -> None:
         if self.state == ManipulationStatus.STATE_RUNNING:

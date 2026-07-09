@@ -877,7 +877,13 @@ class CameraWorker:
                         f"{int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
                         f"{int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
                     )
-                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                gui_enabled = True
+                try:
+                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                except cv2.error as exc:
+                    gui_enabled = False
+                    with self._lock:
+                        self._status = f"camera opened without GUI window: {exc}"
 
                 while not self._stop_event.is_set() and not self._restart_event.is_set():
                     ok, frame = capture.read()
@@ -932,8 +938,15 @@ class CameraWorker:
                             ("C: capture | Q: close tool", (255, 255, 255)),
                         ],
                     )
-                    cv2.imshow(window_name, annotated)
-                    key = cv2.waitKey(1) & 0xFF
+                    if gui_enabled:
+                        try:
+                            cv2.imshow(window_name, annotated)
+                            key = cv2.waitKey(1) & 0xFF
+                        except cv2.error:
+                            gui_enabled = False
+                            key = -1
+                    else:
+                        key = -1
                     if key in (ord("c"), ord("C")):
                         threading.Thread(target=self._capture_callback, daemon=True).start()
                     elif key in (ord("q"), ord("Q"), 27):
@@ -956,7 +969,10 @@ class CameraWorker:
                     self._camera_open = False
                 self._restart_event.clear()
 
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            pass
 
 
 # ---------------------------- 标定应用 ----------------------------

@@ -141,7 +141,7 @@ class PseudoNavBackend(Node):
 
         if request.reset_origin or self.origin is None:
             self.origin = self.latest_odom
-            self.get_logger().info('task origin reset at x=%.3f y=%.3f yaw=%.3f', self.origin.x, self.origin.y, self.origin.yaw)
+            self.get_logger().info(f'task origin reset at x={self.origin.x:.3f} y={self.origin.y:.3f} yaw={self.origin.yaw:.3f}')
 
         assert self.origin is not None
         c = math.cos(self.origin.yaw)
@@ -160,7 +160,7 @@ class PseudoNavBackend(Node):
         self.last_cmd = Twist()
         response.success = True
         response.message = 'navigation accepted'
-        self.get_logger().info('start waypoint %s relative=(%.3f %.3f %.3f) target=(%.3f %.3f %.3f)', request.waypoint_id, request.x_m, request.y_m, request.yaw_rad, target_x, target_y, target_yaw)
+        self.get_logger().info(f'start waypoint {request.waypoint_id} relative=({request.x_m:.3f} {request.y_m:.3f} {request.yaw_rad:.3f}) target=({target_x:.3f} {target_y:.3f} {target_yaw:.3f})')
         return response
 
     def on_cancel(self, request: CancelNavigation.Request, response: CancelNavigation.Response):
@@ -228,7 +228,7 @@ class PseudoNavBackend(Node):
                     self.error_code = 0
                     self.cmd_pub.publish(Twist())
                     self.publish_status()
-                    self.get_logger().info('waypoint %s succeeded', self.target.waypoint_id)
+                    self.get_logger().info(f'waypoint {self.target.waypoint_id} succeeded')
                     return
             else:
                 if self.arrived_time and (now - self.arrived_time).nanoseconds * 1e-9 > self.settle_timeout_s:
