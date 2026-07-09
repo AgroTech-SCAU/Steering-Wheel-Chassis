@@ -80,6 +80,15 @@ def transform_point(t: np.ndarray, p: np.ndarray) -> np.ndarray:
     return (t @ ph)[:3]
 
 
+def normalize_angle_positive(angle: float) -> float:
+    # joint0 的机械限制是 [0, 2pi)，这里不使用环形最短路，只把角度归一到合法区间
+    two_pi = 2.0 * math.pi
+    value = math.fmod(float(angle), two_pi)
+    if value < 0.0:
+        value += two_pi
+    return value
+
+
 @dataclass
 class PrepareAction:
     action_type: str = 'noop'
@@ -97,6 +106,8 @@ class ArrivalTask:
     min_targets: int = 0
     max_targets: int = 1
     target_order: str = 'nearest_first'
+    strategy: str = ''
+    dynamic_guard: dict = field(default_factory=dict)
     pre_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.097])
     pollination_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.087])
     speed_rad_s: float = 1.0
@@ -162,6 +173,7 @@ class VisionPollinationBackend(Node):
         self.pending_goal_position: Optional[np.ndarray] = None
         self.target_base: Optional[np.ndarray] = None
         self.target_bases: List[np.ndarray] = []
+        self.target_thetas: List[float] = []
         self.rotation_at_detection: Optional[np.ndarray] = None
         self.dwell_until: Optional[rclpy.time.Time] = None
         self.get_logger().info('视觉授粉后端已启动')
@@ -192,6 +204,8 @@ class VisionPollinationBackend(Node):
             task.min_targets = int(node.get('min_targets', task.min_targets))
             task.max_targets = int(node.get('max_targets', task.max_targets))
             task.target_order = str(node.get('target_order', task.target_order))
+            task.strategy = str(node.get('strategy', task.strategy))
+            task.dynamic_guard = dict(node.get('dynamic_guard') or {})
             task.pre_tool = [float(v) for v in node.get('pre_pollination_tool_point_m', task.pre_tool)]
             task.pollination_tool = [float(v) for v in node.get('pollination_tool_point_m', task.pollination_tool)]
             task.speed_rad_s = float(node.get('speed_rad_s', self.default_speed_rad_s))
@@ -274,6 +288,7 @@ class VisionPollinationBackend(Node):
         self.step_index = -1
         self.target_base = None
         self.target_bases = []
+        self.target_thetas = []
         self.rotation_at_detection = None
         self.command_future = None
         self.vision_future = None
@@ -339,6 +354,8 @@ class VisionPollinationBackend(Node):
             ref = step.get('action_ref', 'prepare_action')
             action_name = self.prepare_action_name if ref == 'prepare_action' else ref
             self.start_joint_action(self.prepare_actions.get(action_name, PrepareAction()))
+        elif kind == 'dynamic_joint0_guard':
+            self.start_dynamic_joint0_guard(step)
         elif kind == 'detect_targets':
             self.start_vision_request()
         elif kind == 'visual_position':
@@ -352,6 +369,82 @@ class VisionPollinationBackend(Node):
             self.message = f'dwell {duration:.2f}s'
         else:
             self.advance_step(f'ignored unsupported step type {kind}')
+
+    def target_guard_q0(self, target_index: int) -> float:
+        # 根据视觉目标在 arm_base_link 下的平面方位角动态生成 joint0
+        # 该角度只作为收臂安全态下的转向目标，不在这里做 IK 预测
+        if target_index < 0 or target_index >= len(self.target_bases):
+            raise IndexError(f'target_index out of range: {target_index}')
+        target = self.target_bases[target_index]
+        theta = normalize_angle_positive(math.atan2(float(target[1]), float(target[0])))
+        guard = self.current_task.dynamic_guard or {}
+        q0 = theta + float(guard.get('q0_offset_rad', 0.0))
+        if bool(guard.get('q0_wrap_to_0_2pi', True)):
+            q0 = normalize_angle_positive(q0)
+        q0_min = float(guard.get('q0_min_rad', 0.0))
+        q0_max = float(guard.get('q0_max_rad', 2.0 * math.pi))
+        q0 = max(q0_min, min(q0_max, q0))
+        return q0
+
+    def order_dynamic_b_targets(self) -> None:
+        # B 区: 识别后先给每朵花计算目标 q0，再排序
+        # nearest_joint0_nonwrap 使用非环形距离，避免把 0 和 2pi 当成很近而诱发跨零大旋转
+        if self.current_task.strategy != 'b_area_dynamic_joint0_guard' or len(self.target_bases) <= 1:
+            return
+        q0_list = [self.target_guard_q0(i) for i in range(len(self.target_bases))]
+        order_mode = self.current_task.target_order
+        if order_mode in ('theta_ascending', 'q0_ascending'):
+            order = sorted(range(len(q0_list)), key=lambda i: q0_list[i])
+        elif order_mode in ('theta_descending', 'q0_descending'):
+            order = sorted(range(len(q0_list)), key=lambda i: q0_list[i], reverse=True)
+        elif order_mode in ('nearest_joint0_nonwrap', 'nearest_nonwrap'):
+            current_q0 = float(self.latest_joints[0]) if self.latest_joints is not None else q0_list[0]
+            remaining = list(range(len(q0_list)))
+            order = []
+            while remaining:
+                chosen = min(remaining, key=lambda i: abs(q0_list[i] - current_q0))
+                order.append(chosen)
+                current_q0 = q0_list[chosen]
+                remaining.remove(chosen)
+        else:
+            return
+        self.target_bases = [self.target_bases[i] for i in order]
+        self.target_thetas = [self.target_thetas[i] for i in order]
+        ordered_q0 = [q0_list[i] for i in order]
+        self.get_logger().info(
+            'B区动态目标排序: ' + ', '.join(
+                f'#{idx}:q0={q0:.3f}' for idx, q0 in enumerate(ordered_q0)
+            )
+        )
+
+    def start_dynamic_joint0_guard(self, step: dict) -> None:
+        # B 区核心动作
+        # 对当前目标先生成“收臂态 + joint0 指向目标方位”的关节目标
+        # 这样 joint0 的大角度变化发生在收臂安全状态，而不是贴近花朵时发生
+        if not self.target_bases:
+            self.fail(3020, 'B区动态 q0 保护缺少视觉目标')
+            return
+        guard = self.current_task.dynamic_guard or {}
+        if guard.get('type', 'folded_joint0_to_target') != 'folded_joint0_to_target':
+            self.fail(3021, f'不支持的 dynamic_guard 类型: {guard.get("type")}')
+            return
+        target_index = int(step.get('target_index', 0))
+        try:
+            q0 = self.target_guard_q0(target_index)
+        except Exception as exc:
+            self.fail(3022, f'B区动态 q0 生成失败: {exc}')
+            return
+        folded_tail = [float(v) for v in guard.get('folded_joints_except_q0_rad', [])]
+        if len(folded_tail) != 4:
+            self.fail(3023, 'dynamic_guard.folded_joints_except_q0_rad 必须包含 q1~q4 共 4 个关节角')
+            return
+        speed = float(step.get('speed_rad_s', guard.get('speed_rad_s', self.current_task.speed_rad_s)))
+        timeout = float(step.get('timeout_s', guard.get('timeout_s', self.current_task.timeout_s)))
+        joints = [q0] + folded_tail
+        self.get_logger().info(
+            f'B区动态收臂转向 target_index={target_index} q0={q0:.3f} joints={[round(v, 3) for v in joints]}'
+        )
+        self.start_joint_action(PrepareAction('joints', joints, speed, timeout))
 
     def start_joint_action(self, action: PrepareAction) -> None:
         if action.action_type == 'noop' or not action.joints_rad:
@@ -427,6 +520,8 @@ class VisionPollinationBackend(Node):
             target_tool0 = transform_point(T_TOOL_CAMERA, camera_point)
             target_base = transform_point(t_base_tool0, target_tool0)
             self.target_bases.append(target_base)
+        self.target_thetas = [normalize_angle_positive(math.atan2(float(p[1]), float(p[0]))) for p in self.target_bases]
+        self.order_dynamic_b_targets()
         self.target_base = self.target_bases[0]
 
         first_camera = camera_points[0]

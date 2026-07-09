@@ -23,12 +23,12 @@ mission:
   # 1 表示只执行第一个 7 cm 测试点，用于首次安全联调
   # 2 表示执行前两个点，用于验证从过渡点到第一个作业点的方向
   # 0 表示不限制，执行 waypoints 中所有点
-  max_forward_waypoints: 1
+  max_forward_waypoints: 0
 
   # 是否执行 return_waypoints
   # 首次实车测试建议保持 false
   # 前进路线稳定后再改为 true
-  return_home_enabled: false
+  return_home_enabled: true
 
   # 前进路线点列表
   # id 是当前 ROS2 任务流使用的点位名，需要全局唯一

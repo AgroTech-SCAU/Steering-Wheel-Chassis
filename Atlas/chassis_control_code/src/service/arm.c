@@ -4,6 +4,7 @@
  */
 #include "arm.h"
 
+#include <math.h>
 #include <string.h>
 
 // ! ========================= 变 量 声 明 ========================= ! //
@@ -157,6 +158,10 @@ static ArmStatus s_pose_to_rpy(const FiveDofArmPose* pose, SerialArmRPY* rpy);
  * @return float 实际使用速度，单位 rad/s
  */
 static float s_resolve_speed(float speed_rad_s);
+static float s_wrap_pi(float angle_rad);
+static float s_joint_delta_cost(const FiveDofArmJointArray* candidate, const FiveDofArmJointArray* reference);
+static ArmStatus s_select_min_delta_solution(const FiveDofArmPose* target, FiveDofArmJointArray* joints,
+                                             const FiveDofArmJointArray* reference);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -739,6 +744,7 @@ static ArmStatus s_ik_with_task(const FiveDofArmPose* target, FiveDofArmJointArr
     SerialArmStatus ret;
     SerialArmTaskInfo saved_task;
     bool task_switched = false;
+    ArmStatus status = ARM_KINEMATICS_FAILED;
 
     if(target == NULL || joints == NULL || seed == NULL)
         return ARM_INVALID_PARAM;
@@ -754,20 +760,25 @@ static ArmStatus s_ik_with_task(const FiveDofArmPose* target, FiveDofArmJointArr
         task_switched = true;
     }
 
-    ret = five_dof_arm.ik(target, joints, seed);
+    status = s_select_min_delta_solution(target, joints, seed);
+    if(status == ARM_NO_SOLUTION) {
+        ret = five_dof_arm.ik(target, joints, seed);
+        if(ret == SERIAL_ARM_STATUS_SUCCESS)
+            status = ARM_OK;
+        else if(ret == SERIAL_ARM_STATUS_NO_SOLUTION || ret == SERIAL_ARM_STATUS_OUT_OF_REACH)
+            status = ARM_NO_SOLUTION;
+        else
+            status = ARM_KINEMATICS_FAILED;
+    }
 
     if(task_switched) {
         SerialArmStatus restore_ret = serial_arm.set_task_info(&saved_task);
-        if(restore_ret != SERIAL_ARM_STATUS_SUCCESS && ret == SERIAL_ARM_STATUS_SUCCESS) {
+        if(restore_ret != SERIAL_ARM_STATUS_SUCCESS && status == ARM_OK) {
             return ARM_KINEMATICS_FAILED;
         }
     }
 
-    if(ret == SERIAL_ARM_STATUS_SUCCESS)
-        return ARM_OK;
-    if(ret == SERIAL_ARM_STATUS_NO_SOLUTION || ret == SERIAL_ARM_STATUS_OUT_OF_REACH)
-        return ARM_NO_SOLUTION;
-    return ARM_KINEMATICS_FAILED;
+    return status;
 }
 
 /**
@@ -776,6 +787,65 @@ static ArmStatus s_ik_with_task(const FiveDofArmPose* target, FiveDofArmJointArr
  * @param speed_rad_s 目标速度，单位 rad/s
  * @return ArmStatus 服务状态码
  */
+static float s_wrap_pi(float angle_rad) {
+    while(angle_rad > M_PI)
+        angle_rad -= 2.0f * M_PI;
+    while(angle_rad < -M_PI)
+        angle_rad += 2.0f * M_PI;
+    return angle_rad;
+}
+
+static float s_joint_delta_cost(const FiveDofArmJointArray* candidate, const FiveDofArmJointArray* reference) {
+    const SerialArmModel* model = five_dof_arm.get_model();
+    float cost = 0.0f;
+
+    if(candidate == NULL || reference == NULL || model == NULL)
+        return INFINITY;
+
+    for(uint8_t i = 0u; i < candidate->dof && i < reference->dof && i < model->dof; i++) {
+        float delta = candidate->q[i] - reference->q[i];
+        if(model->link[i].type == SERIAL_ARM_JOINT_REVOLUTE)
+            delta = s_wrap_pi(delta);
+        cost += fabsf(delta);
+    }
+
+    return cost;
+}
+
+static ArmStatus s_select_min_delta_solution(const FiveDofArmPose* target, FiveDofArmJointArray* joints,
+                                             const FiveDofArmJointArray* reference) {
+    FiveDofArmJointSolutions solutions;
+    FiveDofArmStatus ret;
+    float best_cost = INFINITY;
+    uint8_t best_index = 0u;
+    bool found = false;
+
+    if(target == NULL || joints == NULL || reference == NULL)
+        return ARM_INVALID_PARAM;
+
+    ret = five_dof_arm.all_ik(target, &solutions);
+    if(ret != SERIAL_ARM_STATUS_SUCCESS) {
+        if(ret == SERIAL_ARM_STATUS_NO_SOLUTION || ret == SERIAL_ARM_STATUS_OUT_OF_REACH)
+            return ARM_NO_SOLUTION;
+        return ARM_KINEMATICS_FAILED;
+    }
+
+    for(uint8_t i = 0u; i < solutions.num_solutions; i++) {
+        float cost = s_joint_delta_cost(&solutions.solution[i], reference);
+        if(!found || cost < best_cost) {
+            best_cost = cost;
+            best_index = i;
+            found = true;
+        }
+    }
+
+    if(!found)
+        return ARM_NO_SOLUTION;
+
+    *joints = solutions.solution[best_index];
+    return ARM_OK;
+}
+
 static ArmStatus s_send_joints_to_servo(const FiveDofArmJointArray* joints, float speed_rad_s) {
     if(s_arm.config.batch_set_pos_spd != NULL) {
         BusServoStatus ret = s_arm.config.batch_set_pos_spd(s_arm.config.servo_id, joints->q, ARM_DOF, speed_rad_s);

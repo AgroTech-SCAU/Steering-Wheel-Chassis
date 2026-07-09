@@ -309,6 +309,8 @@ arrival_tasks:
 
   # B 区视觉授粉任务模板
   # 每次 job 允许识别 0 到 3 朵雌花
+  # B 区: 动态目标排序 + 动态收臂 joint0 过渡
+  # 核心原则是 joint0 的大角度变化只能发生在收臂安全态，不允许在靠近花朵时大旋转
   # empty_target_policy 为 skip 时，识别到 0 个目标会跳过该 job 并返回成功
   visual_pollination_b_0_3:
     type: "visual_pollination_multi"
@@ -317,7 +319,29 @@ arrival_tasks:
     min_targets: 0
     max_targets: 3
     empty_target_policy: "skip"
-    target_order: "nearest_first"
+
+    # B 区目标排序方式
+    # nearest_joint0_nonwrap 表示按 joint0 的非环形距离逐个选择目标
+    # 这里故意不把 0 和 2pi 当成很近，避免诱发跨 0/2pi 的大旋转
+    target_order: "nearest_joint0_nonwrap"
+
+    # B 区动态保护策略
+    # 视觉目标转换到 arm_base_link 后，后端会计算 theta=atan2(y,x)
+    # 然后生成 q0=theta+q0_offset_rad，并组合成 [q0,q1,q2,q3,q4] 的收臂安全态
+    # 注意这不是 Pi 端 IK，只是在靠近目标前先让底座在收臂状态下转到目标方位
+    strategy: "b_area_dynamic_joint0_guard"
+    dynamic_guard:
+      type: "folded_joint0_to_target"
+      q0_offset_rad: 0.0
+      q0_min_rad: 0.0
+      q0_max_rad: 6.283185307
+      q0_wrap_to_0_2pi: true
+
+      # q1~q4 使用 B 区原预识别的收臂形态
+      # q0 由视觉目标方位动态生成
+      folded_joints_except_q0_rad: [1.591, 5.380, 2.172, 3.141]
+      speed_rad_s: 1.0
+      timeout_s: 8.0
 
     # 预授粉工具点偏移，单位 m
     # z=0.097 用于先靠近目标但不接触
@@ -341,33 +365,39 @@ arrival_tasks:
     # detect_targets 会调用视觉服务，返回 0 到 N 个相机坐标目标
     sequence:
       - type: "ensure_prepare_pose"
-        name: "到达预识别位姿"
+        name: "到达 B 区预识别位姿"
       - type: "detect_targets"
-        name: "识别雌花目标"
+        name: "识别 B 区雌花目标"
 
     # 对每一朵目标花重复执行的动作序列
     # 视觉目标的 base 坐标在预识别位姿下只计算一次
+    # dynamic_joint0_guard 会先进入收臂安全态，并让 joint0 指向当前目标方位
+    # 这样左花，中间花，右花都按自己的目标方位生成过渡动作，而不是套固定安全窗口
     per_target_sequence:
       - type: "joints_action"
-        name: "回到预识别位姿"
+        name: "回到 B 区预识别位姿"
         action_ref: "prepare_action"
+      - type: "dynamic_joint0_guard"
+        name: "B 区收臂态下动态转向目标"
       - type: "visual_position"
-        name: "到达预授粉位姿"
+        name: "到达 B 区预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
       - type: "visual_position"
-        name: "到达授粉位姿"
+        name: "到达 B 区授粉位姿"
         tool_point_ref: "pollination_tool_point_m"
       - type: "dwell"
         name: "授粉停留"
         duration_s: 0.3
       - type: "visual_position"
-        name: "回到预授粉位姿"
+        name: "回到 B 区预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
+      - type: "dynamic_joint0_guard"
+        name: "B 区回到目标方向收臂安全态"
 
     # 当前 job 的全部目标处理完后执行
     after_all_targets_sequence:
       - type: "joints_action"
-        name: "回到预识别位姿"
+        name: "回到 B 区预识别位姿"
         action_ref: "prepare_action"
 
   # C 区视觉授粉任务模板
