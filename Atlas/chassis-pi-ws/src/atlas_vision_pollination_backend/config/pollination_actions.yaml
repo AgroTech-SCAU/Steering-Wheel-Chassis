@@ -1,8 +1,8 @@
 # 视觉授粉动作配置
 # 本文件由 atlas_vision_pollination_backend 读取
-# mission_route.yaml 中的 prepare_action 和 arrival_task 都会引用这里的名称
-# prepare_actions 用于配置各个点的预识别关节位姿
-# arrival_tasks 用于配置到点后的视觉授粉任务
+# mission_route.yaml 中的 arrival_jobs 会引用这里的 prepare_action 和 task 名称
+# prepare_actions 用于配置各个作业窗口的预识别关节位姿
+# arrival_tasks 用于配置到点后的视觉识别数量和逐朵授粉序列
 # 所有关节角单位都是 rad
 # 工具点偏移单位都是 m
 # 每次实车调参建议只改一个点位或一个动作，便于定位问题
@@ -13,97 +13,193 @@ prepare_actions:
   noop:
     type: "noop"
 
-  # 点位 02 的预识别位姿
+  # 点位 02 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_02:
+  pre_detect_nav_02_left:
     type: "joints"
     joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 03 的预识别位姿
+  # 点位 02 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_03:
+  pre_detect_nav_02_right:
     type: "joints"
     joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 04 的预识别位姿
+  # 点位 03 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_04:
+  pre_detect_nav_03_left:
     type: "joints"
     joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 05 的预识别位姿
+  # 点位 03 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_05:
+  pre_detect_nav_03_right:
     type: "joints"
     joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 06 的预识别位姿
+  # 点位 04 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_06:
+  pre_detect_nav_04_left:
     type: "joints"
     joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 07 的预识别位姿
+  # 点位 04 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_07:
+  pre_detect_nav_04_right:
     type: "joints"
     joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 10 的预识别位姿
+  # 点位 05 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_10:
+  pre_detect_nav_05_left:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 05 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_05_right:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 06 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_06_left:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 06 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_06_right:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 07 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_07_left:
+    type: "joints"
+    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 07 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_07_right:
+    type: "joints"
+    joints_rad: [4.714, 2.315, 5.875, 2.152, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 10 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_10_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 11 的预识别位姿
+  # 点位 10 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_11:
+  pre_detect_nav_10_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 12 的预识别位姿
+  # 点位 11 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_12:
+  pre_detect_nav_11_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 13 的预识别位姿
+  # 点位 11 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_13:
+  pre_detect_nav_11_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 14 的预识别位姿
+  # 点位 12 的左侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_14:
+  pre_detect_nav_12_left:
     type: "joints"
     joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 点位 15 的预识别位姿
+  # 点位 12 的右侧预识别窗口
   # 总任务会先执行该动作，让相机进入可识别视角
-  pre_detect_nav_15:
+  pre_detect_nav_12_right:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 13 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_13_left:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 13 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_13_right:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 14 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_14_left:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 14 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_14_right:
+    type: "joints"
+    joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 15 的左侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_15_left:
+    type: "joints"
+    joints_rad: [0.206, 1.591, 5.380, 2.172, 3.141]
+    speed_rad_s: 1.0
+    timeout_s: 8.0
+
+  # 点位 15 的右侧预识别窗口
+  # 总任务会先执行该动作，让相机进入可识别视角
+  pre_detect_nav_15_right:
     type: "joints"
     joints_rad: [3.141, 1.591, 5.380, 2.172, 3.141]
     speed_rad_s: 1.0
@@ -139,29 +235,32 @@ arrival_tasks:
   noop:
     type: "noop"
 
-  # 默认完整视觉授粉任务
-  # 该任务会先执行当前 waypoint 的 prepare_action
-  # 然后调用 /vision/detect_camera_target 获取相机坐标目标
-  # 再用手眼变换和工具点偏移计算预授粉与授粉位置
-  visual_pollination:
-    type: "visual_pollination"
+  # 只执行移动前预备动作
+  # 用于需要动机械臂到安全位姿但不执行视觉识别的点
+  prepare_only:
+    type: "prepare_only"
+    sequence:
+      - type: "joints_action"
+        name: "执行移动前预备动作"
+        action_ref: "prepare_action"
 
-    # 没有目标时的策略
-    # skip 表示跳过该点并返回成功
-    # fail 表示该点任务失败，并由总任务状态机上报 FAIL
-    empty_target_policy: "skip"
-
-    # 视觉服务名
-    # 由 atlas_camera_target_service 提供
+  # A 区视觉授粉任务模板
+  # 每次 job 允许识别 0 到 3 朵雌花
+  # empty_target_policy 为 skip 时，识别到 0 个目标会跳过该 job 并返回成功
+  visual_pollination_a_0_3:
+    type: "visual_pollination_multi"
     vision_service: "/vision/detect_camera_target"
+    target_class: "female_flower"
+    min_targets: 0
+    max_targets: 3
+    empty_target_policy: "skip"
+    target_order: "nearest_first"
 
     # 预授粉工具点偏移，单位 m
-    # 工具点偏移写在 tool0 坐标系下
     # z=0.097 用于先靠近目标但不接触
     pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
 
     # 授粉工具点偏移，单位 m
-    # 这是最终接触目标时使用的工具点
     # 如果接触过深就增大 z，如果接触不到就减小 z
     pollination_tool_point_m: [0.05, -0.015, 0.087]
 
@@ -174,31 +273,162 @@ arrival_tasks:
     # 授粉位姿停留时间，单位 s
     dwell_pollination_s: 0.3
 
-    # 视觉授粉动作序列
-    # ensure_prepare_pose 会执行当前 waypoint 的 prepare_action
-    # 第一个 visual_position 会在预识别位姿下触发视觉服务，并把目标转换到 arm_base_link
-    # 后续 visual_position 使用同一个目标 base 坐标和检测时刻的工具坐标方向
-    # 这样可以避免机械臂移动后重复使用过期相机坐标导致误差
+    # job 级动作序列
+    # ensure_prepare_pose 会执行当前 job 的 prepare_action
+    # detect_targets 会调用视觉服务，返回 0 到 N 个相机坐标目标
     sequence:
       - type: "ensure_prepare_pose"
         name: "到达预识别位姿"
+      - type: "detect_targets"
+        name: "识别雌花目标"
 
+    # 对每一朵目标花重复执行的动作序列
+    # 视觉目标的 base 坐标在预识别位姿下只计算一次
+    per_target_sequence:
+      - type: "joints_action"
+        name: "回到预识别位姿"
+        action_ref: "prepare_action"
       - type: "visual_position"
         name: "到达预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
-
       - type: "visual_position"
         name: "到达授粉位姿"
         tool_point_ref: "pollination_tool_point_m"
-
       - type: "dwell"
         name: "授粉停留"
         duration_s: 0.3
-
       - type: "visual_position"
         name: "回到预授粉位姿"
         tool_point_ref: "pre_pollination_tool_point_m"
 
+    # 当前 job 的全部目标处理完后执行
+    after_all_targets_sequence:
+      - type: "joints_action"
+        name: "回到预识别位姿"
+        action_ref: "prepare_action"
+
+  # B 区视觉授粉任务模板
+  # 每次 job 允许识别 0 到 3 朵雌花
+  # empty_target_policy 为 skip 时，识别到 0 个目标会跳过该 job 并返回成功
+  visual_pollination_b_0_3:
+    type: "visual_pollination_multi"
+    vision_service: "/vision/detect_camera_target"
+    target_class: "female_flower"
+    min_targets: 0
+    max_targets: 3
+    empty_target_policy: "skip"
+    target_order: "nearest_first"
+
+    # 预授粉工具点偏移，单位 m
+    # z=0.097 用于先靠近目标但不接触
+    pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+
+    # 授粉工具点偏移，单位 m
+    # 如果接触过深就增大 z，如果接触不到就减小 z
+    pollination_tool_point_m: [0.05, -0.015, 0.087]
+
+    # 默认动作速度，单位 rad/s
+    speed_rad_s: 1.0
+
+    # 单个机械臂动作等待到位超时时间，单位 s
+    timeout_s: 8.0
+
+    # 授粉位姿停留时间，单位 s
+    dwell_pollination_s: 0.3
+
+    # job 级动作序列
+    # ensure_prepare_pose 会执行当前 job 的 prepare_action
+    # detect_targets 会调用视觉服务，返回 0 到 N 个相机坐标目标
+    sequence:
+      - type: "ensure_prepare_pose"
+        name: "到达预识别位姿"
+      - type: "detect_targets"
+        name: "识别雌花目标"
+
+    # 对每一朵目标花重复执行的动作序列
+    # 视觉目标的 base 坐标在预识别位姿下只计算一次
+    per_target_sequence:
+      - type: "joints_action"
+        name: "回到预识别位姿"
+        action_ref: "prepare_action"
+      - type: "visual_position"
+        name: "到达预授粉位姿"
+        tool_point_ref: "pre_pollination_tool_point_m"
+      - type: "visual_position"
+        name: "到达授粉位姿"
+        tool_point_ref: "pollination_tool_point_m"
+      - type: "dwell"
+        name: "授粉停留"
+        duration_s: 0.3
+      - type: "visual_position"
+        name: "回到预授粉位姿"
+        tool_point_ref: "pre_pollination_tool_point_m"
+
+    # 当前 job 的全部目标处理完后执行
+    after_all_targets_sequence:
+      - type: "joints_action"
+        name: "回到预识别位姿"
+        action_ref: "prepare_action"
+
+  # C 区视觉授粉任务模板
+  # 每次 job 允许识别 0 到 2 朵雌花
+  # empty_target_policy 为 skip 时，识别到 0 个目标会跳过该 job 并返回成功
+  visual_pollination_c_0_2:
+    type: "visual_pollination_multi"
+    vision_service: "/vision/detect_camera_target"
+    target_class: "female_flower"
+    min_targets: 0
+    max_targets: 2
+    empty_target_policy: "skip"
+    target_order: "nearest_first"
+
+    # 预授粉工具点偏移，单位 m
+    # z=0.097 用于先靠近目标但不接触
+    pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
+
+    # 授粉工具点偏移，单位 m
+    # 如果接触过深就增大 z，如果接触不到就减小 z
+    pollination_tool_point_m: [0.05, -0.015, 0.087]
+
+    # 默认动作速度，单位 rad/s
+    speed_rad_s: 1.0
+
+    # 单个机械臂动作等待到位超时时间，单位 s
+    timeout_s: 8.0
+
+    # 授粉位姿停留时间，单位 s
+    dwell_pollination_s: 0.3
+
+    # job 级动作序列
+    # ensure_prepare_pose 会执行当前 job 的 prepare_action
+    # detect_targets 会调用视觉服务，返回 0 到 N 个相机坐标目标
+    sequence:
+      - type: "ensure_prepare_pose"
+        name: "到达预识别位姿"
+      - type: "detect_targets"
+        name: "识别雌花目标"
+
+    # 对每一朵目标花重复执行的动作序列
+    # 视觉目标的 base 坐标在预识别位姿下只计算一次
+    per_target_sequence:
+      - type: "joints_action"
+        name: "回到预识别位姿"
+        action_ref: "prepare_action"
+      - type: "visual_position"
+        name: "到达预授粉位姿"
+        tool_point_ref: "pre_pollination_tool_point_m"
+      - type: "visual_position"
+        name: "到达授粉位姿"
+        tool_point_ref: "pollination_tool_point_m"
+      - type: "dwell"
+        name: "授粉停留"
+        duration_s: 0.3
+      - type: "visual_position"
+        name: "回到预授粉位姿"
+        tool_point_ref: "pre_pollination_tool_point_m"
+
+    # 当前 job 的全部目标处理完后执行
+    after_all_targets_sequence:
       - type: "joints_action"
         name: "回到预识别位姿"
         action_ref: "prepare_action"

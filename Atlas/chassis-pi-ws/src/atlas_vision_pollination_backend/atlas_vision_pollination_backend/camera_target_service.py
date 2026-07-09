@@ -146,7 +146,10 @@ class CameraTargetService(Node):
 
     def on_detect_request(self, request: DetectCameraTarget.Request, response: DetectCameraTarget.Response):
         """处理一次视觉识别请求"""
-        self.get_logger().info(f'收到视觉识别请求，点位={request.waypoint_id}，任务={request.task_id}')
+        max_targets = int(getattr(request, 'max_targets', 1) or 1)
+        max_targets = max(1, min(10, max_targets))
+        target_class = str(getattr(request, 'target_class', '') or '')
+        self.get_logger().info(f'收到视觉识别请求，点位={request.waypoint_id}，任务={request.task_id}，最大目标数={max_targets}，目标类别={target_class}')
         if self.cap is None or self.model is None:
             response.success = False
             response.message = 'VISION_NOT_READY'
@@ -168,14 +171,26 @@ class CameraTargetService(Node):
             if voice_text:
                 self.broadcast_voice(voice_text)
             if targets:
-                target = self.select_target(targets)
+                selected_targets = self.select_targets(targets, max_targets)
+                if not selected_targets:
+                    response.success = False
+                    response.message = 'NO_TARGET'
+                    return response
                 response.success = True
-                response.message = target.class_name
-                response.target_camera_m.x = target.x_mm / 1000.0
-                response.target_camera_m.y = target.y_mm / 1000.0
-                response.target_camera_m.z = target.z_mm / 1000.0
+                response.message = selected_targets[0].class_name
+                response.target_count = len(selected_targets)
+                response.targets_camera_m.clear()
+                for target in selected_targets:
+                    point = response.target_camera_m.__class__()
+                    point.x = target.x_mm / 1000.0
+                    point.y = target.y_mm / 1000.0
+                    point.z = target.z_mm / 1000.0
+                    response.targets_camera_m.append(point)
+                response.target_camera_m.x = response.targets_camera_m[0].x
+                response.target_camera_m.y = response.targets_camera_m[0].y
+                response.target_camera_m.z = response.targets_camera_m[0].z
                 self.get_logger().info(
-                    f'识别成功，类别={target.class_name}，相机坐标='
+                    f'识别成功，返回目标数={len(selected_targets)}，首个类别={selected_targets[0].class_name}，相机坐标='
                     f'{response.target_camera_m.x:.4f} {response.target_camera_m.y:.4f} '
                     f'{response.target_camera_m.z:.4f} 米'
                 )
@@ -328,9 +343,10 @@ class CameraTargetService(Node):
         y_mm = (cy_roi - cy0) * z_mm / fy
         return float(x_mm), float(y_mm), float(z_mm), int(cx_roi + x1), int(cy_roi + y1)
 
-    def select_target(self, targets: List[CandidateTarget]) -> CandidateTarget:
-        """选择一个目标，当前选择距离最近的目标"""
-        return min(targets, key=lambda item: item.z_mm)
+    def select_targets(self, targets: List[CandidateTarget], max_targets: int) -> List[CandidateTarget]:
+        """选择多个目标，当前按距离从近到远排序"""
+        ordered = sorted(targets, key=lambda item: item.z_mm)
+        return ordered[:max(1, max_targets)]
 
     def publish_debug_image(self, frame: np.ndarray) -> None:
         """发布调试图像"""

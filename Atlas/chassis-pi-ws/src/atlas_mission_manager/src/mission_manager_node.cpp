@@ -46,6 +46,8 @@ bool yaml_bool_or(const YAML::Node& node, const std::string& key, const bool fal
 const char* route_stage_name(const RouteStage stage) {
   switch (stage) {
     case RouteStage::Idle: return "IDLE";
+    case RouteStage::StartPreMove: return "START_PRE_MOVE";
+    case RouteStage::WaitPreMove: return "WAIT_PRE_MOVE";
     case RouteStage::StartNavigation: return "START_NAVIGATION";
     case RouteStage::WaitNavigation: return "WAIT_NAVIGATION";
     case RouteStage::StartManipulation: return "START_MANIPULATION";
@@ -54,6 +56,19 @@ const char* route_stage_name(const RouteStage stage) {
     case RouteStage::Failed: return "FAILED";
     default: return "UNKNOWN";
   }
+}
+
+ManipulationJobConfig parse_arrival_job(const YAML::Node& node, const std::string& waypoint_id, const std::size_t index) {
+  ManipulationJobConfig job;
+  job.id = yaml_string_or(node, "id", "");
+  if (job.id.empty()) {
+    std::ostringstream stream;
+    stream << waypoint_id << "_job_" << (index + 1u);
+    job.id = stream.str();
+  }
+  job.prepare_action = yaml_string_or(node, "prepare_action", "noop");
+  job.arrival_task = yaml_string_or(node, "arrival_task", yaml_string_or(node, "task", "noop"));
+  return job;
 }
 
 WaypointConfig parse_waypoint(const YAML::Node& node, const std::size_t index) {
@@ -68,8 +83,25 @@ WaypointConfig parse_waypoint(const YAML::Node& node, const std::size_t index) {
   wp.y = yaml_double_or(node, "y", yaml_double_or(node, "y_m", 0.0));
   wp.yaw = yaml_double_or(node, "yaw", yaml_double_or(node, "yaw_rad", 0.0));
   wp.timeout_s = std::max(0.1, yaml_double_or(node, "timeout_s", 20.0));
-  wp.prepare_action = yaml_string_or(node, "prepare_action", "noop");
-  wp.arrival_task = yaml_string_or(node, "arrival_task", "noop");
+  wp.area = yaml_string_or(node, "area", "PASS_BY");
+  wp.pre_move_action = yaml_string_or(node, "pre_move_action", "noop");
+
+  const YAML::Node jobs = node["arrival_jobs"];
+  if (jobs && jobs.IsSequence()) {
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+      wp.arrival_jobs.push_back(parse_arrival_job(jobs[i], wp.id, i));
+    }
+  } else {
+    const std::string legacy_prepare = yaml_string_or(node, "prepare_action", "noop");
+    const std::string legacy_task = yaml_string_or(node, "arrival_task", "noop");
+    if (legacy_task != "noop") {
+      ManipulationJobConfig job;
+      job.id = wp.id + "_job_1";
+      job.prepare_action = legacy_prepare;
+      job.arrival_task = legacy_task;
+      wp.arrival_jobs.push_back(job);
+    }
+  }
   return wp;
 }
 }  // namespace
@@ -582,10 +614,12 @@ bool MissionManagerNode::load_route_config(const std::string& path) {
 
 void MissionManagerNode::reset_route_flow() {
   active_waypoint_index_ = 0;
+  active_job_index_ = 0;
   route_stage_ = RouteStage::Idle;
   route_stage_enter_time_ = now();
   navigation_start_requested_ = false;
   manipulation_start_requested_ = false;
+  active_manipulation_request_id_.clear();
 }
 
 void MissionManagerNode::cancel_backends(const std::string& reason) {
@@ -603,8 +637,26 @@ void MissionManagerNode::cancel_backends(const std::string& reason) {
 
 void MissionManagerNode::handle_route_flow(const rclcpp::Time& current_time) {
   if (active_route_.empty()) { route_failed(error::kRouteConfigError, "active route is empty"); return; }
-  if (route_stage_ == RouteStage::Idle) { route_stage_ = RouteStage::StartNavigation; route_stage_enter_time_ = current_time; }
+  if (route_stage_ == RouteStage::Idle) { route_stage_ = RouteStage::StartPreMove; route_stage_enter_time_ = current_time; }
   switch (route_stage_) {
+    case RouteStage::StartPreMove:
+      start_pre_move_for_current_waypoint(current_time);
+      break;
+    case RouteStage::WaitPreMove: {
+      safety_controller_->enter_safe_stop("waiting pre-move manipulation");
+      atlas_mission_interfaces::msg::ManipulationStatus status;
+      bool available = false;
+      { std::lock_guard<std::mutex> lock(backend_status_mutex_); status = latest_manipulation_status_; available = manipulation_status_available_; }
+      if (available && status.waypoint_id == active_manipulation_request_id_) {
+        if (status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_SUCCEEDED) {
+          route_stage_ = RouteStage::StartNavigation;
+          route_stage_enter_time_ = current_time;
+        } else if (status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_FAILED || status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_CANCELLED) {
+          route_failed(status.error_code ? status.error_code : error::kTaskFlowUnavailable, "pre-move manipulation failed: " + status.message);
+        }
+      }
+      break;
+    }
     case RouteStage::StartNavigation:
       start_navigation_for_current_waypoint(current_time);
       break;
@@ -617,7 +669,13 @@ void MissionManagerNode::handle_route_flow(const rclcpp::Time& current_time) {
       if (available && status.waypoint_id == wp.id) {
         if (status.state == atlas_mission_interfaces::msg::NavigationStatus::STATE_SUCCEEDED) {
           safety_controller_->enter_safe_stop("waypoint reached");
-          route_stage_ = RouteStage::StartManipulation; route_stage_enter_time_ = current_time;
+          active_job_index_ = 0;
+          if (wp.arrival_jobs.empty()) {
+            advance_job_or_waypoint(current_time);
+          } else {
+            route_stage_ = RouteStage::StartManipulation;
+            route_stage_enter_time_ = current_time;
+          }
         } else if (status.state == atlas_mission_interfaces::msg::NavigationStatus::STATE_FAILED || status.state == atlas_mission_interfaces::msg::NavigationStatus::STATE_CANCELLED) {
           route_failed(status.error_code ? status.error_code : error::kTaskFlowUnavailable, "navigation failed: " + status.message);
         }
@@ -625,17 +683,16 @@ void MissionManagerNode::handle_route_flow(const rclcpp::Time& current_time) {
       break;
     }
     case RouteStage::StartManipulation:
-      start_manipulation_for_current_waypoint(current_time);
+      start_manipulation_for_current_job(current_time);
       break;
     case RouteStage::WaitManipulation: {
       safety_controller_->enter_safe_stop("waiting manipulation backend");
       atlas_mission_interfaces::msg::ManipulationStatus status;
       bool available = false;
       { std::lock_guard<std::mutex> lock(backend_status_mutex_); status = latest_manipulation_status_; available = manipulation_status_available_; }
-      const auto& wp = active_route_[active_waypoint_index_];
-      if (available && status.waypoint_id == wp.id) {
+      if (available && status.waypoint_id == active_manipulation_request_id_) {
         if (status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_SUCCEEDED) {
-          advance_waypoint_or_finish(current_time);
+          advance_job_or_waypoint(current_time);
         } else if (status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_FAILED || status.state == atlas_mission_interfaces::msg::ManipulationStatus::STATE_CANCELLED) {
           route_failed(status.error_code ? status.error_code : error::kTaskFlowUnavailable, "manipulation failed: " + status.message);
         }
@@ -652,6 +709,32 @@ void MissionManagerNode::handle_route_flow(const rclcpp::Time& current_time) {
   }
 }
 
+void MissionManagerNode::start_pre_move_for_current_waypoint(const rclcpp::Time& current_time) {
+  if (active_waypoint_index_ >= active_route_.size()) { route_stage_ = RouteStage::Completed; return; }
+  const auto& wp = active_route_[active_waypoint_index_];
+  if (wp.pre_move_action.empty() || wp.pre_move_action == "noop") {
+    route_stage_ = RouteStage::StartNavigation;
+    route_stage_enter_time_ = current_time;
+    return;
+  }
+  if (!manipulation_start_client_->service_is_ready()) { route_failed(error::kTaskFlowUnavailable, "manipulation start service unavailable for pre-move action"); return; }
+  auto req = std::make_shared<atlas_mission_interfaces::srv::StartManipulation::Request>();
+  req->backend = manipulation_backend_;
+  active_manipulation_request_id_ = wp.id + "__pre_move";
+  req->waypoint_id = active_manipulation_request_id_;
+  req->prepare_action = wp.pre_move_action;
+  req->arrival_task = "prepare_only";
+  {
+    std::lock_guard<std::mutex> lock(backend_status_mutex_);
+    manipulation_status_available_ = false;
+  }
+  (void)manipulation_start_client_->async_send_request(req);
+  manipulation_start_requested_ = true;
+  route_stage_ = RouteStage::WaitPreMove;
+  route_stage_enter_time_ = current_time;
+  RCLCPP_INFO(get_logger(), "Starting pre-move action waypoint=%s request=%s prepare=%s", wp.id.c_str(), active_manipulation_request_id_.c_str(), wp.pre_move_action.c_str());
+}
+
 void MissionManagerNode::start_navigation_for_current_waypoint(const rclcpp::Time& current_time) {
   if (active_waypoint_index_ >= active_route_.size()) { route_stage_ = RouteStage::Completed; return; }
   if (!navigation_start_client_->service_is_ready()) { route_failed(error::kTaskFlowUnavailable, "navigation start service unavailable"); return; }
@@ -664,6 +747,10 @@ void MissionManagerNode::start_navigation_for_current_waypoint(const rclcpp::Tim
   req->yaw_rad = wp.yaw;
   req->reset_origin = active_waypoint_index_ == 0;
   req->timeout_s = wp.timeout_s;
+  {
+    std::lock_guard<std::mutex> lock(backend_status_mutex_);
+    navigation_status_available_ = false;
+  }
   (void)navigation_start_client_->async_send_request(req);
   navigation_start_requested_ = true;
   route_stage_ = RouteStage::WaitNavigation;
@@ -671,31 +758,50 @@ void MissionManagerNode::start_navigation_for_current_waypoint(const rclcpp::Tim
   RCLCPP_INFO(get_logger(), "Starting navigation waypoint=%s x=%.3f y=%.3f yaw=%.3f", wp.id.c_str(), wp.x, wp.y, wp.yaw);
 }
 
-void MissionManagerNode::start_manipulation_for_current_waypoint(const rclcpp::Time& current_time) {
+void MissionManagerNode::start_manipulation_for_current_job(const rclcpp::Time& current_time) {
   if (active_waypoint_index_ >= active_route_.size()) { route_stage_ = RouteStage::Completed; return; }
-  if (!manipulation_start_client_->service_is_ready()) { route_failed(error::kTaskFlowUnavailable, "manipulation start service unavailable"); return; }
   const auto& wp = active_route_[active_waypoint_index_];
+  if (active_job_index_ >= wp.arrival_jobs.size()) { advance_job_or_waypoint(current_time); return; }
+  if (!manipulation_start_client_->service_is_ready()) { route_failed(error::kTaskFlowUnavailable, "manipulation start service unavailable"); return; }
+  const auto& job = wp.arrival_jobs[active_job_index_];
   auto req = std::make_shared<atlas_mission_interfaces::srv::StartManipulation::Request>();
   req->backend = manipulation_backend_;
-  req->waypoint_id = wp.id;
-  req->prepare_action = wp.prepare_action;
-  req->arrival_task = wp.arrival_task;
+  active_manipulation_request_id_ = job.id;
+  req->waypoint_id = active_manipulation_request_id_;
+  req->prepare_action = job.prepare_action;
+  req->arrival_task = job.arrival_task;
+  {
+    std::lock_guard<std::mutex> lock(backend_status_mutex_);
+    manipulation_status_available_ = false;
+  }
   (void)manipulation_start_client_->async_send_request(req);
   manipulation_start_requested_ = true;
   route_stage_ = RouteStage::WaitManipulation;
   route_stage_enter_time_ = current_time;
-  RCLCPP_INFO(get_logger(), "Starting manipulation waypoint=%s prepare=%s task=%s", wp.id.c_str(), wp.prepare_action.c_str(), wp.arrival_task.c_str());
+  RCLCPP_INFO(get_logger(), "Starting manipulation waypoint=%s job=%s prepare=%s task=%s", wp.id.c_str(), job.id.c_str(), job.prepare_action.c_str(), job.arrival_task.c_str());
 }
 
-void MissionManagerNode::advance_waypoint_or_finish(const rclcpp::Time& current_time) {
+void MissionManagerNode::advance_job_or_waypoint(const rclcpp::Time& current_time) {
+  if (active_waypoint_index_ >= active_route_.size()) { route_stage_ = RouteStage::Completed; return; }
+  const auto& wp = active_route_[active_waypoint_index_];
+  if (active_job_index_ + 1u < wp.arrival_jobs.size()) {
+    ++active_job_index_;
+    manipulation_start_requested_ = false;
+    active_manipulation_request_id_.clear();
+    route_stage_ = RouteStage::StartManipulation;
+    route_stage_enter_time_ = current_time;
+    return;
+  }
   ++active_waypoint_index_;
+  active_job_index_ = 0;
   navigation_start_requested_ = false;
   manipulation_start_requested_ = false;
+  active_manipulation_request_id_.clear();
   if (active_waypoint_index_ >= active_route_.size()) {
     route_stage_ = RouteStage::Completed;
     route_stage_enter_time_ = current_time;
   } else {
-    route_stage_ = RouteStage::StartNavigation;
+    route_stage_ = RouteStage::StartPreMove;
     route_stage_enter_time_ = current_time;
   }
 }

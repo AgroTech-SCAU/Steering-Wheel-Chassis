@@ -93,12 +93,18 @@ class ArrivalTask:
     task_type: str = 'noop'
     empty_target_policy: str = 'skip'
     vision_service: str = '/vision/detect_camera_target'
+    target_class: str = 'female_flower'
+    min_targets: int = 0
+    max_targets: int = 1
+    target_order: str = 'nearest_first'
     pre_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.097])
     pollination_tool: List[float] = field(default_factory=lambda: [0.05, -0.015, 0.087])
     speed_rad_s: float = 1.0
     timeout_s: float = 8.0
     dwell_pollination_s: float = 0.3
     sequence: List[dict] = field(default_factory=list)
+    per_target_sequence: List[dict] = field(default_factory=list)
+    after_all_targets_sequence: List[dict] = field(default_factory=list)
 
 
 class VisionPollinationBackend(Node):
@@ -155,6 +161,7 @@ class VisionPollinationBackend(Node):
         self.pending_target_joints: Optional[np.ndarray] = None
         self.pending_goal_position: Optional[np.ndarray] = None
         self.target_base: Optional[np.ndarray] = None
+        self.target_bases: List[np.ndarray] = []
         self.rotation_at_detection: Optional[np.ndarray] = None
         self.dwell_until: Optional[rclpy.time.Time] = None
         self.get_logger().info('视觉授粉后端已启动')
@@ -181,12 +188,18 @@ class VisionPollinationBackend(Node):
             task.task_type = node.get('type', 'noop')
             task.empty_target_policy = node.get('empty_target_policy', 'skip')
             task.vision_service = node.get('vision_service', self.vision_service_name)
+            task.target_class = str(node.get('target_class', task.target_class))
+            task.min_targets = int(node.get('min_targets', task.min_targets))
+            task.max_targets = int(node.get('max_targets', task.max_targets))
+            task.target_order = str(node.get('target_order', task.target_order))
             task.pre_tool = [float(v) for v in node.get('pre_pollination_tool_point_m', task.pre_tool)]
             task.pollination_tool = [float(v) for v in node.get('pollination_tool_point_m', task.pollination_tool)]
             task.speed_rad_s = float(node.get('speed_rad_s', self.default_speed_rad_s))
             task.timeout_s = float(node.get('timeout_s', self.motion_timeout_s))
             task.dwell_pollination_s = float(node.get('dwell_pollination_s', 0.3))
             task.sequence = list(node.get('sequence', []))
+            task.per_target_sequence = list(node.get('per_target_sequence', []))
+            task.after_all_targets_sequence = list(node.get('after_all_targets_sequence', []))
             self.arrival_tasks[name] = task
         self.get_logger().info(f'授粉配置已读取，预备动作={len(self.prepare_actions)}，到位任务={len(self.arrival_tasks)}')
 
@@ -241,6 +254,11 @@ class VisionPollinationBackend(Node):
         self.current_task = self.arrival_tasks.get(self.arrival_task_name, ArrivalTask())
         if self.current_task.task_type == 'noop':
             self.sequence = []
+        elif self.current_task.task_type == 'visual_pollination_multi':
+            self.sequence = self.current_task.sequence or [
+                {'type': 'ensure_prepare_pose', 'name': '到达预识别位姿'},
+                {'type': 'detect_targets', 'name': '识别雌花目标'},
+            ]
         else:
             self.sequence = self.current_task.sequence or [
                 {'type': 'ensure_prepare_pose'},
@@ -255,6 +273,7 @@ class VisionPollinationBackend(Node):
         self.error_code = 0
         self.step_index = -1
         self.target_base = None
+        self.target_bases = []
         self.rotation_at_detection = None
         self.command_future = None
         self.vision_future = None
@@ -320,8 +339,10 @@ class VisionPollinationBackend(Node):
             ref = step.get('action_ref', 'prepare_action')
             action_name = self.prepare_action_name if ref == 'prepare_action' else ref
             self.start_joint_action(self.prepare_actions.get(action_name, PrepareAction()))
+        elif kind == 'detect_targets':
+            self.start_vision_request()
         elif kind == 'visual_position':
-            if self.target_base is None:
+            if self.target_base is None and not self.target_bases:
                 self.start_vision_request()
             else:
                 self.start_visual_position(step)
@@ -354,6 +375,10 @@ class VisionPollinationBackend(Node):
         req = DetectCameraTarget.Request()
         req.waypoint_id = self.waypoint_id
         req.task_id = self.arrival_task_name
+        if hasattr(req, 'max_targets'):
+            req.max_targets = int(max(1, self.current_task.max_targets))
+        if hasattr(req, 'target_class'):
+            req.target_class = self.current_task.target_class
         self.vision_future = self.vision_client.call_async(req)
         self.step_started_at = self.get_clock().now()
         self.message = '请求相机目标'
@@ -371,18 +396,64 @@ class VisionPollinationBackend(Node):
         self.vision_future = None
         if not resp.success:
             if resp.message == 'NO_TARGET' and self.current_task.empty_target_policy == 'skip':
-                self.succeed('视觉返回无目标，按策略跳过该点')
+                self.succeed('视觉返回无目标，按策略跳过该任务')
             else:
                 self.fail(3005, f'视觉失败: {resp.message}')
             return
-        camera_point = np.array([resp.target_camera_m.x, resp.target_camera_m.y, resp.target_camera_m.z], dtype=float)
+
+        camera_points: List[np.ndarray] = []
+        if hasattr(resp, 'targets_camera_m') and len(resp.targets_camera_m) > 0:
+            for point in resp.targets_camera_m:
+                camera_points.append(np.array([point.x, point.y, point.z], dtype=float))
+        else:
+            camera_points.append(np.array([resp.target_camera_m.x, resp.target_camera_m.y, resp.target_camera_m.z], dtype=float))
+        camera_points = camera_points[:max(1, self.current_task.max_targets)]
+
+        if len(camera_points) < self.current_task.min_targets:
+            self.fail(3005, f'视觉目标数量不足，目标数={len(camera_points)}，最小需要={self.current_task.min_targets}')
+            return
+        if not camera_points:
+            if self.current_task.empty_target_policy == 'skip':
+                self.succeed('视觉返回空目标列表，按策略跳过该任务')
+            else:
+                self.fail(3005, '视觉返回空目标列表')
+            return
+
         joints = self.latest_joints.copy()
         t_base_tool0 = fk_base_to_tool0(joints, self.fk_include_tool_t)
-        target_tool0 = transform_point(T_TOOL_CAMERA, camera_point)
-        target_base = transform_point(t_base_tool0, target_tool0)
-        self.target_base = target_base
         self.rotation_at_detection = t_base_tool0[:3, :3].copy()
-        self.get_logger().info(f'vision target camera=[{camera_point[0]:.4f} {camera_point[1]:.4f} {camera_point[2]:.4f}] base=[{target_base[0]:.4f} {target_base[1]:.4f} {target_base[2]:.4f}]')
+        self.target_bases = []
+        for camera_point in camera_points:
+            target_tool0 = transform_point(T_TOOL_CAMERA, camera_point)
+            target_base = transform_point(t_base_tool0, target_tool0)
+            self.target_bases.append(target_base)
+        self.target_base = self.target_bases[0]
+
+        first_camera = camera_points[0]
+        first_base = self.target_bases[0]
+        self.get_logger().info(
+            f'vision targets={len(self.target_bases)} first_camera=[{first_camera[0]:.4f} {first_camera[1]:.4f} {first_camera[2]:.4f}] '
+            f'first_base=[{first_base[0]:.4f} {first_base[1]:.4f} {first_base[2]:.4f}]'
+        )
+
+        if self.current_task.task_type == 'visual_pollination_multi':
+            per_target = self.current_task.per_target_sequence or [
+                {'type': 'joints_action', 'name': '到达预识别位姿', 'action_ref': 'prepare_action'},
+                {'type': 'visual_position', 'name': '到达预授粉位姿', 'tool_point_ref': 'pre_pollination_tool_point_m'},
+                {'type': 'visual_position', 'name': '到达授粉位姿', 'tool_point_ref': 'pollination_tool_point_m'},
+                {'type': 'dwell', 'name': '授粉停留', 'duration_s': self.current_task.dwell_pollination_s},
+            ]
+            expanded: List[dict] = []
+            for target_index in range(len(self.target_bases)):
+                for item in per_target:
+                    copied = dict(item)
+                    copied['target_index'] = target_index
+                    expanded.append(copied)
+            expanded.extend(dict(item) for item in self.current_task.after_all_targets_sequence)
+            self.sequence = self.sequence[:self.step_index + 1] + expanded
+            self.advance_step(f'vision targets detected {len(self.target_bases)}')
+            return
+
         self.start_visual_position(self.sequence[self.step_index])
 
     def start_visual_position(self, step: dict) -> None:
@@ -391,7 +462,12 @@ class VisionPollinationBackend(Node):
             return
         ref = step.get('tool_point_ref', 'pre_pollination_tool_point_m')
         tool = np.array(self.current_task.pre_tool if ref == 'pre_pollination_tool_point_m' else self.current_task.pollination_tool, dtype=float)
-        goal = self.target_base - self.rotation_at_detection @ tool
+        target_index = int(step.get('target_index', 0))
+        if self.target_bases and 0 <= target_index < len(self.target_bases):
+            base_target = self.target_bases[target_index]
+        else:
+            base_target = self.target_base
+        goal = base_target - self.rotation_at_detection @ tool
         if not self.position_client.service_is_ready():
             self.fail(3006, '机械臂位置服务未就绪')
             return

@@ -237,3 +237,43 @@ success=false 且 message 为其他值表示视觉失败
 发布 /atlas/manipulation/status
 保持 StartManipulation 中 prepare_action 和 arrival_task 的语义不变
 ```
+
+---
+
+## 点位与多任务配置补充
+
+当前路线配置已升级为 `pre_move_action + arrival_jobs` 结构
+
+```text
+pre_move_action
+  在底盘移动前执行
+  用于收臂，安全姿态，或移动到某个预识别位姿
+
+arrival_jobs
+  在底盘到点稳定后依次执行
+  PASS_BY 点为空列表
+  AREA_A 和 AREA_B 每个点默认两个 job
+  AREA_C 每个点默认一个 job
+```
+
+视觉授粉任务支持 `visual_pollination_multi`
+
+```text
+visual_pollination_a_0_3  每个 job 识别 0 到 3 朵雌花
+visual_pollination_b_0_3  每个 job 识别 0 到 3 朵雌花
+visual_pollination_c_0_2  每个 job 识别 0 到 2 朵雌花
+```
+
+每朵花的动作序列在 `pollination_actions.yaml` 的 `per_target_sequence` 中配置
+
+默认顺序为
+
+```text
+预识别位姿
+→ 预授粉位姿
+→ 授粉位姿
+→ 授粉停留
+→ 回到预授粉位姿
+```
+
+每个 job 完成后会执行 `after_all_targets_sequence`，默认回到预识别位姿

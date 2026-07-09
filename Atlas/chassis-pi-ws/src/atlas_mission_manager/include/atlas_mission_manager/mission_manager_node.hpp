@@ -34,6 +34,8 @@ enum class FinalResultKind : std::uint8_t {
 
 enum class RouteStage : std::uint8_t {
   Idle,
+  StartPreMove,
+  WaitPreMove,
   StartNavigation,
   WaitNavigation,
   StartManipulation,
@@ -42,14 +44,21 @@ enum class RouteStage : std::uint8_t {
   Failed,
 };
 
+struct ManipulationJobConfig {
+  std::string id;
+  std::string prepare_action{"noop"};
+  std::string arrival_task{"noop"};
+};
+
 struct WaypointConfig {
   std::string id;
   double x{0.0};
   double y{0.0};
   double yaw{0.0};
   double timeout_s{20.0};
-  std::string prepare_action{"noop"};
-  std::string arrival_task{"noop"};
+  std::string area{"PASS_BY"};
+  std::string pre_move_action{"noop"};
+  std::vector<ManipulationJobConfig> arrival_jobs;
 };
 
 class MissionManagerNode final : public rclcpp::Node {
@@ -82,9 +91,10 @@ class MissionManagerNode final : public rclcpp::Node {
   void reset_route_flow();
   void cancel_backends(const std::string& reason);
   void handle_route_flow(const rclcpp::Time& now);
+  void start_pre_move_for_current_waypoint(const rclcpp::Time& now);
   void start_navigation_for_current_waypoint(const rclcpp::Time& now);
-  void start_manipulation_for_current_waypoint(const rclcpp::Time& now);
-  void advance_waypoint_or_finish(const rclcpp::Time& now);
+  void start_manipulation_for_current_job(const rclcpp::Time& now);
+  void advance_job_or_waypoint(const rclcpp::Time& now);
   void route_failed(std::int32_t code, const std::string& message);
   void notify_task_flow_succeeded(const std::string& message);
   void notify_task_flow_failed(std::int32_t error_code, const std::string& message);
@@ -173,10 +183,12 @@ class MissionManagerNode final : public rclcpp::Node {
   std::size_t max_forward_waypoints_{1};
   std::vector<WaypointConfig> active_route_;
   std::size_t active_waypoint_index_{0};
+  std::size_t active_job_index_{0};
   RouteStage route_stage_{RouteStage::Idle};
   rclcpp::Time route_stage_enter_time_{0, 0, RCL_ROS_TIME};
   bool navigation_start_requested_{false};
   bool manipulation_start_requested_{false};
+  std::string active_manipulation_request_id_;
 
   MissionState state_after_abort_{MissionState::WaitReset};
   std::string status_message_{"bootstrapping"};
