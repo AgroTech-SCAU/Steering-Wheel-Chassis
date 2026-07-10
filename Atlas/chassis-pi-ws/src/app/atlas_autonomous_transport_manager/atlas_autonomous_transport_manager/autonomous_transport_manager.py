@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atlas 全自主运输区任务状态机。"""
+"""Atlas 全自主运输区任务状态机"""
 
 from __future__ import annotations
 
@@ -22,11 +22,14 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
 from atlas_mission_interfaces.msg import (
+    AsrproEvent,
+    AsrproStatus,
     AutonomousTransportStatus,
     ManipulationStatus,
     NavigationStatus,
 )
 from atlas_mission_interfaces.srv import (
+    AsrproSpeak,
     CancelManipulation,
     CancelNavigation,
     ClassifySortingRule,
@@ -38,7 +41,7 @@ from mcu_comm_bridge.srv import ReportMissionResult
 
 
 class LifecycleState(IntEnum):
-    """整套自动任务的生命周期状态。"""
+    """整套自动任务的生命周期状态"""
 
     BOOTSTRAP = AutonomousTransportStatus.STATE_BOOTSTRAP
     WAIT_MCU_STATUS = AutonomousTransportStatus.STATE_WAIT_MCU_STATUS
@@ -53,11 +56,13 @@ class LifecycleState(IntEnum):
 
 
 class TransportStage(IntEnum):
-    """全自主运输区内部阶段。"""
+    """全自主运输区内部阶段"""
 
     IDLE = AutonomousTransportStatus.STAGE_IDLE
     ANNOUNCE_TRANSITION = AutonomousTransportStatus.STAGE_ANNOUNCE_TRANSITION
+    ANNOUNCE_VOICE_PROMPT = AutonomousTransportStatus.STAGE_ANNOUNCE_VOICE_PROMPT
     WAIT_VOICE_START = AutonomousTransportStatus.STAGE_WAIT_VOICE_START
+    ANNOUNCE_AUTONOMOUS_START = AutonomousTransportStatus.STAGE_ANNOUNCE_AUTONOMOUS_START
     NAVIGATE_SORTING_AREA = AutonomousTransportStatus.STAGE_NAVIGATE_SORTING_AREA
     CLASSIFY_SORTING_RULE = AutonomousTransportStatus.STAGE_CLASSIFY_SORTING_RULE
     NAVIGATE_DISPATCH_AREA = AutonomousTransportStatus.STAGE_NAVIGATE_DISPATCH_AREA
@@ -71,7 +76,7 @@ class TransportStage(IntEnum):
 
 @dataclass(frozen=True)
 class Waypoint:
-    """导航后端所需的单个地图点。"""
+    """导航后端所需的单个地图点"""
 
     waypoint_id: str
     x_m: float
@@ -82,7 +87,7 @@ class Waypoint:
 
 @dataclass
 class Operation:
-    """导航、机械臂或识别服务的一次异步调用上下文。"""
+    """导航、机械臂或识别服务的一次异步调用上下文"""
 
     kind: str = ''
     request_id: str = ''
@@ -106,7 +111,7 @@ class Operation:
 
 @dataclass
 class TransportPlan:
-    """从 YAML 读取的全自主运输任务参数。"""
+    """从 YAML 读取的全自主运输任务参数"""
 
     calibration_confirmed: bool = False
     max_autonomous_duration_s: float = 300.0
@@ -125,15 +130,25 @@ class TransportPlan:
     navigation_retry_count: int = 1
     classification_retry_count: int = 2
     pick_retry_count: int = 1
-    continue_on_pick_failure: bool = False
+    continue_on_pick_failure: bool = True
     voice_start_required: bool = True
-    voice_start_timeout_s: float = 30.0
+    voice_start_timeout_s: float = 0.0
     voice_start_fallback_enabled: bool = False
-    transition_announcement: str = '遥操作区任务已完成'
-    voice_prompt: str = '请发出执行全自主运输任务语音指令'
+    asrpro_status_timeout_s: float = 2.0
+    speech_timeout_s: float = 8.0
+    speech_retry_count: int = 2
+    transition_phrase_id: str = 'transition_complete'
+    prompt_phrase_id: str = 'voice_prompt'
+    autonomous_start_phrase_id: str = 'autonomous_start'
+    delivery_complete_phrase_id: str = 'delivery_complete'
+    task_complete_phrase_id: str = 'task_complete'
+    task_skipped_phrase_id: str = 'task_skipped'
     accepted_voice_phrases: List[str] = field(
-        default_factory=lambda: ['执行全自主运输任务', '开始全自主运输任务']
+        default_factory=lambda: ['atlas_start']
     )
+    fallback_park_1_cargo: str = 'gear'
+    fallback_park_2_cargo: str = 't_bolt'
+    use_fallback_mapping_on_failure: bool = False
     sorting_waypoint: Optional[Waypoint] = None
     dispatch_waypoint: Optional[Waypoint] = None
     park_waypoints: Dict[str, Waypoint] = field(default_factory=dict)
@@ -161,7 +176,7 @@ class TransportPlan:
 
 
 class AutonomousTransportManager(Node):
-    """执行中转区、智能分拣、待派送取货和园区投放闭环。"""
+    """执行中转区、智能分拣、待派送取货和园区投放闭环"""
 
     READY_CHASSIS = 1 << 0
     READY_ARM = 1 << 1
@@ -175,7 +190,7 @@ class AutonomousTransportManager(Node):
         self._lock = threading.RLock()
         self.callback_group = ReentrantCallbackGroup()
 
-        # 接口名称全部参数化，现场集成时不需要修改状态机源码。
+        # 接口名称全部参数化，现场集成时不需要修改状态机源码
         self.mcu_status_topic = str(
             self.declare_parameter('mcu_status_topic', '/mcu/status').value
         )
@@ -199,11 +214,19 @@ class AutonomousTransportManager(Node):
                 'status_topic', '/atlas/autonomous_transport/status'
             ).value
         )
-        self.voice_text_topic = str(
-            self.declare_parameter('voice_text_topic', '/atlas/voice/text').value
+        self.asrpro_status_topic = str(
+            self.declare_parameter('asrpro_status_topic', '/atlas/asrpro/status').value
+        )
+        self.asrpro_event_topic = str(
+            self.declare_parameter('asrpro_event_topic', '/atlas/asrpro/event').value
         )
         self.voice_command_topic = str(
-            self.declare_parameter('voice_command_topic', '/atlas/voice/command').value
+            self.declare_parameter(
+                'voice_command_topic', '/atlas/asrpro/recognized'
+            ).value
+        )
+        self.asrpro_speak_service = str(
+            self.declare_parameter('asrpro_speak_service', '/atlas/asrpro/speak').value
         )
 
         self.navigation_backend = str(
@@ -282,16 +305,16 @@ class AutonomousTransportManager(Node):
             self.declare_parameter('require_arm_ready', True).value
         )
         self.accept_latched_start_without_event = bool(
-            self.declare_parameter('accept_latched_start_without_event', False).value
+            self.declare_parameter('accept_latched_start_without_event', True).value
         )
 
         config_path = str(self.declare_parameter('config_yaml_path', '').value)
         self.plan = self._load_plan(config_path)
         self.config_errors = self._validate_plan(self.plan)
 
-        # 订阅 MCU 生命周期、后端状态和语音识别文本。
-        # MCU 状态发布端使用 reliable + transient_local。
-        # 订阅端保持相同耐久性，节点启动后能够立即获得最近一次安全状态。
+        # 订阅 MCU 生命周期、后端状态和语音识别文本
+        # MCU 状态发布端使用 reliable + transient_local
+        # 订阅端保持相同耐久性，节点启动后能够立即获得最近一次安全状态
         mcu_status_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -333,6 +356,20 @@ class AutonomousTransportManager(Node):
             callback_group=self.callback_group,
         )
         self.create_subscription(
+            AsrproStatus,
+            self.asrpro_status_topic,
+            self._on_asrpro_status,
+            10,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            AsrproEvent,
+            self.asrpro_event_topic,
+            self._on_asrpro_event,
+            20,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
             String,
             self.voice_command_topic,
             self._on_voice_command,
@@ -344,9 +381,8 @@ class AutonomousTransportManager(Node):
             AutonomousTransportStatus, self.status_topic, 10
         )
         self.cmd_vel_publisher = self.create_publisher(Twist, self.cmd_vel_topic, 10)
-        self.voice_publisher = self.create_publisher(String, self.voice_text_topic, 10)
 
-        # 状态机只调用后端服务；导航、识别、机械臂控制分别由对应功能包实现。
+        # 状态机只调用后端服务；导航、识别、机械臂控制分别由对应功能包实现
         self.navigation_start_client = self.create_client(
             StartNavigation,
             self.navigation_start_service,
@@ -380,6 +416,11 @@ class AutonomousTransportManager(Node):
         self.brake_client = self.create_client(
             SetBool, self.brake_service, callback_group=self.callback_group
         )
+        self.asrpro_speak_client = self.create_client(
+            AsrproSpeak,
+            self.asrpro_speak_service,
+            callback_group=self.callback_group,
+        )
 
         now = self.get_clock().now()
         self.lifecycle_state = LifecycleState.BOOTSTRAP
@@ -388,6 +429,7 @@ class AutonomousTransportManager(Node):
         self.stage_enter_time = now
         self.run_start_time = now
         self.last_mcu_status_time = now
+        self.last_asrpro_status_time = now
         self.last_status_publish_time = now
         self.last_zero_publish_time = now - Duration(seconds=1.0)
         self.last_brake_request_time = now - Duration(seconds=1.0)
@@ -399,6 +441,11 @@ class AutonomousTransportManager(Node):
         self.voice_start_received = False
         self.transition_announcement_sent = False
         self.voice_prompt_sent = False
+        self.autonomous_start_announcement_sent = False
+        self.completion_announcement_done = False
+        self.speech_retry_count = 0
+        self.speech_done_phrase_id = ''
+        self.speech_failed_phrase_id = ''
         self.sorting_rule_confirmed = False
         self.sorting_rule_confidence = 0.0
         self.park_1_cargo = ''
@@ -407,8 +454,8 @@ class AutonomousTransportManager(Node):
         self.current_park = ''
         self.current_waypoint = ''
         self.holding_cargo = False
-        # 每次导航前都要确认机械臂处于收拢安全位姿。
-        # 抓取或投放阶段开始时该标志会清零，导航包装器负责重新执行安全收臂动作。
+        # 每次导航前都要确认机械臂处于收拢安全位姿
+        # 抓取或投放阶段开始时该标志会清零，导航包装器负责重新执行安全收臂动作
         self.arm_safe_ready = False
         self.sorting_pose_ready = False
         self.hard_time_stop = False
@@ -420,8 +467,11 @@ class AutonomousTransportManager(Node):
         self.pick_retry_count = 0
         self.classification_retry_count = 0
         self.navigation_retry_count = 0
+        self.skipped_stage_count = 0
+        self.last_skipped_stage = ''
         self.operation = Operation()
         self.latest_mcu_status: Optional[McuStatus] = None
+        self.latest_asrpro_status: Optional[AsrproStatus] = None
         self.latest_navigation_status: Optional[NavigationStatus] = None
         self.latest_manipulation_status: Optional[ManipulationStatus] = None
         self.error_code = 0
@@ -497,6 +547,16 @@ class AutonomousTransportManager(Node):
         plan.classification_min_confidence = float(
             classification.get('minimum_confidence', 0.60)
         )
+        fallback_mapping = classification.get('fallback_mapping', {}) or {}
+        plan.fallback_park_1_cargo = self._cargo_name(
+            fallback_mapping.get('park_1', 'gear')
+        )
+        plan.fallback_park_2_cargo = self._cargo_name(
+            fallback_mapping.get('park_2', 't_bolt')
+        )
+        plan.use_fallback_mapping_on_failure = bool(
+            classification.get('use_fallback_mapping_on_failure', False)
+        )
 
         voice = root.get('voice', {}) or {}
         plan.voice_start_required = bool(voice.get('start_required', True))
@@ -506,14 +566,38 @@ class AutonomousTransportManager(Node):
         plan.voice_start_fallback_enabled = bool(
             voice.get('fallback_enabled', False)
         )
-        plan.transition_announcement = str(
-            voice.get('transition_announcement', plan.transition_announcement)
+        plan.asrpro_status_timeout_s = max(
+            0.2, float(voice.get('asrpro_status_timeout_s', 2.0))
         )
-        plan.voice_prompt = str(voice.get('prompt', plan.voice_prompt))
+        plan.speech_timeout_s = max(
+            1.0, float(voice.get('speech_timeout_s', 8.0))
+        )
+        plan.speech_retry_count = max(
+            0, int(voice.get('speech_retry_count', 2))
+        )
+        phrase_ids = voice.get('phrase_ids', {}) or {}
+        plan.transition_phrase_id = str(
+            phrase_ids.get('transition_complete', plan.transition_phrase_id)
+        )
+        plan.prompt_phrase_id = str(
+            phrase_ids.get('voice_prompt', plan.prompt_phrase_id)
+        )
+        plan.autonomous_start_phrase_id = str(
+            phrase_ids.get('autonomous_start', plan.autonomous_start_phrase_id)
+        )
+        plan.delivery_complete_phrase_id = str(
+            phrase_ids.get('delivery_complete', plan.delivery_complete_phrase_id)
+        )
+        plan.task_complete_phrase_id = str(
+            phrase_ids.get('task_complete', plan.task_complete_phrase_id)
+        )
+        plan.task_skipped_phrase_id = str(
+            phrase_ids.get('task_skipped', plan.task_skipped_phrase_id)
+        )
         plan.accepted_voice_phrases = [
-            str(item).strip()
+            str(item).strip().lower()
             for item in voice.get(
-                'accepted_phrases', plan.accepted_voice_phrases
+                'accepted_intents', voice.get('accepted_phrases', plan.accepted_voice_phrases)
             )
             if str(item).strip()
         ]
@@ -544,7 +628,7 @@ class AutonomousTransportManager(Node):
         )
         plan.pick_retry_count = max(0, int(recovery.get('pick_retry_count', 1)))
         plan.continue_on_pick_failure = bool(
-            recovery.get('continue_on_pick_failure', False)
+            recovery.get('continue_on_pick_failure', True)
         )
 
         waypoints = root.get('waypoints', {}) or {}
@@ -613,8 +697,8 @@ class AutonomousTransportManager(Node):
         errors.extend(self._validate_waypoint('park_1', plan.park_waypoints.get('park_1')))
         errors.extend(self._validate_waypoint('park_2', plan.park_waypoints.get('park_2')))
 
-        # 标定确认打开后，四个区域必须对应四个可区分的地图停车点。
-        # 该检查用于阻止仅修改 calibration_confirmed、却未填写实际场地坐标的配置进入运动阶段。
+        # 标定确认打开后，四个区域必须对应四个可区分的地图停车点
+        # 该检查用于阻止仅修改 calibration_confirmed、却未填写实际场地坐标的配置进入运动阶段
         if plan.calibration_confirmed:
             named_waypoints = {
                 'sorting_area': plan.sorting_waypoint,
@@ -633,8 +717,8 @@ class AutonomousTransportManager(Node):
             if len(set(waypoint_ids)) != len(waypoint_ids):
                 errors.append('waypoints 中四个导航点的 id 必须互不相同')
 
-            # 只比较 x/y 停车位置；允许不同区域具有相同朝向。
-            # 1 mm 量化可过滤 YAML 浮点表示噪声，同时不会掩盖实际停车点重合。
+            # 只比较 x/y 停车位置；允许不同区域具有相同朝向
+            # 1 mm 量化可过滤 YAML 浮点表示噪声，同时不会掩盖实际停车点重合
             quantized_positions = {
                 (round(waypoint.x_m, 3), round(waypoint.y_m, 3))
                 for waypoint in available_waypoints.values()
@@ -680,6 +764,23 @@ class AutonomousTransportManager(Node):
                     f'{park} 的 place_tasks 数量不足: '
                     f'{len(tasks)} < {required_place_slots}'
                 )
+        fallback = (plan.fallback_park_1_cargo, plan.fallback_park_2_cargo)
+        if any(item not in ('gear', 't_bolt') for item in fallback):
+            errors.append('classification.fallback_mapping 只能使用 gear 和 t_bolt')
+        if fallback[0] == fallback[1]:
+            errors.append('classification.fallback_mapping 的两个园区类别必须不同')
+        if plan.voice_start_required and not plan.accepted_voice_phrases:
+            errors.append('voice.accepted_intents 不能为空')
+        phrase_ids = (
+            plan.transition_phrase_id,
+            plan.prompt_phrase_id,
+            plan.autonomous_start_phrase_id,
+            plan.delivery_complete_phrase_id,
+            plan.task_complete_phrase_id,
+            plan.task_skipped_phrase_id,
+        )
+        if any(not item.strip() for item in phrase_ids):
+            errors.append('voice.phrase_ids 中的短语标识不能为空')
         return errors
 
     # ------------------------------------------------------------------
@@ -712,6 +813,18 @@ class AutonomousTransportManager(Node):
         with self._lock:
             self.latest_manipulation_status = message
 
+    def _on_asrpro_status(self, message: AsrproStatus) -> None:
+        with self._lock:
+            self.latest_asrpro_status = message
+            self.last_asrpro_status_time = self.get_clock().now()
+
+    def _on_asrpro_event(self, message: AsrproEvent) -> None:
+        with self._lock:
+            if message.event == AsrproEvent.EVENT_SPEAK_DONE:
+                self.speech_done_phrase_id = message.phrase_id.strip()
+            elif message.event == AsrproEvent.EVENT_NACK:
+                self.speech_failed_phrase_id = message.phrase_id.strip()
+
     def _on_voice_command(self, message: String) -> None:
         with self._lock:
             if self.transport_stage != TransportStage.WAIT_VOICE_START:
@@ -728,7 +841,7 @@ class AutonomousTransportManager(Node):
 
     def _on_navigation_cmd_vel(self, message: Twist) -> None:
         with self._lock:
-            # 只有运行中的导航操作拥有速度输出权。识别、抓取、投放、上报和等待阶段均拒绝非零速度。
+            # 只有运行中的导航操作拥有速度输出权；识别、抓取、投放、上报和等待阶段均拒绝非零速度
             motion_allowed = (
                 self.lifecycle_state == LifecycleState.RUNNING
                 and self.operation.kind == 'navigation'
@@ -772,8 +885,19 @@ class AutonomousTransportManager(Node):
                         self._transition_lifecycle(
                             LifecycleState.WAIT_START, 'MCU 状态可用'
                         )
+                    elif (
+                        self._mcu_is_auto_active()
+                        and self.accept_latched_start_without_event
+                    ):
+                        # AutoPi 锁存状态能够补偿启动事件早于状态机订阅建立的情况；确保遥控手势不会因启动顺序而丢失
+                        self.pending_start = False
+                        self.local_run_id += 1
+                        self._transition_lifecycle(
+                            LifecycleState.PRECHECK,
+                            '启动时检测到有效 AutoPi 锁存；进入任务预检',
+                        )
                     elif self._mcu_is_auto_active():
-                        self._set_error(4101, '启动时 MCU 已处于自动任务状态')
+                        self._set_error(4101, '启动时 MCU 已处于自动任务状态；当前配置禁止锁存补偿')
                         self._transition_lifecycle(
                             LifecycleState.RECOVERY_REQUIRED, self.message
                         )
@@ -806,11 +930,14 @@ class AutonomousTransportManager(Node):
             elif self.lifecycle_state == LifecycleState.PRECHECK:
                 error = self._common_precheck(now)
                 if error is not None:
-                    self._set_error(error[0], error[1])
                     self._enter_safe_stop(error[1])
-                    self._transition_lifecycle(
-                        LifecycleState.RECOVERY_REQUIRED, error[1]
-                    )
+                    if error[0] == 4207:
+                        self._set_error(error[0], error[1])
+                        self._transition_lifecycle(
+                            LifecycleState.RECOVERY_REQUIRED, error[1]
+                        )
+                    else:
+                        self.message = f'预检等待: {error[1]}'
                 else:
                     self._initialize_run(now)
                     self._transition_lifecycle(
@@ -852,7 +979,7 @@ class AutonomousTransportManager(Node):
             self.pending_reset = False
             self._cancel_backends('MCU RESET')
             self._enter_safe_stop('MCU RESET')
-            # RESET 会终止本轮上下文并清除尚未消费的启动事件，防止复位后误用失效事件再次进入自动任务。
+            # RESET 会终止本轮上下文并清除尚未消费的启动事件，防止复位后误用失效事件再次进入自动任务
             self._clear_run_context()
             target = (
                 LifecycleState.WAIT_START
@@ -905,6 +1032,8 @@ class AutonomousTransportManager(Node):
             return 4206, '机械臂未就绪'
         if self.config_errors:
             return 4207, '配置校验未通过: ' + '; '.join(self.config_errors)
+        if not self._asrpro_ready(now):
+            return 4209, 'ASRPRO 未就绪或状态超时'
         required_clients = (
             (self.navigation_start_client, self.navigation_start_service),
             (self.navigation_cancel_client, self.navigation_cancel_service),
@@ -912,8 +1041,9 @@ class AutonomousTransportManager(Node):
             (self.manipulation_cancel_client, self.manipulation_cancel_service),
             (self.sorting_rule_client, self.sorting_rule_service),
             (self.result_client, self.mission_result_service),
-            # 制动服务属于状态机的安全闭环；服务不可用时不允许启动自主运动。
+            # 制动服务属于状态机的安全闭环；服务不可用时不允许启动自主运动
             (self.brake_client, self.brake_service),
+            (self.asrpro_speak_client, self.asrpro_speak_service),
         )
         unavailable = [name for client, name in required_clients if not client.service_is_ready()]
         if unavailable:
@@ -932,6 +1062,11 @@ class AutonomousTransportManager(Node):
         self.stage_enter_time = now
         self.transition_announcement_sent = False
         self.voice_prompt_sent = False
+        self.autonomous_start_announcement_sent = False
+        self.completion_announcement_done = False
+        self.speech_retry_count = 0
+        self.speech_done_phrase_id = ''
+        self.speech_failed_phrase_id = ''
         self.voice_start_received = False
         self.sorting_rule_confirmed = False
         self.sorting_rule_confidence = 0.0
@@ -952,6 +1087,8 @@ class AutonomousTransportManager(Node):
         self.pick_retry_count = 0
         self.classification_retry_count = 0
         self.navigation_retry_count = 0
+        self.skipped_stage_count = 0
+        self.last_skipped_stage = ''
         self._clear_operation()
         self.report_future = None
         self.report_accepted = False
@@ -961,16 +1098,23 @@ class AutonomousTransportManager(Node):
         elapsed = self._elapsed_s(now)
         remaining = self.plan.max_autonomous_duration_s - elapsed
 
-        # 硬时间上限到达时立即取消后端并停止速度输出，不再开始新的动作。
+        # 硬时间上限到达时立即取消后端并停止速度输出；不再开始新的动作
+        # 按已经完成的货物数量结束本轮任务
         if remaining <= 0.0:
             self.hard_time_stop = True
             self._cancel_backends('全自主运输时间上限到达')
             self._enter_safe_stop('全自主运输时间上限到达')
             self._clear_operation()
-            self.message = '时间上限到达，按已完成货物数量结束任务'
-            self._set_stage(TransportStage.COMPLETE, self.message)
+            self._record_skipped_stage(
+                self.transport_stage,
+                '全自主运输时间上限到达；剩余阶段不再执行',
+            )
+            self._set_stage(
+                TransportStage.COMPLETE,
+                '时间上限到达；按已完成货物数量结束任务',
+            )
 
-        # 没有携带货物时，预留时间不足则不再发起新一轮抓取。
+        # 没有携带货物时；预留时间不足则不再发起新一轮抓取
         elif (
             not self.holding_cargo
             and remaining <= self.plan.stop_reserve_s
@@ -980,102 +1124,186 @@ class AutonomousTransportManager(Node):
             self._cancel_backends('进入安全收尾时间')
             self._enter_safe_stop('进入安全收尾时间')
             self._clear_operation()
-            self.message = '剩余时间进入安全收尾窗口'
-            self._set_stage(TransportStage.COMPLETE, self.message)
+            self._record_skipped_stage(
+                self.transport_stage,
+                '剩余时间进入安全收尾窗口；后续运输阶段跳过',
+            )
+            self._set_stage(
+                TransportStage.COMPLETE,
+                '剩余时间进入安全收尾窗口',
+            )
 
         if self.transport_stage == TransportStage.ANNOUNCE_TRANSITION:
             self._enter_safe_stop('中转区播报')
-            if not self.transition_announcement_sent:
-                self._speak(self.plan.transition_announcement)
+            result = self._run_speech_operation(
+                self.plan.transition_phrase_id,
+                '播报遥操作区任务已完成',
+                now,
+            )
+            if result is True:
                 self.transition_announcement_sent = True
-            if self.plan.voice_start_required:
+                self.speech_retry_count = 0
                 self._set_stage(
-                    TransportStage.WAIT_VOICE_START, '等待语音启动指令'
+                    TransportStage.ANNOUNCE_VOICE_PROMPT,
+                    '中转区播报完成；准备提示语音启动',
                 )
-            else:
-                self.voice_start_received = True
-                self._set_stage(
-                    TransportStage.NAVIGATE_SORTING_AREA,
-                    '开始前往智能分拣区识别位姿',
+            elif result is False:
+                self._handle_speech_failure(
+                    TransportStage.ANNOUNCE_VOICE_PROMPT,
+                    '中转区播报失败',
+                )
+
+        elif self.transport_stage == TransportStage.ANNOUNCE_VOICE_PROMPT:
+            self._enter_safe_stop('提示语音启动')
+            result = self._run_speech_operation(
+                self.plan.prompt_phrase_id,
+                '提示说出 Atlas 启动',
+                now,
+            )
+            if result is True:
+                self.voice_prompt_sent = True
+                self.speech_retry_count = 0
+                if self.plan.voice_start_required:
+                    self._set_stage(
+                        TransportStage.WAIT_VOICE_START,
+                        '等待 ASRPRO 识别 Atlas 启动',
+                    )
+                else:
+                    self.voice_start_received = True
+                    self._set_stage(
+                        TransportStage.ANNOUNCE_AUTONOMOUS_START,
+                        '语音门控已关闭；准备播报全自主任务启动',
+                    )
+            elif result is False:
+                self._handle_speech_failure(
+                    TransportStage.WAIT_VOICE_START,
+                    '语音启动提示播报失败',
                 )
 
         elif self.transport_stage == TransportStage.WAIT_VOICE_START:
             self._enter_safe_stop('等待语音启动')
-            if not self.voice_prompt_sent:
-                self._speak(self.plan.voice_prompt)
-                self.voice_prompt_sent = True
             if self.voice_start_received:
                 self._set_stage(
-                    TransportStage.NAVIGATE_SORTING_AREA,
-                    '语音启动已确认，前往智能分拣区',
+                    TransportStage.ANNOUNCE_AUTONOMOUS_START,
+                    'ASRPRO 已识别启动指令；准备播报并开始任务',
                 )
             elif (
                 self.plan.voice_start_fallback_enabled
                 and self.plan.voice_start_timeout_s > 0.0
                 and self._stage_elapsed_s(now) >= self.plan.voice_start_timeout_s
             ):
-                self.message = '语音等待超时，按配置进入全自主运输流程'
+                self._record_skipped_stage(
+                    TransportStage.WAIT_VOICE_START,
+                    '语音等待超时；按配置使用自动启动后备策略',
+                )
+                self.voice_start_received = True
                 self._set_stage(
-                    TransportStage.NAVIGATE_SORTING_AREA, self.message
+                    TransportStage.ANNOUNCE_AUTONOMOUS_START,
+                    '语音等待超时；准备播报并开始任务',
+                )
+
+        elif self.transport_stage == TransportStage.ANNOUNCE_AUTONOMOUS_START:
+            self._enter_safe_stop('播报全自主任务启动')
+            result = self._run_speech_operation(
+                self.plan.autonomous_start_phrase_id,
+                '播报开始执行全自主运输任务',
+                now,
+            )
+            if result is True:
+                self.autonomous_start_announcement_sent = True
+                self.speech_retry_count = 0
+                self._set_stage(
+                    TransportStage.NAVIGATE_SORTING_AREA,
+                    '启动播报完成；前往智能分拣区',
+                )
+            elif result is False:
+                self._handle_speech_failure(
+                    TransportStage.NAVIGATE_SORTING_AREA,
+                    '全自主任务启动播报失败',
                 )
 
         elif self.transport_stage == TransportStage.NAVIGATE_SORTING_AREA:
             result = self._run_navigation_with_arm_safe(
-                self.plan.sorting_waypoint, '智能分拣区识别位姿', now
+                self.plan.sorting_waypoint,
+                '智能分拣区识别位姿',
+                now,
             )
             if result is True:
                 self.navigation_retry_count = 0
                 self._set_stage(
                     TransportStage.CLASSIFY_SORTING_RULE,
-                    '已到达智能分拣区，开始识别园区映射',
+                    '已到达智能分拣区；开始识别园区映射',
                 )
             elif result is False:
                 self._handle_navigation_failure(
                     TransportStage.NAVIGATE_SORTING_AREA,
+                    TransportStage.NAVIGATE_DISPATCH_AREA,
                     '前往智能分拣区失败',
+                    apply_fallback_mapping=True,
                 )
 
         elif self.transport_stage == TransportStage.CLASSIFY_SORTING_RULE:
             result = self._run_classification_with_camera_pose(now)
             if result is True:
                 self.classification_retry_count = 0
-                # 分类识别位姿用于观察标识，不视为导航安全收拢位姿。
+                # 分类识别位姿用于观察标识；不视为导航安全收拢位姿
                 self.arm_safe_ready = False
                 self._set_stage(
                     TransportStage.NAVIGATE_DISPATCH_AREA,
-                    f'分类规则确认: 园区1={self.park_1_cargo}, 园区2={self.park_2_cargo}',
+                    f'分类规则确认: 园区1={self.park_1_cargo}; 园区2={self.park_2_cargo}',
                 )
             elif result is False:
                 if self.classification_retry_count < self.plan.classification_retry_count:
                     self.classification_retry_count += 1
                     self._clear_operation()
                     self.message = (
-                        '分类规则识别失败，准备重试 '
+                        '分类规则识别失败；准备重试 '
                         f'{self.classification_retry_count}/{self.plan.classification_retry_count}'
                     )
+                elif self._apply_fallback_mapping('分类规则识别多次失败'):
+                    self._record_skipped_stage(
+                        TransportStage.CLASSIFY_SORTING_RULE,
+                        '分类规则识别多次失败；已使用 YAML 后备园区映射',
+                    )
+                    self._set_stage(
+                        TransportStage.NAVIGATE_DISPATCH_AREA,
+                        f'使用后备映射: 园区1={self.park_1_cargo}; 园区2={self.park_2_cargo}',
+                    )
                 else:
-                    self._fail_transport(4301, '分类规则识别多次失败')
+                    self._record_skipped_stage(
+                        TransportStage.CLASSIFY_SORTING_RULE,
+                        '分类规则识别失败且未启用后备映射；货物派送阶段跳过',
+                    )
+                    self._set_stage(
+                        TransportStage.COMPLETE,
+                        '缺少有效园区映射；按部分完成结束任务',
+                    )
 
         elif self.transport_stage == TransportStage.NAVIGATE_DISPATCH_AREA:
             result = self._run_navigation_with_arm_safe(
-                self.plan.dispatch_waypoint, '待派送区抓取位姿', now
+                self.plan.dispatch_waypoint,
+                '待派送区抓取位姿',
+                now,
             )
             if result is True:
                 self.navigation_retry_count = 0
                 self._set_stage(
-                    TransportStage.SELECT_CARGO, '已到达待派送区'
+                    TransportStage.SELECT_CARGO,
+                    '已到达待派送区',
                 )
             elif result is False:
                 self._handle_navigation_failure(
                     TransportStage.NAVIGATE_DISPATCH_AREA,
-                    '前往待派送区失败',
+                    TransportStage.COMPLETE,
+                    '前往待派送区失败；后续货物运输阶段跳过',
                 )
 
         elif self.transport_stage == TransportStage.SELECT_CARGO:
             self._enter_safe_stop('选择下一类货物')
             if self._delivered_total() >= self.plan.target_total:
                 self._set_stage(
-                    TransportStage.COMPLETE, '计划货物数量已全部完成'
+                    TransportStage.COMPLETE,
+                    '计划货物数量已全部完成',
                 )
             else:
                 candidate = self._select_next_cargo()
@@ -1088,7 +1316,13 @@ class AutonomousTransportManager(Node):
                     self.current_cargo = candidate
                     self.current_park = self._park_for_cargo(candidate)
                     if not self.current_park:
-                        self._fail_transport(4302, f'未找到 {candidate} 对应园区')
+                        self._record_skipped_stage(
+                            TransportStage.SELECT_CARGO,
+                            f'未找到 {candidate} 对应园区；该类别不再选择',
+                        )
+                        self.no_target_counts[candidate] = self.plan.no_target_limit_per_class
+                        self.current_cargo = ''
+                        self.current_park = ''
                     else:
                         self.pick_retry_count = 0
                         self._set_stage(
@@ -1118,54 +1352,73 @@ class AutonomousTransportManager(Node):
                 if not target_found or target_count <= 0:
                     self.no_target_counts[self.current_cargo] += 1
                     self.message = (
-                        f'待派送区未发现 {self.current_cargo}，'
+                        f'待派送区未发现 {self.current_cargo}; '
                         f'累计 {self.no_target_counts[self.current_cargo]} 次'
+                    )
+                    self._record_skipped_stage(
+                        TransportStage.PICK_CARGO,
+                        self.message,
                     )
                     self.current_cargo = ''
                     self.current_park = ''
-                    self._set_stage(TransportStage.SELECT_CARGO, self.message)
+                    self._set_stage(
+                        TransportStage.SELECT_CARGO,
+                        self.message,
+                    )
                 else:
                     self.holding_cargo = True
                     self._set_stage(
                         TransportStage.NAVIGATE_TARGET_PARK,
-                        f'已抓取 {self.current_cargo}，前往 {self.current_park}',
+                        f'已抓取 {self.current_cargo}; 前往 {self.current_park}',
                     )
             elif result is False:
                 if self.pick_retry_count < self.plan.pick_retry_count:
                     self.pick_retry_count += 1
                     self._clear_operation()
                     self.message = (
-                        f'抓取 {self.current_cargo} 失败，准备重试 '
+                        f'抓取 {self.current_cargo} 失败；准备重试 '
                         f'{self.pick_retry_count}/{self.plan.pick_retry_count}'
                     )
-                elif self.plan.continue_on_pick_failure:
+                else:
+                    failed_cargo = self.current_cargo
                     self.attempted_pick_count += 1
-                    self.no_target_counts[self.current_cargo] += 1
+                    self.no_target_counts[failed_cargo] += 1
+                    self._record_skipped_stage(
+                        TransportStage.PICK_CARGO,
+                        f'抓取 {failed_cargo} 失败；本次抓取阶段跳过',
+                    )
                     self.current_cargo = ''
                     self.current_park = ''
                     self._clear_operation()
-                    self._set_stage(
-                        TransportStage.SELECT_CARGO,
-                        '抓取失败，按配置继续选择其他货物',
-                    )
-                else:
-                    self._fail_transport(4303, f'抓取 {self.current_cargo} 失败')
+                    if self.plan.continue_on_pick_failure:
+                        self._set_stage(
+                            TransportStage.SELECT_CARGO,
+                            '抓取失败；继续选择其他货物',
+                        )
+                    else:
+                        self._set_stage(
+                            TransportStage.COMPLETE,
+                            '抓取失败；按配置结束后续运输',
+                        )
 
         elif self.transport_stage == TransportStage.NAVIGATE_TARGET_PARK:
             waypoint = self.plan.park_waypoints[self.current_park]
             result = self._run_navigation_with_arm_safe(
-                waypoint, f'{self.current_park} 投放位姿', now
+                waypoint,
+                f'{self.current_park} 投放位姿',
+                now,
             )
             if result is True:
                 self.navigation_retry_count = 0
                 self._set_stage(
                     TransportStage.PLACE_CARGO,
-                    f'已到达 {self.current_park}，准备投放 {self.current_cargo}',
+                    f'已到达 {self.current_park}; 准备投放 {self.current_cargo}',
                 )
             elif result is False:
                 self._handle_navigation_failure(
                     TransportStage.NAVIGATE_TARGET_PARK,
-                    f'前往 {self.current_park} 失败',
+                    TransportStage.COMPLETE,
+                    f'前往 {self.current_park} 失败；保留吸盘状态并结束后续移动',
                 )
 
         elif self.transport_stage == TransportStage.PLACE_CARGO:
@@ -1190,12 +1443,11 @@ class AutonomousTransportManager(Node):
                 self.current_cargo = ''
                 self.current_park = ''
                 self.navigation_retry_count = 0
-                self._speak(
-                    f'已完成第 {self._delivered_total()} 个货物派送'
-                )
+                self._request_optional_speech(self.plan.delivery_complete_phrase_id)
                 if self._delivered_total() >= self.plan.target_total:
                     self._set_stage(
-                        TransportStage.COMPLETE, '全自主运输计划已完成'
+                        TransportStage.COMPLETE,
+                        '全自主运输计划已完成',
                     )
                 else:
                     self._set_stage(
@@ -1203,15 +1455,22 @@ class AutonomousTransportManager(Node):
                         '返回待派送区继续执行下一轮运输',
                     )
             elif result is False:
-                # 投放失败时机器人可能仍携带货物，继续移动会扩大风险，因此直接安全失败。
-                self._fail_transport(
-                    4304, f'在 {self.current_park} 投放 {self.current_cargo} 失败'
+                # 投放失败时机器人可能仍携带货物；继续移动会扩大风险；因此直接按安全失败处理
+                # 安全失败通过部分完成收尾实现；保留吸盘状态；避免在未知位置主动释放货物
+                self._record_skipped_stage(
+                    TransportStage.PLACE_CARGO,
+                    f'在 {self.current_park} 投放 {self.current_cargo} 失败；保留吸盘状态并结束后续动作',
+                )
+                self._set_stage(
+                    TransportStage.COMPLETE,
+                    '投放阶段失败；按部分完成结束任务',
                 )
 
         elif self.transport_stage == TransportStage.COMPLETE:
             self._enter_safe_stop('全自主运输完成')
 
-            # 硬时间上限到达后不再启动任何机械臂动作，只保持零速度并立即上报结束。
+            # 硬时间上限到达后不再启动任何机械臂动作；只保持零速度并立即上报结束
+            # 播报动作同样不再启动；上报内容保留已经完成的货物结果
             if self.hard_time_stop:
                 self._cancel_backends('全自主运输时间上限到达')
                 self._clear_operation()
@@ -1219,8 +1478,25 @@ class AutonomousTransportManager(Node):
                 self._begin_result_report(done=True, code=0, message=self.message)
                 return
 
-            # 正常完成、无目标结束或进入收尾窗口时，先把机械臂收回底盘安全包络。
-            # 该动作不改变吸盘状态，避免在未知位置主动释放仍被吸住的货物。
+            if not self.completion_announcement_done:
+                speech_result = self._run_speech_operation(
+                    self.plan.task_complete_phrase_id,
+                    '播报全自主运输任务结束',
+                    now,
+                )
+                if speech_result is None:
+                    return
+                if speech_result is False:
+                    self._record_skipped_stage(
+                        TransportStage.COMPLETE,
+                        '任务结束播报失败；继续执行安全收尾',
+                    )
+                self.completion_announcement_done = True
+                self.speech_retry_count = 0
+                self._clear_operation()
+
+            # 正常完成、无目标结束或进入收尾窗口时；先把机械臂收回底盘安全包络
+            # 该动作不改变吸盘状态；避免在未知位置主动释放仍被吸住的货物
             if not self.arm_safe_ready:
                 safe_result = self._run_manipulation_operation(
                     request_id=f'run_{self.local_run_id}_final_arm_safe',
@@ -1232,9 +1508,12 @@ class AutonomousTransportManager(Node):
                 if safe_result is None:
                     return
                 if safe_result is False:
-                    self._fail_transport(4306, '任务结束前安全收臂失败')
-                    return
-                self.arm_safe_ready = True
+                    self._record_skipped_stage(
+                        TransportStage.COMPLETE,
+                        '任务结束前安全收臂失败；保持底盘停止并继续上报',
+                    )
+                else:
+                    self.arm_safe_ready = True
 
             self._cancel_backends('全自主运输完成')
             self._clear_operation()
@@ -1247,16 +1526,101 @@ class AutonomousTransportManager(Node):
             self._clear_operation()
             self.active = False
             self._begin_result_report(
-                done=False, code=self.error_code or 4399, message=self.message
+                done=False,
+                code=self.error_code or 4399,
+                message=self.message,
             )
 
     # ------------------------------------------------------------------
     # 后端操作
     # ------------------------------------------------------------------
+    def _run_speech_operation(
+        self,
+        phrase_id: str,
+        purpose: str,
+        now,
+    ) -> Optional[bool]:
+        """可靠请求 ASRPRO 播报；等待 ACK 和 SPEAK_DONE 事件"""
+        if self.operation.kind == '':
+            if not self._asrpro_ready(now) or not self.asrpro_speak_client.service_is_ready():
+                if self._stage_elapsed_s(now) >= self.plan.speech_timeout_s:
+                    self.message = f'ASRPRO 未就绪: {purpose}'
+                    return False
+                return None
+            request = AsrproSpeak.Request()
+            request.request_id = f'run_{self.local_run_id}_{phrase_id}'
+            request.phrase_id = phrase_id
+            self.speech_done_phrase_id = ''
+            self.speech_failed_phrase_id = ''
+            self.operation = Operation(
+                kind='speech',
+                request_id=phrase_id,
+                purpose=purpose,
+                future=self.asrpro_speak_client.call_async(request),
+                accepted=False,
+                started_at_ns=now.nanoseconds,
+                timeout_s=self.plan.speech_timeout_s,
+            )
+            self._enter_safe_stop(f'ASRPRO 播报: {purpose}')
+            return None
+
+        if self.operation.kind != 'speech':
+            self._fail_transport(4404, '状态机内部操作类型冲突')
+            return False
+
+        elapsed = (now.nanoseconds - self.operation.started_at_ns) * 1e-9
+        phrase_id = self.operation.request_id
+        if self.speech_failed_phrase_id == phrase_id:
+            self.message = f'ASRPRO 拒绝播报: {self.operation.purpose}'
+            self._clear_operation()
+            return False
+        if self.speech_done_phrase_id == phrase_id:
+            self.message = f'ASRPRO 播报完成: {self.operation.purpose}'
+            self._clear_operation()
+            return True
+        if elapsed > self.operation.timeout_s:
+            self.message = f'ASRPRO 播报超时: {self.operation.purpose}'
+            self._clear_operation()
+            return False
+
+        if not self.operation.accepted:
+            if not self.operation.future.done():
+                return None
+            try:
+                response = self.operation.future.result()
+            except Exception as exc:  # noqa: BLE001
+                self.message = f'ASRPRO 播报服务异常: {exc}'
+                self._clear_operation()
+                return False
+            if response is None or not bool(response.success) or not bool(response.accepted):
+                self.message = (
+                    response.message if response is not None else 'ASRPRO 播报服务无响应'
+                )
+                self._clear_operation()
+                return False
+            self.operation.accepted = True
+            self.operation.future = None
+        return None
+
+    def _request_optional_speech(self, phrase_id: str) -> None:
+        """非关键播报只尝试一次；失败不会改变任务阶段"""
+        if not phrase_id.strip():
+            return
+        now = self.get_clock().now()
+        if not self._asrpro_ready(now) or not self.asrpro_speak_client.service_is_ready():
+            return
+        request = AsrproSpeak.Request()
+        request.request_id = f'run_{self.local_run_id}_optional_{phrase_id}'
+        request.phrase_id = phrase_id
+        try:
+            self.asrpro_speak_client.call_async(request)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f'可选播报请求失败: {exc}')
+
     def _run_navigation_with_arm_safe(
         self, waypoint: Waypoint, purpose: str, now
     ) -> Optional[bool]:
-        """先确认机械臂收拢，再允许导航后端获得速度输出权。"""
+        """先确认机械臂收拢，再允许导航后端获得速度输出权"""
         if not self.arm_safe_ready:
             safe_result = self._run_manipulation_operation(
                 request_id=(
@@ -1435,7 +1799,7 @@ class AutonomousTransportManager(Node):
         return None
 
     def _run_classification_with_camera_pose(self, now) -> Optional[bool]:
-        """先把相机送到分拣标识观察位姿，再调用分类规则服务。"""
+        """先把相机送到分拣标识观察位姿，再调用分类规则服务"""
         if not self.sorting_pose_ready:
             pose_result = self._run_manipulation_operation(
                 request_id=f'run_{self.local_run_id}_sorting_camera_pose',
@@ -1522,9 +1886,8 @@ class AutonomousTransportManager(Node):
         self.sorting_rule_confidence = confidence
         self.sorting_rule_confirmed = True
         self.message = response.message
-        self._speak(
-            f'分类完成，园区一接收{self._cargo_cn(park_1)}，'
-            f'园区二接收{self._cargo_cn(park_2)}'
+        self.get_logger().info(
+            f'分类完成 park_1={park_1} park_2={park_2} confidence={confidence:.3f}'
         )
         return True
 
@@ -1556,19 +1919,86 @@ class AutonomousTransportManager(Node):
         index = min(self.delivered_by_park[self.current_park], len(tasks) - 1)
         return tasks[index]
 
-    def _handle_navigation_failure(
-        self, retry_stage: TransportStage, message: str
+    def _record_skipped_stage(
+        self,
+        stage: TransportStage,
+        message: str,
     ) -> None:
+        """记录可恢复阶段错误；不把整套任务转入失败状态"""
+        self.skipped_stage_count += 1
+        self.last_skipped_stage = self._stage_name(stage)
+        self.message = message
+        self.get_logger().warn(
+            f'跳过阶段 stage={self.last_skipped_stage} reason={message}'
+        )
+
+    def _apply_fallback_mapping(self, reason: str) -> bool:
+        """分类失败时按 YAML 中的后备映射继续任务"""
+        if not self.plan.use_fallback_mapping_on_failure:
+            return False
+        park_1 = self.plan.fallback_park_1_cargo
+        park_2 = self.plan.fallback_park_2_cargo
+        if park_1 not in ('gear', 't_bolt') or park_2 not in ('gear', 't_bolt'):
+            return False
+        if park_1 == park_2:
+            return False
+        self.park_1_cargo = park_1
+        self.park_2_cargo = park_2
+        self.sorting_rule_confidence = 0.0
+        self.sorting_rule_confirmed = False
+        self.message = (
+            f'{reason}; 使用后备映射 park_1={park_1} park_2={park_2}'
+        )
+        return True
+
+    def _handle_speech_failure(
+        self,
+        next_stage: TransportStage,
+        message: str,
+    ) -> None:
+        """关键播报先重试；达到上限后跳过播报并继续任务"""
+        current_stage = self.transport_stage
+        if self.speech_retry_count < self.plan.speech_retry_count:
+            self.speech_retry_count += 1
+            self._clear_operation()
+            self.message = (
+                f'{message}; 准备重试 '
+                f'{self.speech_retry_count}/{self.plan.speech_retry_count}'
+            )
+            self._set_stage(current_stage, self.message, force=True)
+            return
+        self._record_skipped_stage(
+            current_stage,
+            f'{message}; 已达到重试上限',
+        )
+        self.speech_retry_count = 0
+        self._clear_operation()
+        self._set_stage(next_stage, self.message)
+
+    def _handle_navigation_failure(
+        self,
+        retry_stage: TransportStage,
+        next_stage: TransportStage,
+        message: str,
+        apply_fallback_mapping: bool = False,
+    ) -> None:
+        """导航失败先重试；达到上限后跳过当前阶段并进入安全后继阶段"""
         if self.navigation_retry_count < self.plan.navigation_retry_count:
             self.navigation_retry_count += 1
             self._clear_operation()
             self.message = (
-                f'{message}，准备重试 '
+                f'{message}; 准备重试 '
                 f'{self.navigation_retry_count}/{self.plan.navigation_retry_count}'
             )
             self._set_stage(retry_stage, self.message, force=True)
-        else:
-            self._fail_transport(4305, message)
+            return
+        self.navigation_retry_count = 0
+        self._record_skipped_stage(retry_stage, message)
+        if apply_fallback_mapping and not self._apply_fallback_mapping(message):
+            next_stage = TransportStage.COMPLETE
+            self.message = f'{message}; 缺少有效园区映射；后续派送阶段跳过'
+        self._clear_operation()
+        self._set_stage(next_stage, self.message)
 
     def _fail_transport(self, code: int, message: str) -> None:
         self._set_error(code, message)
@@ -1608,7 +2038,7 @@ class AutonomousTransportManager(Node):
         if elapsed > self.result_confirm_timeout_s and self.report_accepted:
             self._set_error(4501, 'MCU 未在规定时间内确认任务结果')
             self._transition_lifecycle(
-                LifecycleState.RECOVERY_REQUIRED, self.message
+                LifecycleState.WAIT_RESET, self.message
             )
             return
 
@@ -1628,7 +2058,7 @@ class AutonomousTransportManager(Node):
             if elapsed > self.service_response_timeout_s and not self.report_accepted:
                 self._set_error(4502, '任务结果上报服务超时')
                 self._transition_lifecycle(
-                    LifecycleState.RECOVERY_REQUIRED, self.message
+                    LifecycleState.WAIT_RESET, self.message
                 )
             return
 
@@ -1638,7 +2068,7 @@ class AutonomousTransportManager(Node):
             except Exception as exc:  # noqa: BLE001
                 self._set_error(4503, f'任务结果上报服务异常: {exc}')
                 self._transition_lifecycle(
-                    LifecycleState.RECOVERY_REQUIRED, self.message
+                    LifecycleState.WAIT_RESET, self.message
                 )
                 return
             if response is None or not bool(response.success):
@@ -1647,7 +2077,7 @@ class AutonomousTransportManager(Node):
                     response.message if response is not None else '任务结果上报服务无响应',
                 )
                 self._transition_lifecycle(
-                    LifecycleState.RECOVERY_REQUIRED, self.message
+                    LifecycleState.WAIT_RESET, self.message
                 )
                 return
             self.report_accepted = True
@@ -1730,6 +2160,20 @@ class AutonomousTransportManager(Node):
         age = (now - self.last_mcu_status_time).nanoseconds * 1e-9
         return 0.0 <= age <= self.mcu_status_timeout_s
 
+    def _asrpro_ready(self, now) -> bool:
+        if self.latest_asrpro_status is None:
+            return False
+        age = (now - self.last_asrpro_status_time).nanoseconds * 1e-9
+        return (
+            0.0 <= age <= self.plan.asrpro_status_timeout_s
+            and bool(self.latest_asrpro_status.serial_connected)
+            and bool(self.latest_asrpro_status.device_ready)
+            and (
+                not self.plan.voice_start_required
+                or bool(self.latest_asrpro_status.listen_enabled)
+            )
+        )
+
     def _mcu_has_fault(self) -> bool:
         status = self.latest_mcu_status
         return status is not None and (
@@ -1784,13 +2228,18 @@ class AutonomousTransportManager(Node):
         self._transition_lifecycle(LifecycleState.WAIT_RESET, message)
 
     def _clear_run_context(self) -> None:
-        # 复位后清除所有仅属于单轮比赛的数据，WAIT_START 状态只呈现当前可启动基线。
+        # 复位后清除所有仅属于单轮比赛的数据，WAIT_START 状态只呈现当前可启动基线
         self.active = False
         self.pending_start = False
         self.pending_reset = False
         self.voice_start_received = False
         self.transition_announcement_sent = False
         self.voice_prompt_sent = False
+        self.autonomous_start_announcement_sent = False
+        self.completion_announcement_done = False
+        self.speech_retry_count = 0
+        self.speech_done_phrase_id = ''
+        self.speech_failed_phrase_id = ''
         self.sorting_rule_confirmed = False
         self.sorting_rule_confidence = 0.0
         self.park_1_cargo = ''
@@ -1810,6 +2259,8 @@ class AutonomousTransportManager(Node):
         self.pick_retry_count = 0
         self.classification_retry_count = 0
         self.navigation_retry_count = 0
+        self.skipped_stage_count = 0
+        self.last_skipped_stage = ''
         self.transport_stage = TransportStage.IDLE
         self.error_code = 0
         self.message = '等待下一轮全自主运输任务'
@@ -1845,7 +2296,7 @@ class AutonomousTransportManager(Node):
             self.transport_stage = stage
             self.stage_enter_time = self.get_clock().now()
             if stage in (TransportStage.PICK_CARGO, TransportStage.PLACE_CARGO):
-                # 抓取与投放会改变机械臂位姿；下一次导航必须重新执行安全收臂确认。
+                # 抓取与投放会改变机械臂位姿；下一次导航必须重新执行安全收臂确认
                 self.arm_safe_ready = False
             if stage == TransportStage.CLASSIFY_SORTING_RULE:
                 self.sorting_pose_ready = False
@@ -1873,6 +2324,12 @@ class AutonomousTransportManager(Node):
             if self.latest_mcu_status is not None
             else False
         )
+        message.asrpro_ready = self._asrpro_ready(now)
+        message.asrpro_speech_busy = bool(
+            self.latest_asrpro_status.speech_busy
+            if self.latest_asrpro_status is not None
+            else False
+        )
         message.voice_start_received = bool(self.voice_start_received)
         message.sorting_rule_confirmed = bool(self.sorting_rule_confirmed)
         message.sorting_rule_confidence = float(self.sorting_rule_confidence)
@@ -1884,25 +2341,19 @@ class AutonomousTransportManager(Node):
         message.delivered_gear = int(min(255, self.delivered_counts['gear']))
         message.delivered_t_bolt = int(min(255, self.delivered_counts['t_bolt']))
         message.attempted_pick_count = int(min(255, self.attempted_pick_count))
+        message.skipped_stage_count = int(min(255, self.skipped_stage_count))
         elapsed = self._elapsed_s(now) if self.active else 0.0
         message.elapsed_s = float(max(0.0, elapsed))
         message.remaining_s = float(
             max(0.0, self.plan.max_autonomous_duration_s - elapsed)
         )
         message.error_code = int(self.error_code)
+        message.last_skipped_stage = self.last_skipped_stage
         message.state_name = self._state_name(self.lifecycle_state)
         message.stage_name = self._stage_name(self.transport_stage)
         message.message = self.message
         self.status_publisher.publish(message)
         self.last_status_publish_time = now
-
-    def _speak(self, text: str) -> None:
-        if not text.strip():
-            return
-        message = String()
-        message.data = text.strip()
-        self.voice_publisher.publish(message)
-        self.get_logger().info(f'语音播报: {message.data}')
 
     @staticmethod
     def _normalize_phrase(value: str) -> str:

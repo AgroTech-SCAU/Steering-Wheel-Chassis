@@ -1,4 +1,4 @@
-"""智能分拣区分类标识识别服务。"""
+"""智能分拣区分类标识识别服务"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from vison_topic_interfaces.srv import VisionDetect
 
 @dataclass(frozen=True)
 class RuleDetection:
-    """用于规则判断的单个分类标识检测结果。"""
+    """用于规则判断的单个分类标识检测结果"""
 
     cargo: str
     u_px: float
@@ -27,23 +27,23 @@ class RuleDetection:
 
 
 class SortingRuleService(Node):
-    """根据分类标识的横向位置输出园区 1 与园区 2 的货物映射。"""
+    """根据分类标识的横向位置输出园区 1 与园区 2 的货物映射"""
 
     def __init__(self) -> None:
         super().__init__('atlas_sorting_rule_service')
 
-        # 对外服务名称。任务状态机只依赖该服务，不直接依赖视觉模型的原始接口。
+        # 对外服务名称；任务状态机只依赖该服务，不直接依赖视觉模型的原始接口
         self.service_name = str(
             self.declare_parameter('service_name', '/vision/classify_sorting_rule').value
         )
 
-        # RACOM 视觉检测服务名称。该服务通过 start=true 开始检测，start=false 返回结果。
+        # RACOM 视觉检测服务名称；该服务通过 start=true 开始检测，start=false 返回结果
         self.vision_detect_service = str(
             self.declare_parameter('vision_detect_service', '/vision_detect').value
         )
 
-        # 每次采样让检测节点持续运行的时间。较短时间有利于控制总任务时长，
-        # 多次采样由 sample_count 提供稳定性。
+        # 每次采样让检测节点持续运行的时间；较短时间有利于控制总任务时长，
+        # 多次采样由 sample_count 提供稳定性
         self.scan_duration_s = max(
             0.05, float(self.declare_parameter('scan_duration_s', 0.8).value)
         )
@@ -54,7 +54,7 @@ class SortingRuleService(Node):
             0.1, float(self.declare_parameter('service_timeout_s', 3.0).value)
         )
 
-        # 图像左侧标识所对应的园区名称。相机安装方向或停车方向变化时只改配置。
+        # 图像左侧标识所对应的园区名称；相机安装方向或停车方向变化时只改配置
         self.left_slot_park = self._normalize_park(
             str(self.declare_parameter('left_slot_park', 'park_1').value)
         )
@@ -62,8 +62,8 @@ class SortingRuleService(Node):
             str(self.declare_parameter('right_slot_park', 'park_2').value)
         )
 
-        # 只检测到一种分类标识时，需要用固定图像中心判断该标识位于左槽还是右槽。
-        # 中心值应与 RACOM 检测输入分辨率一致；640 像素宽图像通常填写 320。
+        # 只检测到一种分类标识时，需要用固定图像中心判断该标识位于左槽还是右槽
+        # 中心值应与 RACOM 检测输入分辨率一致；640 像素宽图像通常填写 320
         self.image_center_u_px = float(
             self.declare_parameter('image_center_u_px', 320.0).value
         )
@@ -71,7 +71,7 @@ class SortingRuleService(Node):
             0.0, float(self.declare_parameter('center_deadband_px', 20.0).value)
         )
 
-        # 规则中只有齿轮与 T 型螺栓两类。类别别名允许直接适配模型导出的名称。
+        # 规则中只有齿轮与 T 型螺栓两类；类别别名允许直接适配模型导出的名称
         gear_aliases = self.declare_parameter(
             'gear_aliases', ['gear', 'chilun', '齿轮', '1']
         ).value
@@ -82,13 +82,14 @@ class SortingRuleService(Node):
         self._register_aliases('gear', gear_aliases)
         self._register_aliases('t_bolt', bolt_aliases)
 
-        # 比赛规则明确分类标识由齿轮和 T 型螺栓构成。只识别到一个标识时，
-        # 可以利用互补关系推断另一园区，但仍要求至少一个有效检测结果。
+        # 比赛规则明确分类标识由齿轮和 T 型螺栓构成；正式配置要求同时识别两类
+        # allow_complement_inference=true 时；只识别到一个标识可利用互补关系推断另一园区
+        # 互补推断仍要求至少一个有效检测结果；正式比赛配置保持 false
         self.allow_complement_inference = bool(
-            self.declare_parameter('allow_complement_inference', True).value
+            self.declare_parameter('allow_complement_inference', False).value
         )
 
-        # 服务回调内会等待视觉子服务，因此使用可重入回调组并配合多线程执行器。
+        # 服务回调内会等待视觉子服务，因此使用可重入回调组并配合多线程执行器
         self.callback_group = ReentrantCallbackGroup()
         self.vision_client = self.create_client(
             VisionDetect,
@@ -110,12 +111,12 @@ class SortingRuleService(Node):
 
     @staticmethod
     def _normalize_token(value: object) -> str:
-        """统一类别名称格式，避免大小写、空格和连接符差异影响匹配。"""
+        """统一类别名称格式，避免大小写、空格和连接符差异影响匹配"""
         return str(value or '').strip().lower().replace(' ', '_').replace('-', '_')
 
     @staticmethod
     def _normalize_park(value: str) -> str:
-        """把园区名称归一为 park_1 或 park_2。"""
+        """把园区名称归一为 park_1 或 park_2"""
         token = str(value or '').strip().lower().replace(' ', '_').replace('-', '_')
         if token in ('park1', 'park_1', '1', '园区1', '园区一'):
             return 'park_1'
@@ -124,7 +125,7 @@ class SortingRuleService(Node):
         return token
 
     def _register_aliases(self, cargo: str, aliases: Iterable[object]) -> None:
-        """登记一个标准货物类别及其模型类别别名。"""
+        """登记一个标准货物类别及其模型类别别名"""
         self.alias_to_cargo[self._normalize_token(cargo)] = cargo
         for alias in aliases:
             token = self._normalize_token(alias)
@@ -132,7 +133,7 @@ class SortingRuleService(Node):
                 self.alias_to_cargo[token] = cargo
 
     def _wait_future(self, future, timeout_s: float):
-        """在服务回调内等待子服务，并在超时后返回 None。"""
+        """在服务回调内等待子服务，并在超时后返回 None"""
         deadline = self.get_clock().now() + Duration(seconds=max(0.05, timeout_s))
         while rclpy.ok() and not future.done():
             time.sleep(0.02)
@@ -141,7 +142,7 @@ class SortingRuleService(Node):
         return future.result() if future.done() else None
 
     def _call_vision(self, start: bool):
-        """调用 RACOM 检测启停服务。"""
+        """调用 RACOM 检测启停服务"""
         if not self.vision_client.wait_for_service(timeout_sec=self.service_timeout_s):
             return None, f'视觉检测服务未就绪: {self.vision_detect_service}'
 
@@ -161,7 +162,7 @@ class SortingRuleService(Node):
         return response, ''
 
     def _collect_one_sample(self) -> Tuple[bool, str, List[RuleDetection]]:
-        """采集一次分类标识检测结果。"""
+        """采集一次分类标识检测结果"""
         start_response, error = self._call_vision(True)
         if start_response is None:
             return False, error, []
@@ -199,14 +200,14 @@ class SortingRuleService(Node):
 
     @staticmethod
     def _best_per_cargo(detections: Sequence[RuleDetection]) -> Dict[str, RuleDetection]:
-        """为每个货物类别保留一个用于规则排序的代表检测。"""
+        """为每个货物类别保留一个用于规则排序的代表检测"""
         grouped: Dict[str, List[RuleDetection]] = {}
         for item in detections:
             grouped.setdefault(item.cargo, []).append(item)
 
         result: Dict[str, RuleDetection] = {}
         for cargo, items in grouped.items():
-            # 使用中位位置可以降低单次框抖动和重复框对左右排序的影响。
+            # 使用中位位置可以降低单次框抖动和重复框对左右排序的影响
             ordered = sorted(items, key=lambda item: item.u_px)
             result[cargo] = ordered[len(ordered) // 2]
         return result
@@ -216,7 +217,7 @@ class SortingRuleService(Node):
         left_cargo: str,
         right_cargo: str,
     ) -> Tuple[str, str]:
-        """把图像左右槽位转换为园区 1 和园区 2 的货物类别。"""
+        """把图像左右槽位转换为园区 1 和园区 2 的货物类别"""
         mapping = {
             self.left_slot_park: left_cargo,
             self.right_slot_park: right_cargo,
@@ -227,7 +228,7 @@ class SortingRuleService(Node):
         self,
         detections: Sequence[RuleDetection],
     ) -> Tuple[bool, str, str, float, str]:
-        """根据多次采样结果计算园区映射。"""
+        """根据多次采样结果计算园区映射"""
         representatives = self._best_per_cargo(detections)
         gear = representatives.get('gear')
         t_bolt = representatives.get('t_bolt')
@@ -252,8 +253,8 @@ class SortingRuleService(Node):
             detected_cargo = 'gear' if gear is not None else 't_bolt'
             other_cargo = 't_bolt' if detected_cargo == 'gear' else 'gear'
 
-            # 使用相机标定后的固定图像中心判断左右槽位。
-            # 检测中心落在死区内时拒绝推断，避免把停车偏差或框抖动解释为有效分类规则。
+            # 使用相机标定后的固定图像中心判断左右槽位
+            # 检测中心落在死区内时拒绝推断，避免把停车偏差或框抖动解释为有效分类规则
             offset_px = detected.u_px - self.image_center_u_px
             if abs(offset_px) <= self.center_deadband_px:
                 return False, '', '', 0.0, (
@@ -275,7 +276,7 @@ class SortingRuleService(Node):
         request: ClassifySortingRule.Request,
         response: ClassifySortingRule.Response,
     ) -> ClassifySortingRule.Response:
-        """执行多次采样并返回分类规则。"""
+        """执行多次采样并返回分类规则"""
         expected = {
             self._normalize_token(item)
             for item in request.expected_classes

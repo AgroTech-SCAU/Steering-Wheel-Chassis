@@ -12,8 +12,8 @@ atlas_nav_full_backend:
     action_name: "navigate_to_pose"
 
     # 坐标模式：
-    # task_relative_odom：任务启动首点记录 /odom 原点，后续 x/y/yaw 解释为任务相对坐标；目标以 odom frame 发给 Nav2。
-    # absolute_map：x/y/yaw 直接解释为 map frame 下的绝对目标。
+    # task_relative_odom：任务启动首点记录 /odom 原点，后续 x/y/yaw 解释为任务相对坐标；目标以 odom frame 发给 Nav2
+    # absolute_map：x/y/yaw 直接解释为 map frame 下的绝对目标
     coordinate_mode: "task_relative_odom"
     odom_topic: "/odom"
     odom_frame: "odom"

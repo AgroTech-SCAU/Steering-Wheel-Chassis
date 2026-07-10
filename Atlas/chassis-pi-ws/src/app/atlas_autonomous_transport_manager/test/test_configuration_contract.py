@@ -1,4 +1,4 @@
-"""全自主运输配置的静态一致性检查。"""
+"""全自主运输配置的静态一致性检查"""
 
 from pathlib import Path
 
@@ -18,9 +18,18 @@ ACTIONS_PATH = (
 MANAGER_PATH = PACKAGE_ROOT / 'config' / 'autonomous_transport.yaml'
 FULL_NAV_PATH = PACKAGE_ROOT / 'config' / 'autonomous_full_nav.yaml'
 
+SORTING_RULE_PATH = (
+    WORKSPACE_SRC
+    / 'vision_system'
+    / 'racom_vision'
+    / 'atlas_racom_vision_backend'
+    / 'config'
+    / 'sorting_rule.yaml'
+)
+
 
 def load_yaml(path: Path) -> dict:
-    """读取 YAML 并确保根节点为字典。"""
+    """读取 YAML 并确保根节点为字典"""
     data = yaml.safe_load(path.read_text(encoding='utf-8'))
     assert isinstance(data, dict), f'{path} 根节点必须是字典'
     return data
@@ -102,18 +111,51 @@ def test_calibration_gate_is_closed_in_distributed_config() -> None:
 
 
 def test_classification_confidence_gate_requires_complete_mapping() -> None:
-    """默认阈值允许双标识完整识别，并拒绝单标识互补推断。"""
+    """默认阈值允许双标识完整识别，并拒绝单标识互补推断"""
     root = load_yaml(MANAGER_PATH)['autonomous_transport']
     minimum = float(root['classification']['minimum_confidence'])
+    sorting = load_yaml(SORTING_RULE_PATH)['atlas_sorting_rule_service']['ros__parameters']
 
     assert 0.45 < minimum <= 0.75
+    assert sorting['allow_complement_inference'] is False
 
 
 def test_full_navigation_backend_uses_absolute_map_coordinates() -> None:
-    """管理器下发 map 坐标时，完整导航后端必须按绝对地图坐标解释。"""
+    """管理器下发 map 坐标时，完整导航后端必须按绝对地图坐标解释"""
     root = load_yaml(FULL_NAV_PATH)
     parameters = root['atlas_nav_full_backend']['ros__parameters']
 
     assert parameters['coordinate_mode'] == 'absolute_map'
     assert parameters['map_frame'] == 'map'
 
+
+
+def test_asrpro_voice_gate_matches_competition_flow() -> None:
+    root = load_yaml(MANAGER_PATH)['autonomous_transport']
+    voice = root['voice']
+
+    assert voice['start_required'] is True
+    assert float(voice['start_timeout_s']) == 0.0
+    assert voice['fallback_enabled'] is False
+    assert 'atlas_start' in voice['accepted_intents']
+    assert voice['phrase_ids']['transition_complete'] == 'transition_complete'
+    assert voice['phrase_ids']['autonomous_start'] == 'autonomous_start'
+
+
+def test_recoverable_stage_policy_is_enabled() -> None:
+    root = load_yaml(MANAGER_PATH)['autonomous_transport']
+    recovery = root['recovery']
+
+    assert int(recovery['navigation_retry_count']) >= 0
+    assert int(recovery['classification_retry_count']) >= 0
+    assert int(recovery['pick_retry_count']) >= 0
+    assert recovery['continue_on_pick_failure'] is True
+
+
+def test_latest_vision_model_path_is_centralized() -> None:
+    root = load_yaml(MANAGER_PATH)
+    system = root['system']
+
+    assert 'vision_model_path' in system['paths']
+    assert 'vision_labels_path' in system['paths']
+    assert system['vision']['camera'] == '/dev/atlas_camera'

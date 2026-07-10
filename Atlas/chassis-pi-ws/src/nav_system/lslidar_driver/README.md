@@ -17,7 +17,7 @@
 作为 `robot_startup` 的一部分一键启动（推荐）：
 
 ```bash
-ros2 launch robot_startup robot_start.launch.py
+ros2 launch robot_startup robot_autonomous_transport.launch.py
 ```
 
 独立启动：
@@ -26,14 +26,14 @@ ros2 launch robot_startup robot_start.launch.py
 ros2 launch lslidar_driver lsn10p_launch.py
 ```
 
-> **提示**：以下是厂商原始文档，包含完整参数说明、多系列雷达支持和 FAQ；本项目使用 N10P UART 模式，其他雷达型号的配置请参考原始文档对应章节。
+> **提示**：以下是厂商原始文档，包含完整参数说明、多系列雷达支持和 FAQ；本项目使用 N10P UART 模式，其他雷达型号的配置请参考原始文档对应章节
 
 ---
 
 # LSLIDAR_ROS2_V5.1.1_250527 使用说明
 
 ## 1.工程介绍
-​		LSLIDAR_ROS2_V5.1.1_250527为linux环境下雷达ROS2驱动，程序在Ubuntu 18.04 ROS2 Dashing 和 Ubuntu 18.04 ROS2 Eloquent 和 Ubuntu 20.04 ROS2 Foxy 和 Ubuntu 20.04 ROS2 Galactic 和 Ubuntu 22.04 ROS2 Humble 和 Ubuntu 24.04 ROS2 Jazzy 和 Ubuntu 24.04 ROS2 Rolling下测试通过。
+​		LSLIDAR_ROS2_V5.1.1_250527为linux环境下雷达ROS2驱动，程序在Ubuntu 18.04 ROS2 Dashing 和 Ubuntu 18.04 ROS2 Eloquent 和 Ubuntu 20.04 ROS2 Foxy 和 Ubuntu 20.04 ROS2 Galactic 和 Ubuntu 22.04 ROS2 Humble 和 Ubuntu 24.04 ROS2 Jazzy 和 Ubuntu 24.04 ROS2 Rolling下测试通过
 
 #### 1.1 支持的雷达型号
 
@@ -131,9 +131,9 @@ ros2 launch lslidar_driver lslidar_double_launch.py
 
 ## 4.参数介绍
 
-**lslidar_cx.yaml**文件内容如下，更多文件在`lslidar_driver/config`文件夹下。
+**lslidar_cx.yaml**文件内容如下，更多文件在`lslidar_driver/config`文件夹下
 
-每个参数含义见注释说明或咨询**`技术支持`**。
+每个参数含义见注释说明或咨询**`技术支持`**
 
 ~~~YAML
 cx:  							  # 确保与对应launch文件中命名空间一致
@@ -222,23 +222,23 @@ cx:  							  # 确保与对应launch文件中命名空间一致
 
 - **lidar_model**
 
-  雷达型号，激光雷达具体型号，如：M10, CX126S3, LSS3, LSS4等。
+  雷达型号，激光雷达具体型号，如：M10, CX126S3, LSS3, LSS4等
 
 - **device_ip**
 
-  雷达设备IP地址(注意不是雷达目的IP地址)，可使用`wireshark`或`tcpdump`查看。
+  雷达设备IP地址(注意不是雷达目的IP地址)，可使用`wireshark`或`tcpdump`查看
 
 - **msop_port**
 
-  雷达目的数据端口(源端口: 2369)，可使用`wireshark`或`tcpdump`查看。
+  雷达目的数据端口(源端口: 2369)，可使用`wireshark`或`tcpdump`查看
 
 - **difop_port**
 
-  雷达目的设备端口(源端口: 2368)，可使用`wireshark`或`tcpdump`查看。
+  雷达目的设备端口(源端口: 2368)，可使用`wireshark`或`tcpdump`查看
 
 - **use_time_service**
 
-  授时功能(请确保授时源稳定，否则影响点云时间连续性)。
+  授时功能(请确保授时源稳定，否则影响点云时间连续性)
 
   - true:  使用雷达时间(GPS, NTP, PTP)
   - false: 使用系统时间
@@ -291,7 +291,7 @@ cx:  							  # 确保与对应launch文件中命名空间一致
 
 - **is_pretreatment**
 
-  - 点云预处理，此值为ture时点云数据根据以下参数进行空间位置和方向的变换。
+  - 点云预处理，此值为ture时点云数据根据以下参数进行空间位置和方向的变换
   - **`x_offset`**: rviz2 中表现为围绕红色的 x 轴偏移量 单位: m 
   - **`y_offset`**: rviz2 中表现为围绕绿色的 y 轴偏移量 单位: m
   - **`z_offset`**: rviz2 中表现为围绕蓝色的 z 轴偏移量 单位: m
@@ -312,50 +312,50 @@ cx:  							  # 确保与对应launch文件中命名空间一致
 
 - **serial_port**
 
-  激光雷达连接的串口名称（例如 `/dev/ttyUSB0` 或 `/dev/ttyACM0`），**使用串口雷达时，请填写正确的串口名称，并确保已授予该串口的读写权限**。
+  激光雷达连接的串口名称（例如 `/dev/ttyUSB0` 或 `/dev/ttyACM0`），**使用串口雷达时，请填写正确的串口名称，并确保已授予该串口的读写权限**
 
 - **use_high_precision**
 
-  高精度模式，laserscan数据启用高精度模式，角度分辨率减小10倍，数据量增加10倍，提高精度。
+  高精度模式，laserscan数据启用高精度模式，角度分辨率减小10倍，数据量增加10倍，提高精度
 
 - **publish_multiecholaserscan**
 
-  N10Plus雷达是否发布`sensor_msgs::MultiEchoLaserScan`数据，此值为true时发布数据。
+  N10Plus雷达是否发布`sensor_msgs::MultiEchoLaserScan`数据，此值为true时发布数据
 
 - **enable_noise_filter**
 
-  孤立噪点滤波开关，此值为true时将过滤孤立点(N10Plus不生效)。
+  孤立噪点滤波开关，此值为true时将过滤孤立点(N10Plus不生效)
 
 - **pcl_type**
 
-  点云数据类型，此值为true时使用 x y z i 类型发布点云数据(坐标，强度)。
+  点云数据类型，此值为true时使用 x y z i 类型发布点云数据(坐标，强度)
 
 - **filter_angle_file**
 
   - **`disable_min`**: 小于此角度的点云数据将被过滤掉
   - **`disable_max`**: 小于此角度的点云数据将被过滤掉
 
-  单独线号自定义角度裁剪，允许对每条扫描线分别设置裁剪角度范围；可根据实际使用情况更改**`lslidar_driver/param/filter_angle.yaml`**文件。
+  单独线号自定义角度裁剪，允许对每条扫描线分别设置裁剪角度范围；可根据实际使用情况更改**`lslidar_driver/param/filter_angle.yaml`**文件
 
 - **publish_scan**
 
-  发布 `LaserScan` 数据，此值为true时发布 `LaserScan` 数据。
+  发布 `LaserScan` 数据，此值为true时发布 `LaserScan` 数据
 
 - **scan_num**
 
-  指定用于发布`LaserScan`数据的线号，线号范围根据雷达扫描线束而定。
+  指定用于发布`LaserScan`数据的线号，线号范围根据雷达扫描线束而定
 
 - **echo_mode**
 
-  回波模式，0:发布全部点云  1:发布第一次回波点云  2:发布第二次回波点云(双回波模式下生效)。
+  回波模式，0:发布全部点云  1:发布第一次回波点云  2:发布第二次回波点云(双回波模式下生效)
 
 - **is_add_frame**
 
-  叠帧发布点云信息，将连续两帧点云数据叠加后一起发布。
+  叠帧发布点云信息，将连续两帧点云数据叠加后一起发布
 
 - **packet_loss**
 
-  丢包检测，开启后驱动将雷达丢包总数以话题的形式发布，话题名字为**`packet_loss`**，消息类型为**`std_msgs::msg::Int64`**。
+  丢包检测，开启后驱动将雷达丢包总数以话题的形式发布，话题名字为**`packet_loss`**，消息类型为**`std_msgs::msg::Int64`**
 
   
 
@@ -383,7 +383,7 @@ cx:  							  # 确保与对应launch文件中命名空间一致
 
 ### 离线播放PCAP模式：
 
-- 获取录制好的`PCAP`文件路径。
+- 获取录制好的`PCAP`文件路径
 
 - 修改yaml文件以下参数
 
@@ -437,7 +437,7 @@ cx:  							  # 确保与对应launch文件中命名空间一致
 
 ## 5.雷达功能设置与调控
 
-#### **部分功能只对特定系列雷达支持。**
+#### **部分功能只对特定系列雷达支持；**
 
 ### 设置雷达网络配置：
 

@@ -20,8 +20,8 @@ def generate_launch_description():
     cartographer_pbstream = LaunchConfiguration('pbstream')
     cmd_vel_output = LaunchConfiguration('cmd_vel_output')
 
-    # Cartographer 负责纯定位，输出 map -> odom TF。
-    # 完整导航后端只发送 NavigateToPose 目标，不直接接触定位实现。
+    # Cartographer 负责纯定位，输出 map -> odom TF
+    # 完整导航后端只发送 NavigateToPose 目标，不直接接触定位实现
     cartographer_node = Node(
         package='cartographer_ros',
         executable='cartographer_node',
@@ -39,7 +39,7 @@ def generate_launch_description():
         ],
     )
 
-    # map_server 独立启动，只提供静态地图；不启动 AMCL，避免与 Cartographer 争夺 map->odom。
+    # map_server 独立启动，只提供静态地图；不启动 AMCL，避免与 Cartographer 争夺 map->odom
     map_server_node = Node(
         package='nav2_map_server',
         executable='map_server',
@@ -56,8 +56,8 @@ def generate_launch_description():
         parameters=[{'use_sim_time': False, 'autostart': True, 'node_names': ['map_server']}],
     )
 
-    # Nav2 默认发布 /cmd_vel。
-    # 这里统一 remap 到 /atlas/navigation/cmd_vel，再交给 atlas_mission_manager 做安全门控。
+    # Nav2 默认发布 /cmd_vel
+    # 这里统一 remap 到 /atlas/navigation/cmd_vel，再交给 atlas_autonomous_transport_manager 做安全门控
     navigation_cmd_vel_remap = SetRemap(src='/cmd_vel', dst=cmd_vel_output)
 
     navigation_cmd = IncludeLaunchDescription(

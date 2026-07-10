@@ -26,7 +26,6 @@ setup(
     entry_points={
         'console_scripts': [
             'autonomous_transport_manager = atlas_autonomous_transport_manager.autonomous_transport_manager:main',
-            'voice_player = atlas_autonomous_transport_manager.voice_player:main',
         ],
     },
 )

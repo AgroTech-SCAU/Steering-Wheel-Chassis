@@ -183,8 +183,8 @@ class VisionPollinationBackend(Node):
         self.rotation_at_detection: Optional[np.ndarray] = None
         self.dwell_until: Optional[rclpy.time.Time] = None
 
-        # 记录当前任务实际进入动作序列的视觉目标数量。
-        # 全自主运输状态机使用该字段区分“成功抓取一个目标”和“无目标按策略跳过”。
+        # 记录当前任务实际进入动作序列的视觉目标数量
+        # 全自主运输状态机使用该字段区分成功抓取一个目标和无目标按策略跳过
         self.detected_target_count = 0
         self.get_logger().info('视觉授粉后端已启动')
 
@@ -270,7 +270,7 @@ class VisionPollinationBackend(Node):
             response.success = False
             response.message = '机械臂任务正在执行'
             return response
-        # 每个任务开始时清零目标计数，避免上一任务的识别结果影响当前抓取判断。
+        # 每个任务开始时清零目标计数；避免上一任务的识别结果影响当前抓取判断
         self.detected_target_count = 0
         if not self.joints_fresh():
             response.success = False
@@ -290,8 +290,8 @@ class VisionPollinationBackend(Node):
         if self.current_task.task_type == 'noop':
             self.sequence = []
         elif self.current_task.task_type in ('visual_pollination_multi', 'visual_target_sequence'):
-            # visual_target_sequence 使用“识别目标并展开逐目标动作”的执行机制，
-            # 适用于齿轮、T 型螺栓等按视觉目标执行动作序列的任务。
+            # visual_target_sequence 使用识别目标并展开逐目标动作的执行机制
+            # 适用于齿轮；T 型螺栓等按视觉目标执行动作序列的任务
             self.sequence = self.current_task.sequence or [
                 {'type': 'ensure_prepare_pose', 'name': '到达预识别位姿'},
                 {'type': 'detect_targets', 'name': '识别雌花目标'},
@@ -475,7 +475,7 @@ class VisionPollinationBackend(Node):
 
     @staticmethod
     def apply_suction_fields(req, source: dict) -> None:
-        """把 YAML 步骤中的吸盘控制字段透传到 PI 端机械臂服务。"""
+        """把 YAML 步骤中的吸盘控制字段透传到 PI 端机械臂服务"""
         if not hasattr(req, 'suction_valid') or not isinstance(source, dict):
             return
         if 'suction_enable' in source or 'suction' in source:
@@ -483,7 +483,7 @@ class VisionPollinationBackend(Node):
             req.suction_enable = bool(source.get('suction_enable', source.get('suction', False)))
 
     def start_suction_action(self, step: dict) -> None:
-        """执行独立吸盘步骤，YAML 示例：{type: suction, enable: true}。"""
+        """执行独立吸盘步骤，YAML 示例：{type: suction, enable: true}"""
         if not self.suction_client.service_is_ready():
             self.fail(3015, '吸盘服务未就绪')
             return
@@ -702,8 +702,8 @@ class VisionPollinationBackend(Node):
         msg.step_name = self.step_name
         msg.error_code = int(self.error_code)
         msg.message = self.message
-        # target_count 只表示本次任务已确认并进入动作序列的目标数量。
-        # noop、固定投放和无目标跳过任务均发布 0，避免任务状态机误判为成功抓取。
+        # target_count 只表示本次任务已确认并进入动作序列的目标数量
+        # noop；固定投放和无目标跳过任务均发布 0；避免任务状态机误判为成功抓取
         msg.target_count = int(max(0, min(255, self.detected_target_count)))
         msg.target_found = bool(self.detected_target_count > 0)
         self.status_pub.publish(msg)

@@ -1,4 +1,4 @@
-"""只启动 Atlas 全自主运输区状态机。"""
+"""只启动 Atlas 全自主运输区状态机"""
 
 from pathlib import Path
 

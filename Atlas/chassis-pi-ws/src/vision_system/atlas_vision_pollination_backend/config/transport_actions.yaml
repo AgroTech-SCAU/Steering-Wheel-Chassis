@@ -1,62 +1,62 @@
 # Atlas 智械争锋全自主运输区机械臂动作配置
 #
-# 本文件由 atlas_vision_pollination_backend 读取。
-# atlas_autonomous_transport_manager 通过 prepare_action 和 arrival_task 名称调用动作。
-# 所有关节角单位为 rad，工具点偏移单位为 m，速度单位为 rad/s。
+# 本文件由 atlas_vision_pollination_backend 读取
+# atlas_autonomous_transport_manager 通过 prepare_action 和 arrival_task 名称调用动作
+# 所有关节角单位为 rad，工具点偏移单位为 m，速度单位为 rad/s
 #
 # 安全要求：
-# 1. 导航前机械臂必须进入 transport_arm_safe，且整条机械臂不得超出底盘安全包络。
-# 2. 抓取结束后必须保持吸盘开启并收臂，直到园区投放任务明确关闭吸盘。
-# 3. 园区投放点必须保证 0.05m×0.05m×0.05m 货物完整落入 0.5m×0.25m 园区。
+# 1. 导航前机械臂必须进入 transport_arm_safe，且整条机械臂不得超出底盘安全包络
+# 2. 抓取结束后必须保持吸盘开启并收臂，直到园区投放任务明确关闭吸盘
+# 3. 园区投放点必须保证 0.05m×0.05m×0.05m 货物完整落入 0.5m×0.25m 园区
 # 4. 当前关节数据是可解析占位值，必须在实车逐项标定并配合
-#    autonomous_transport.yaml 的 calibration_confirmed 门控使用。
-# 5. 每次只修改并验证一个动作，确认机械限位、碰撞余量、吸盘保持和回收路径后再继续。
+#    autonomous_transport.yaml 的 calibration_confirmed 门控使用
+# 5. 每次只修改并验证一个动作，确认机械限位、碰撞余量、吸盘保持和回收路径后再继续
 
 prepare_actions:
-  # 空动作，用于纯状态机联调。
+  # 空动作，用于纯状态机联调
   noop:
     type: "noop"
 
-  # 导航安全收拢位姿。
-  # 该位姿不主动改变吸盘状态：空载时保持关闭，持货时保持开启。
+  # 导航安全收拢位姿
+  # 该位姿不主动改变吸盘状态：空载时保持关闭，持货时保持开启
   transport_arm_safe:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
     speed_rad_s: 2.0
     timeout_s: 8.0
 
-  # 智能分拣区分类标识观察位姿。
-  # 相机应同时看到左右两个分类槽位，图像中心和左右园区映射由 sorting_rule.yaml 定义。
+  # 智能分拣区分类标识观察位姿
+  # 相机应同时看到左右两个分类槽位，图像中心和左右园区映射由 sorting_rule.yaml 定义
   sorting_scan_prepare:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
     speed_rad_s: 1.5
     timeout_s: 8.0
 
-  # 待派送区识别与抓取观察位姿。
-  # 相机应完整看到 0.4m×0.4m 待派送区，并避免机械臂遮挡检测画面。
+  # 待派送区识别与抓取观察位姿
+  # 相机应完整看到 0.4m×0.4m 待派送区，并避免机械臂遮挡检测画面
   dispatch_pick_prepare:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
     speed_rad_s: 1.5
     timeout_s: 8.0
 
-  # 园区 1 投放前观察/准备位姿。
+  # 园区 1 投放前观察/准备位姿
   park_1_drop_prepare:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
     speed_rad_s: 1.5
     timeout_s: 8.0
 
-  # 园区 2 投放前观察/准备位姿。
+  # 园区 2 投放前观察/准备位姿
   park_2_drop_prepare:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
     speed_rad_s: 1.5
     timeout_s: 8.0
 
-  # 园区 1 的四个投放槽位。
-  # 每个槽位均应在货物完全进入园区的前提下保留边界余量。
+  # 园区 1 的四个投放槽位
+  # 每个槽位均应在货物完全进入园区的前提下保留边界余量
   park_1_drop_slot_1:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
@@ -78,7 +78,7 @@ prepare_actions:
     speed_rad_s: 1.0
     timeout_s: 8.0
 
-  # 园区 2 的四个投放槽位。
+  # 园区 2 的四个投放槽位
   park_2_drop_slot_1:
     type: "joints"
     joints_rad: [3.14159265, 1.57079633, 6.28318531, 3.14159265, 3.14159265]
@@ -101,12 +101,12 @@ prepare_actions:
     timeout_s: 8.0
 
 arrival_tasks:
-  # 空任务。
+  # 空任务
   noop:
     type: "noop"
 
-  # 仅执行请求中的 prepare_action。
-  # 状态机在每次导航前调用该任务，确保机械臂回到导航安全位姿。
+  # 仅执行请求中的 prepare_action
+  # 状态机在每次导航前调用该任务，确保机械臂回到导航安全位姿
   prepare_only:
     type: "prepare_only"
     sequence:
@@ -114,8 +114,8 @@ arrival_tasks:
         name: "机械臂进入导航安全位姿"
         action_ref: "prepare_action"
 
-  # 待派送区单个齿轮抓取任务。
-  # RACOM 类别别名由适配服务统一处理，gear 可匹配 gear/chilun/齿轮。
+  # 待派送区单个齿轮抓取任务
+  # RACOM 类别别名由适配服务统一处理，gear 可匹配 gear/chilun/齿轮
   pick_one_gear:
     type: "visual_target_sequence"
     vision_service: "/vision/detect_camera_target"
@@ -125,9 +125,9 @@ arrival_tasks:
     empty_target_policy: "skip"
     target_order: "center_first"
 
-    # 这两个字段由通用视觉动作后端读取。
-    # pre_pollination_tool_point_m 表示目标点到吸盘预抓取工具点的偏移。
-    # pollination_tool_point_m 表示目标点到吸盘实际抓取工具点的偏移。
+    # 这两个字段由通用视觉动作后端读取
+    # pre_pollination_tool_point_m 表示目标点到吸盘预抓取工具点的偏移
+    # pollination_tool_point_m 表示目标点到吸盘实际抓取工具点的偏移
     pre_pollination_tool_point_m: [0.00, 0.00, 0.080]
     pollination_tool_point_m: [0.00, 0.00, 0.015]
     speed_rad_s: 1.0
@@ -161,8 +161,8 @@ arrival_tasks:
         name: "带货收回导航安全位姿"
         action_ref: "transport_arm_safe"
 
-  # 待派送区单个 T 型螺栓抓取任务。
-  # RACOM 类别别名由适配服务统一处理，t_bolt 可匹配 t_bolt/luosi/螺栓。
+  # 待派送区单个 T 型螺栓抓取任务
+  # RACOM 类别别名由适配服务统一处理，t_bolt 可匹配 t_bolt/luosi/螺栓
   pick_one_t_bolt:
     type: "visual_target_sequence"
     vision_service: "/vision/detect_camera_target"
@@ -204,8 +204,8 @@ arrival_tasks:
         name: "带货收回导航安全位姿"
         action_ref: "transport_arm_safe"
 
-  # 园区 1 的四个投放任务。
-  # 到达槽位后关闭吸盘，短暂停留确认货物脱离，再收回导航安全位姿。
+  # 园区 1 的四个投放任务
+  # 到达槽位后关闭吸盘，短暂停留确认货物脱离，再收回导航安全位姿
   place_park_1_slot_1:
     type: "fixed_sequence"
     sequence:
@@ -235,7 +235,7 @@ arrival_tasks:
       - {type: "dwell", name: "等待货物稳定", duration_s: 0.4}
       - {type: "joints_action", name: "收回导航安全位姿", action_ref: "transport_arm_safe"}
 
-  # 园区 2 的四个投放任务。
+  # 园区 2 的四个投放任务
   place_park_2_slot_1:
     type: "fixed_sequence"
     sequence:

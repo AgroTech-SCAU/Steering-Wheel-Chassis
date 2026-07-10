@@ -777,6 +777,12 @@ static AppControlResult app_control_apply_pi_arm(void) {
     PiCommsSuctionControl suction_cmd;
     float speed_rad_s;
 
+    /*
+     * PI 端吸盘控制有两种入口：
+     * 1. 独立的 /mcu/set_suction 服务，只携带 SUCTION_VALID；
+     * 2. 机械臂目标服务附带 suction_valid/suction_enable，同一帧与目标一起下发。
+     * 这里先处理独立吸盘命令，机械臂附带吸盘命令在具体 move_* 分支中处理。
+     */
     if(pi_comms_take_suction_control(&suction_cmd)) {
         if(!suction_cmd.valid) {
             return APP_CONTROL_RESULT_SKIPPED;

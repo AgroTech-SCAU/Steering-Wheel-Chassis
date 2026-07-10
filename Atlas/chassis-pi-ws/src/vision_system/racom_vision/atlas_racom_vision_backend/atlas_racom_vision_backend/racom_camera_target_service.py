@@ -1,9 +1,9 @@
 """
-racom_vision 到 Atlas DetectCameraTarget 的适配服务。
+racom_vision 到 Atlas DetectCameraTarget 的适配服务
 
-racom_vision 当前输出类别和像素坐标；Atlas 旧任务链路需要相机坐标点。
+racom_vision 当前输出类别和像素坐标；Atlas 旧任务链路需要相机坐标点
 这里使用可配置的像素比例和默认深度完成临时转换，保证 mission_manager、
-vision_pollination_backend 与机械臂动作序列不需要大改。
+vision_pollination_backend 与机械臂动作序列不需要大改
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from vison_topic_interfaces.srv import VisionDetect
 
 @dataclass
 class PixelTarget:
-    """racom_vision 输出的单个像素目标。"""
+    """racom_vision 输出的单个像素目标"""
 
     cls_id: int
     cls_name: str
@@ -36,7 +36,7 @@ class PixelTarget:
 
 
 class RacomCameraTargetService(Node):
-    """把 VisionDetect 服务包装成 DetectCameraTarget 服务。"""
+    """把 VisionDetect 服务包装成 DetectCameraTarget 服务"""
 
     def __init__(self) -> None:
         super().__init__('atlas_racom_camera_target_service')
@@ -52,7 +52,7 @@ class RacomCameraTargetService(Node):
         self.accept_empty_target_class = bool(self.declare_parameter('accept_empty_target_class', True).value)
         self.target_order = str(self.declare_parameter('target_order', 'center_first').value)
 
-        # 服务回调内需要等待另一个服务返回，使用 ReentrantCallbackGroup + MultiThreadedExecutor 避免死锁。
+        # 服务回调内需要等待另一个服务返回，使用 ReentrantCallbackGroup + MultiThreadedExecutor 避免死锁
         self.callback_group = ReentrantCallbackGroup()
         self.vision_client = self.create_client(VisionDetect, self.vision_detect_service, callback_group=self.callback_group)
         self.service = self.create_service(DetectCameraTarget, self.service_name, self.on_detect_camera_target, callback_group=self.callback_group)
@@ -61,7 +61,7 @@ class RacomCameraTargetService(Node):
         )
 
     def wait_future(self, future, timeout_s: float):
-        """在服务回调中短时等待子服务返回。"""
+        """在服务回调中短时等待子服务返回"""
         deadline = self.get_clock().now() + Duration(seconds=max(0.05, timeout_s))
         while rclpy.ok() and not future.done():
             time.sleep(0.02)
@@ -84,7 +84,7 @@ class RacomCameraTargetService(Node):
         return resp, ''
 
     def collect_targets(self) -> tuple[bool, str, List[PixelTarget]]:
-        """启动 racom 检测窗口，停止时读取最后一帧目标。"""
+        """启动 racom 检测窗口，停止时读取最后一帧目标"""
         start_resp, err = self.call_vision_detect(True)
         if start_resp is None or not bool(start_resp.success):
             msg = err or getattr(start_resp, 'message', '启动视觉检测失败')
@@ -126,8 +126,8 @@ class RacomCameraTargetService(Node):
         if cls == str(target.cls_id):
             return True
 
-        # 全自主运输任务使用稳定的标准类别名，模型可继续输出训练时使用的类别名称。
-        # 归一化只用于类别匹配，不改变服务返回的原始 cls_name 与 cls_id。
+        # 全自主运输任务使用稳定的标准类别名；模型可继续输出训练时使用的类别名称
+        # 归一化只用于类别匹配；不改变服务返回的原始 cls_name 与 cls_id
         cargo_aliases = {
             'gear': {'gear', 'chilun', '齿轮', '1'},
             't_bolt': {'t_bolt', 't-bolt', 'tbolt', 'bolt', 'luosi', '螺栓', 't型螺栓', '0'},
@@ -142,8 +142,8 @@ class RacomCameraTargetService(Node):
             if normalized_cls == standard_name and normalized_name in normalized_aliases:
                 return True
 
-        # 允许旧配置中的 female_flower 临时映射到任意 racom 类别，避免旧任务 YAML 不改就完全无目标。
-        # 正式实车时建议把 pollination_actions.yaml 中 target_class 改成 racom 模型的真实类别名。
+        # 允许旧配置中的 female_flower 临时映射到任意 racom 类别，避免旧任务 YAML 不改就完全无目标
+        # 正式实车时建议把 pollination_actions.yaml 中 target_class 改成 racom 模型的真实类别名
         if cls in ('female_flower', 'flower') and name in ('luosi', 'chilun', 'female_flower', 'flower'):
             return True
         return False

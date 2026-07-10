@@ -1,99 +1,146 @@
-# Atlas 智械争锋全自主运输区状态机配置
+# Atlas 智械争锋全自主运输区统一配置
 #
-# 配置覆盖以下闭环：
-# 1. 中转区播报与语音启动确认。
-# 2. 前往智能分拣区并识别“齿轮 / T 型螺栓”对应园区。
-# 3. 前往待派送区识别并抓取单个货物。
-# 4. 根据分类规则导航至园区 1 或园区 2，并完成投放。
-# 5. 返回待派送区重复运输，直到达到数量、时间或无目标终止条件。
-#
-# 坐标、机械臂关节位姿、视觉深度和工具点偏移必须在实际场地完成标定。
-# calibration_confirmed=false 时，状态机预检会拒绝产生运动命令。
+# 本文件同时作为整车启动入口和状态机任务配置；模型路径；串口配置；导航配置；视觉适配配置；机械臂动作配置都从这里集中引用
+# calibration_confirmed=false 时状态机只完成通信和状态检查；不会产生导航或机械臂运动命令
+
+system:
+  startup:
+    # 启动顺序为 ASRPRO 与 MCU；传感器；导航；视觉；机械臂后端；任务状态机
+    # 延时用于等待设备节点建立；状态机内部仍会继续检查实际服务和状态；不会只依赖固定延时
+    asrpro_delay_s: 0.0
+    mcu_delay_s: 0.0
+    sensor_delay_s: 1.0
+    navigation_delay_s: 2.0
+    vision_delay_s: 3.0
+    manipulation_delay_s: 4.0
+    manager_delay_s: 6.0
+
+  launch:
+    navigation_backend: "full"
+    manipulation_backend: "racom_vision"
+    navigation_cmd_vel_topic: "/atlas/navigation/cmd_vel"
+
+    # true 时启动激光雷达；机器人描述；Cartographer 纯定位和 Nav2
+    enable_lidar: true
+    enable_robot_description: true
+    enable_navigation: true
+
+    # true 时启动最新 vision_system 中的 ONNX 检测节点和 Atlas 视觉适配节点
+    enable_vision: true
+
+  paths:
+    # 留空表示使用对应功能包安装目录中的默认文件
+    # 也可以填写绝对路径；相对路径按本 YAML 所在目录解析
+    mcu_config: ""
+    asrpro_config: ""
+    nav2_params: ""
+    map_yaml: ""
+    cartographer_pbstream: ""
+    full_nav_config: ""
+    pseudo_nav_config: ""
+
+    # 视觉运行配置；模型路径；类别文件路径都在此处集中配置
+    # vision_model_path 留空时使用最新 vision_system 内置的 resource/best.onnx
+    vision_runtime_config: ""
+    vision_model_path: ""
+    vision_labels_path: ""
+    racom_camera_config: ""
+    sorting_rule_config: ""
+
+    manipulation_config: ""
+    transport_actions: ""
+
+  vision:
+    # 建议通过 udev 固定为 /dev/atlas_camera；不要在正式比赛中依赖 /dev/video0 序号
+    camera: "/dev/atlas_camera"
+    confidence_threshold: 0.55
+    process_every_n: 2
+    rate_hz: 10.0
+    service_name: "vision_detect"
+    topic_name: "vision_detections"
+
+  runtime:
+    # 节点异常退出后由 launch 自动重启；安全门控仍以 MCU 状态和 AutoPi 锁存为准
+    respawn_nodes: true
+    respawn_delay_s: 2.0
 
 autonomous_transport:
-  # 完成场地坐标、停车朝向、机械臂动作和视觉抓取标定后改为 true。
+  # 完成地图点；机械臂动作；视觉外参；相机视角和串口联调后改为 true
   calibration_confirmed: false
 
   timing:
-    # 全自主运输阶段使用独立可配置时间预算，避免把赛事文件中的总赛时直接写死在代码中。
-    # 现场应依据裁判实际计时口径以及进入中转区时的剩余时间设置。
+    # 从 MCU AutoPi 启动事件确认后开始计时；包含播报和语音等待
     max_autonomous_duration_s: 300.0
 
-    # 剩余时间小于该值且机械臂没有携带货物时，不再发起下一轮抓取。
-    # 当前正在运送的货物仍会优先完成投放，直到硬时间上限到达。
+    # 剩余时间不足且当前没有持货时；不再发起下一轮抓取
     stop_reserve_s: 20.0
-
-    # 单次机械臂动作序列总超时，覆盖视觉请求、抓取/投放动作和到位等待。
     manipulation_timeout_s: 60.0
-
-    # 智能分拣分类规则服务总超时。
     classification_timeout_s: 20.0
 
   classification:
-    # 分类结果置信度低于该值时进入重试，不允许建立园区映射。
-    # 完整识别两个标识时服务置信度不低于 0.75；单标识互补推断为 0.45。
     minimum_confidence: 0.60
 
+    # 赛事分类标识由裁判赛前摆放；默认禁止在识别失败后猜测园区映射
+    # 开启后必须先人工确认 fallback_mapping 与当前赛场摆放一致
+    use_fallback_mapping_on_failure: false
+    fallback_mapping:
+      park_1: "gear"
+      park_2: "t_bolt"
+
   voice:
-    # true：播报完成后等待 /atlas/voice/command 上的语音识别文本。
-    # false：播报完成后直接执行分类识别与运输。
+    # MCU 进入 AutoPi 后先让 ASRPRO 播报；随后等待 ASRPRO 识别 atlas_start
     start_required: true
 
-    # 语音等待时长。fallback_enabled=false 时超时后继续保持安全停止并等待指令。
-    start_timeout_s: 30.0
+    # 0 表示无限等待触发词；等待期间底盘保持制动；机械臂不动作
+    start_timeout_s: 0.0
     fallback_enabled: false
 
-    # 进入中转区后播报该文本，用于赛事中转区语音播报得分项。
-    transition_announcement: "遥操作区任务已完成"
+    asrpro_status_timeout_s: 2.0
+    speech_timeout_s: 8.0
+    speech_retry_count: 2
 
-    # 等待语音启动时的提示文本。
-    prompt: "请发出执行全自主运输任务语音指令"
+    # ASRPRO 只向树莓派上报稳定 intent；不要直接上报中文原句
+    accepted_intents:
+      - "atlas_start"
 
-    # 语音识别节点把识别结果发布到 /atlas/voice/command，状态机会进行空格与标点归一化。
-    accepted_phrases:
-      - "执行全自主运输任务"
-      - "开始全自主运输任务"
-      - "启动全自主运输任务"
+    # phrase_id 必须与 ASRPRO 工程中的离线播报资源完全一致
+    phrase_ids:
+      transition_complete: "transition_complete"
+      voice_prompt: "voice_prompt"
+      autonomous_start: "autonomous_start"
+      delivery_complete: "delivery_complete"
+      task_complete: "task_complete"
+      task_skipped: "task_skipped"
 
   cargo:
-    # 待派送区共 8 个货物，齿轮与 T 型螺栓各 4 个。
+    # 待派送区共 8 个货物；齿轮和 T 型螺栓各 4 个
     target_total: 8
     expected_counts:
       gear: 4
       t_bolt: 4
 
-    # 抓取顺序采用交替策略，避免一种货物短时遮挡时持续阻塞。
-    # 视觉后端每次最多处理一个目标。
+    # 交替选择两类货物；单类暂时遮挡时不会持续阻塞同一类别
     plan:
-      - gear
-      - t_bolt
-      - gear
-      - t_bolt
-      - gear
-      - t_bolt
-      - gear
-      - t_bolt
+      - "gear"
+      - "t_bolt"
+      - "gear"
+      - "t_bolt"
+      - "gear"
+      - "t_bolt"
+      - "gear"
+      - "t_bolt"
 
-    # 同一类别连续达到该无目标次数后，本轮任务不再选择该类别。
     no_target_limit_per_class: 2
 
   recovery:
-    # 导航失败后的重试次数。每次重试都会先取消导航并保持零速度。
+    # 普通阶段错误先重试；达到上限后记录并跳过；不会把状态机永久卡在当前阶段
     navigation_retry_count: 1
-
-    # 分类标识识别失败后的重试次数。
     classification_retry_count: 2
-
-    # 单个货物抓取失败后的重试次数。
     pick_retry_count: 1
-
-    # false：抓取执行错误时安全终止。
-    # 视觉明确返回“无目标”属于正常跳过，不受该参数影响。
-    continue_on_pick_failure: false
+    continue_on_pick_failure: true
 
   waypoints:
-    # 以下位置均使用导航地图的 map 坐标系，yaw 单位为 rad。
-    # 数值为安全占位值；必须实测后填写，并确认机器人本体完整位于可行驶区域内。
+    # 全部使用 map 绝对坐标；yaw 单位 rad；必须在实际赛场重新标定
     sorting_area:
       id: "autonomous_sorting_area"
       x_m: 0.0
@@ -123,29 +170,22 @@ autonomous_transport:
       timeout_s: 25.0
 
   manipulation:
-    # 导航时机械臂应保持在不超出底盘安全包络的收拢位姿。
+    # 导航前收臂；智能分拣观察；待派送区抓取；园区投放都由 transport_actions.yaml 定义
     safe_prepare_action: "transport_arm_safe"
-
-    # 智能分拣区分类标识的相机观察位姿。
     sorting_prepare_action: "sorting_scan_prepare"
 
-    # 待派送区抓取前的相机观察位姿。
     pick_prepare_actions:
       gear: "dispatch_pick_prepare"
       t_bolt: "dispatch_pick_prepare"
 
-    # 两类货物分别调用视觉单目标抓取任务。
     pick_tasks:
       gear: "pick_one_gear"
       t_bolt: "pick_one_t_bolt"
 
-    # 到达园区后的投放预备动作。
     place_prepare_actions:
       park_1: "park_1_drop_prepare"
       park_2: "park_2_drop_prepare"
 
-    # 每个园区最多接收 4 个货物。列表索引与该园区已完成数量对应。
-    # 四个任务可以标定为不同投放位置，也可以在确认允许堆叠后设置为同一安全落点。
     place_tasks:
       park_1:
         - "place_park_1_slot_1"
