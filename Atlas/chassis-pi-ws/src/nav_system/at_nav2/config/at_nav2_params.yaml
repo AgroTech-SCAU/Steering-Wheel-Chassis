@@ -33,12 +33,12 @@ bt_navigator:
       - nav2_speed_controller_bt_node
       - nav2_truncate_path_action_bt_node
       - nav2_truncate_path_local_action_bt_node
-      - nav2_goal_updater_node_bt_node          # 来自第一个文件
+      - nav2_goal_updater_node_bt_node
       - nav2_recovery_node_bt_node
       - nav2_pipeline_sequence_bt_node
       - nav2_round_robin_node_bt_node
       - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node     # 来自第一个文件
+      - nav2_time_expired_condition_bt_node
       - nav2_path_expiring_timer_condition
       - nav2_distance_traveled_condition_bt_node
       - nav2_single_trigger_bt_node
@@ -49,11 +49,9 @@ bt_navigator:
       - nav2_planner_selector_bt_node
       - nav2_controller_selector_bt_node
       - nav2_goal_checker_selector_bt_node  
-       # 以下是第二个文件独有的
       - nav2_assisted_teleop_action_bt_node
       - nav2_globally_updated_goal_condition_bt_node
       - nav2_is_path_valid_condition_bt_node
-
       - nav2_goal_updated_controller_bt_node
       - nav2_is_battery_charging_condition_bt_node
       - nav2_path_longer_on_approach_bt_node
@@ -72,9 +70,9 @@ controller_server:
   ros__parameters:
     use_sim_time: False
     controller_frequency: 20.0  # [HW_CONFIG] 控制频率，取决于底盘响应速度和计算能力
-    min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.001  # [HW_CONFIG] 全向底盘 vy 有控制量，阈值应 > 0
-    min_theta_velocity_threshold: 0.001
+    min_x_velocity_threshold: 0.05
+    min_y_velocity_threshold: 0.05  # [HW_CONFIG] 全向底盘 vy 有控制量，阈值应 > 0
+    min_theta_velocity_threshold: 0.01
     failure_tolerance: 3.0  # [HW_CONFIG] 允许控制失败的容忍时间(秒)
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
@@ -86,8 +84,8 @@ controller_server:
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       stateful: True  # 保持内部状态以避免振荡
-      xy_goal_tolerance: 0.35  # [HW_CONFIG] 到达目标的位置容差(m)，比赛可适当收紧
-      yaw_goal_tolerance: 0.5  # [HW_CONFIG] 到达目标的角度容差(rad)
+      xy_goal_tolerance: 0.05  # [HW_CONFIG] 到达目标的位置容差(m)，比赛可适当收紧
+      yaw_goal_tolerance: 0.2  # [HW_CONFIG] 到达目标的角度容差(rad)
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"            # 使用 DWB 本地规划器（Dynamic Window Approach）
       debug_trajectory_details: True                 # 是否输出/发布轨迹调试信息
@@ -96,7 +94,7 @@ controller_server:
       max_vel_x: 1.0                                 # 最大前进速度 (m/s)
       max_vel_y: 1.0                                 # 最大侧向速度 (m/s)，全向底盘有效
       max_vel_theta: 1.0                             # 最大角速度 (rad/s)
-      min_speed_xy: 0.0                              # 最小平面速度 (m/s)
+      min_speed_xy: 0.05                             # 最小平面速度 (m/s)
       max_speed_xy: 1.0                              # 最大平面速度 (m/s)
       min_speed_theta: 0.0                           # 最小角速度 (rad/s)
       # Add high threshold velocity for turtlebot 3 issue.
@@ -114,12 +112,12 @@ controller_server:
       linear_granularity: 0.05                        # 线性轨迹检查/插值间隔 (m)
       angular_granularity: 0.025                      # 角度轨迹检查/插值间隔 (rad)
       transform_tolerance: 0.2                        # TF 变换容忍时间 (s)
-      xy_goal_tolerance: 0.35                         # 到达目标的 xy 容差 (m)
-      trans_stopped_velocity: 0.1                     # 判定为停止的平移速度阈值 (m/s)
+      xy_goal_tolerance: 0.05                          # 到达目标的 xy 容差 (m)
+      trans_stopped_velocity: 0.05                    # 判定为停止的平移速度阈值 (m/s)
       short_circuit_trajectory_evaluation: True       # 启用短路评估以加速不可行轨迹剔除
       stateful: True                                  # 保持内部状态（如上一次命令）以减少振荡
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]     # 评价器列表，用于评分轨迹
-      BaseObstacle.scale: 0.05                        # 评价器权重 障碍物评价器权重缩放
+      BaseObstacle.scale: 0.03                        # 评价器权重 障碍物评价器权重缩放
       PathAlign.scale: 32.0                           # 评价器权重 路径对齐评价器总权重
       PathAlign.forward_point_distance: 0.1           # 评价器参数 路径对齐时前瞻点距离 (m)
       GoalAlign.scale: 24.0                           # 评价器权重 目标对齐评价器权重

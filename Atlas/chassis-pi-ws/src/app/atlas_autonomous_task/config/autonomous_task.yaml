@@ -16,6 +16,19 @@ atlas_autonomous_task:
     gear_class_names: ["chilun", "gear"]
     bolt_class_names: ["luosi", "bolt", "t_bolt"]
     fallback_zone: "zone_1"
+    image_mid_u: 320.0
+
+    # 全自主开始后不先导航，直接在当前点位做两轮预识别
+    # 动作 1 识别完整，判定为 A 区：摄像头左侧为园区 1，右侧为园区 2
+    # 动作 2 识别完整，判定为 B 区：摄像头左侧为园区 2，右侧为园区 1
+    # 两轮都识别不完整，默认 A 区，园区 1 为 chilun，园区 2 为 luosi
+    pre_detect_action_1: "pre_detect_left"
+    pre_detect_action_2: "pre_detect_right"
+    pre_detect_rounds: 2
+
+    # 当前版本只负责将“已知要派送的货物类别”送到动态识别出的目标园区
+    # 如需多次派送，可以按顺序填写 ["chilun", "luosi"]
+    delivery_cargo_sequence: ["chilun"]
 
     # ASRPRO TWEN51 串口，先使用现有配置，不在这里强制绑定串口
     asrpro_port: "/dev/ttyUSB0"
@@ -34,7 +47,6 @@ atlas_autonomous_task:
     phrase_task_skipped: "task_skipped"
 
     # 智械争锋全自主运输航点
-    waypoint_sort: "P1"
     waypoint_pickup: "P2"
     waypoint_zone_1: "P3"
     waypoint_zone_2: "P4"

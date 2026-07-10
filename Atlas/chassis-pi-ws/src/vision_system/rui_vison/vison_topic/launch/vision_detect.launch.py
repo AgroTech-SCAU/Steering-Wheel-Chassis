@@ -1,4 +1,4 @@
-"""RUI 视觉检测服务启动文件
+"""RUI 视觉检测服务启动文件。
 
 用法:
   ros2 launch vison_topic vision_detect.launch.py                  # 默认有预览
@@ -40,7 +40,6 @@ def generate_launch_description():
                 '--rate-hz', LaunchConfiguration('rate_hz'),
                 '--service-name', LaunchConfiguration('service_name'),
                 '--topic-name', LaunchConfiguration('topic_name'),
-                '--no-preview',
             ],
             respawn=True,
             respawn_delay=2.0,

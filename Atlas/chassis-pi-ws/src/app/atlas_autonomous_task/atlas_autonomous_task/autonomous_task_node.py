@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import rclpy
 from rclpy.node import Node
@@ -187,6 +187,13 @@ class AtlasAutonomousTask(Node):
         self.gear_class_names = set(self.declare_parameter("gear_class_names", ["chilun", "gear"]).value)
         self.bolt_class_names = set(self.declare_parameter("bolt_class_names", ["luosi", "bolt", "t_bolt"]).value)
         self.fallback_zone = self.declare_parameter("fallback_zone", "zone_1").value
+        self.image_mid_u = float(self.declare_parameter("image_mid_u", 320.0).value)
+        self.pre_detect_action_1 = self.declare_parameter("pre_detect_action_1", "pre_detect_left").value
+        self.pre_detect_action_2 = self.declare_parameter("pre_detect_action_2", "pre_detect_right").value
+        self.pre_detect_rounds = max(1, int(self.declare_parameter("pre_detect_rounds", 2).value))
+        self.delivery_cargo_sequence = [
+            str(item).lower() for item in self.declare_parameter("delivery_cargo_sequence", ["chilun"]).value
+        ]
 
         self.phrase_transition_complete = self.declare_parameter("phrase_transition_complete", "transition_complete").value
         self.phrase_voice_prompt = self.declare_parameter("phrase_voice_prompt", "voice_prompt").value
@@ -195,7 +202,6 @@ class AtlasAutonomousTask(Node):
         self.phrase_task_complete = self.declare_parameter("phrase_task_complete", "task_complete").value
         self.phrase_task_skipped = self.declare_parameter("phrase_task_skipped", "task_skipped").value
 
-        self.waypoint_sort = self.declare_parameter("waypoint_sort", "P1").value
         self.waypoint_pickup = self.declare_parameter("waypoint_pickup", "P2").value
         self.waypoint_zone_1 = self.declare_parameter("waypoint_zone_1", "P3").value
         self.waypoint_zone_2 = self.declare_parameter("waypoint_zone_2", "P4").value
@@ -280,12 +286,13 @@ class AtlasAutonomousTask(Node):
                 self._skip("ASR start timeout")
             self._speak(self.phrase_autonomous_start)
 
-            self._navigate_or_skip(self.waypoint_sort, "sort area")
-            zone = self._detect_zone()
-            self._navigate_or_skip(self.waypoint_pickup, "pickup area")
-            target = self.waypoint_zone_2 if zone == "zone_2" else self.waypoint_zone_1
-            self._navigate_or_skip(target, zone)
-            self._speak(self.phrase_delivery_complete)
+            cargo_zone_map = self._detect_area_and_cargo_map()
+            for cargo in self.delivery_cargo_sequence:
+                zone = cargo_zone_map.get(cargo, self.fallback_zone)
+                self._navigate_or_skip(self.waypoint_pickup, f"pickup area for {cargo}")
+                target = self._waypoint_for_zone(zone)
+                self._navigate_or_skip(target, f"{zone} for {cargo}")
+                self._speak(self.phrase_delivery_complete)
             self._speak(self.phrase_task_complete)
             self._report_result(ReportMissionResult.Request.RESULT_DONE, 0)
         except RuntimeError as exc:
@@ -363,11 +370,39 @@ class AtlasAutonomousTask(Node):
         message = result.message if result is not None else "timeout"
         return self._skip(f"navigation failed {waypoint_id}: {message}")
 
-    def _detect_zone(self) -> str:
+    def _detect_area_and_cargo_map(self) -> Dict[str, str]:
+        for round_index in range(self.pre_detect_rounds):
+            self._log(f"Pre-detect round {round_index + 1}")
+            self._run_pre_detect_action(self.pre_detect_action_1)
+            mapping = self._detect_cargo_zone_map_for_area("A")
+            if self._mapping_is_complete(mapping):
+                self.get_logger().info("Pre-detect action 1 succeeded, field side is A")
+                self._log(f"Field side=A mapping={mapping}")
+                return mapping
+
+            self._run_pre_detect_action(self.pre_detect_action_2)
+            mapping = self._detect_cargo_zone_map_for_area("B")
+            if self._mapping_is_complete(mapping):
+                self.get_logger().info("Pre-detect action 2 succeeded, field side is B")
+                self._log(f"Field side=B mapping={mapping}")
+                return mapping
+
+        fallback = {"chilun": "zone_1", "luosi": "zone_2"}
+        self._skip("sort sign recognition incomplete after all pre-detect rounds, fallback to field side A")
+        self._log(f"Fallback mapping={fallback}")
+        return fallback
+
+    def _run_pre_detect_action(self, action_name: str) -> None:
+        # 这里保留动作 hook，后续接入机械臂服务时只需要替换这一处
+        self._check_abort()
+        self.get_logger().info(f"Pre-detect action hook: {action_name}")
+        self._log(f"Pre-detect action hook: {action_name}")
+
+    def _detect_cargo_zone_map_for_area(self, detected_area: str) -> Dict[str, str]:
         self._check_abort()
         if not self.vision_client.wait_for_service(timeout_sec=2.0):
             self._skip("vision service unavailable")
-            return self.fallback_zone
+            return {}
         start = VisionDetect.Request()
         start.start = True
         self._wait_future(self.vision_client.call_async(start), self.vision_service_timeout_s)
@@ -380,16 +415,40 @@ class AtlasAutonomousTask(Node):
         result = self._wait_future(self.vision_client.call_async(stop), self.vision_service_timeout_s)
         if result is None or not result.success or result.count <= 0:
             self._skip("vision result empty")
-            return self.fallback_zone
-        names = [name.lower() for name in result.cls_names]
-        self.get_logger().info(f"Vision classes: {names}")
-        self._log(f"Vision classes: {names}")
-        if any(name in self.gear_class_names for name in names):
-            return "zone_1"
-        if any(name in self.bolt_class_names for name in names):
-            return "zone_2"
-        self._skip(f"unknown vision classes: {names}")
-        return self.fallback_zone
+            return {}
+        mapping: Dict[str, str] = {}
+        observations = []
+        for name, u_px in zip(result.cls_names, result.u_px):
+            cargo = self._normalize_cargo_name(str(name).lower())
+            if cargo is None:
+                continue
+            side = "left" if float(u_px) < self.image_mid_u else "right"
+            zone = self._zone_from_camera_side(detected_area, side)
+            mapping[cargo] = zone
+            observations.append(f"{cargo}@{side}->{zone}")
+        self.get_logger().info(f"Sort sign mapping: {observations}")
+        self._log(f"Sort sign mapping: {observations}")
+        if not mapping:
+            self._skip("sort sign mapping empty")
+        return mapping
+
+    def _mapping_is_complete(self, mapping: Dict[str, str]) -> bool:
+        return "chilun" in mapping and "luosi" in mapping
+
+    def _normalize_cargo_name(self, class_name: str) -> Optional[str]:
+        if class_name in self.gear_class_names:
+            return "chilun"
+        if class_name in self.bolt_class_names:
+            return "luosi"
+        return None
+
+    def _zone_from_camera_side(self, detected_area: str, camera_side: str) -> str:
+        if detected_area == "B":
+            return "zone_2" if camera_side == "left" else "zone_1"
+        return "zone_1" if camera_side == "left" else "zone_2"
+
+    def _waypoint_for_zone(self, zone: str) -> str:
+        return self.waypoint_zone_2 if zone == "zone_2" else self.waypoint_zone_1
 
     def _skip(self, reason: str) -> bool:
         self.get_logger().warn(f"Stage skipped: {reason}")
