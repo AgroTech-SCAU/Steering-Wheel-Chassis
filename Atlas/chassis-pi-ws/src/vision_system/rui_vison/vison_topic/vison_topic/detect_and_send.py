@@ -21,8 +21,6 @@ import math
 import os
 import threading
 import time
-
-import yaml
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -36,10 +34,6 @@ from vison_topic_interfaces.srv import VisionDetect
 # ============================================================
 
 CONFIG = {
-    "paths": {
-        "model_path": "",
-        "labels_path": "",
-    },
     "camera": {
         "width": 640,
         "height": 640,
@@ -111,13 +105,8 @@ def _package_share_dir() -> str:
                          "..", "..", "resource"))
 
 
-def _find_onnx_path(configured_path: str = "") -> str:
-    """按显式路径和包内默认资源查找 ONNX 模型"""
-    configured = os.path.abspath(os.path.expanduser(configured_path)) if configured_path else ""
-    if configured:
-        if os.path.isfile(configured):
-            return configured
-        raise FileNotFoundError(f"配置的 ONNX 模型不存在: {configured}")
+def _find_onnx_path() -> str:
+    """查找 best.onnx"""
     share = _package_share_dir()
     candidates = [
         os.path.join(share, "resource", "best.onnx"),
@@ -129,13 +118,8 @@ def _find_onnx_path(configured_path: str = "") -> str:
     return candidates[0]
 
 
-def _find_labels_path(configured_path: str = "") -> Optional[str]:
-    """按显式路径和包内默认资源查找类别文件"""
-    configured = os.path.abspath(os.path.expanduser(configured_path)) if configured_path else ""
-    if configured:
-        if os.path.isfile(configured):
-            return configured
-        raise FileNotFoundError(f"配置的类别文件不存在: {configured}")
+def _find_labels_path() -> Optional[str]:
+    """查找 best.labels.txt"""
     share = _package_share_dir()
     for name in ("best.labels.txt", "labels.txt"):
         p = os.path.join(share, "resource", name)
@@ -167,9 +151,9 @@ def load_onnx_model(onnx_path: str, num_threads: int = 2) -> Dict:
     }
 
 
-def load_class_names(labels_path: str = "") -> List[str]:
-    """加载类别名；优先显式路径和 labels.txt；最后回退硬编码"""
-    path = _find_labels_path(labels_path)
+def load_class_names() -> List[str]:
+    """加载类别名：优先 labels.txt，回退硬编码"""
+    path = _find_labels_path()
     if path:
         with open(path, encoding="utf-8") as f:
             names = [line.strip() for line in f if line.strip()]
@@ -346,12 +330,7 @@ def draw_results(
 class VisionDetectServer:
     """视觉检测 ROS2 服务节点"""
 
-    def __init__(
-        self,
-        camera_id: int | str = 0,
-        onnx_path: str = "",
-        labels_path: str = "",
-    ):
+    def __init__(self, camera_id: int = 0):
         import rclpy
         from rclpy.node import Node
         from std_msgs.msg import Float32MultiArray
@@ -359,11 +338,11 @@ class VisionDetectServer:
         self._camera_id = camera_id
 
         # ── ONNX 模型 ──
-        onnx_path = _find_onnx_path(onnx_path)
+        onnx_path = _find_onnx_path()
         print(f"[INFO] ONNX 模型: {onnx_path}")
         onnx_threads = CONFIG["optimization"]["onnx_threads"]
         self._model = load_onnx_model(onnx_path, onnx_threads)
-        self._class_names = load_class_names(labels_path)
+        self._class_names = load_class_names()
         print(f"[INFO] 类别: {self._class_names}  "
               f"输入: {self._model['img_size']}x{self._model['img_size']}  "
               f"线程: {onnx_threads}")
@@ -420,7 +399,7 @@ class VisionDetectServer:
 
     # ── 摄像头 ──────────────────────────────────────────────
 
-    def _init_camera(self, camera_id: int | str, cam_cfg: Dict) -> cv2.VideoCapture:
+    def _init_camera(self, camera_id: int, cam_cfg: Dict) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(camera_id)
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg["width"])
@@ -429,11 +408,11 @@ class VisionDetectServer:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened():
-            raise RuntimeError(f"无法打开摄像头 {camera_id}")
+            raise RuntimeError(f"无法打开摄像头 #{camera_id}")
 
         w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        print(f"[INFO] 摄像头 {camera_id}: {w:.0f}x{h:.0f}")
+        print(f"[INFO] 摄像头 #{camera_id}: {w:.0f}x{h:.0f}")
         return cap
 
     # ── 定时器控制 ──────────────────────────────────────────
@@ -730,38 +709,9 @@ def _mem_mb() -> float:
 # 入口
 # ============================================================
 
-def _merge_runtime_config(config_path: str) -> None:
-    """把 YAML 中的 vision_runtime 配置合并到默认配置"""
-
-    if not config_path:
-        return
-    path = os.path.abspath(os.path.expanduser(config_path))
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"视觉运行配置不存在: {path}")
-    data = yaml.safe_load(open(path, encoding="utf-8")) or {}
-    root = data.get("vision_runtime", data)
-    for section in ("paths", "camera", "yolo", "service", "optimization", "display"):
-        values = root.get(section, {}) or {}
-        if not isinstance(values, dict):
-            raise ValueError(f"视觉配置段 {section} 必须是映射")
-        CONFIG.setdefault(section, {}).update(values)
-
-
-def _camera_token(value: str) -> int | str:
-    """把纯数字摄像头参数转换为索引；设备路径保持字符串"""
-
-    token = str(value).strip()
-    if token.lstrip("-").isdigit():
-        return int(token)
-    return token
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="视觉检测服务 (ONNX)")
-    parser.add_argument("--config", type=str, default="", help="视觉运行 YAML 路径")
-    parser.add_argument("--model", type=str, default=None, help="ONNX 模型绝对路径")
-    parser.add_argument("--labels", type=str, default=None, help="类别文件绝对路径")
-    parser.add_argument("--camera", type=str, default=None, help="摄像头 ID 或固定设备路径")
+    parser.add_argument("--camera", type=int, default=0, help="摄像头 ID")
     parser.add_argument("--no-preview", action="store_true", help="关闭 OpenCV 预览窗口，适合树莓派无桌面运行")
     parser.add_argument("--conf", type=float, default=None, help="置信度阈值，覆盖默认配置")
     parser.add_argument("--process-every-n", type=int, default=None, help="每 N 帧推理一次，树莓派上可调大降低负载")
@@ -770,15 +720,7 @@ def main() -> None:
     parser.add_argument("--topic-name", type=str, default=None, help="检测结果话题名，默认 vision_detections")
     args, _ = parser.parse_known_args()
 
-    _merge_runtime_config(args.config)
-
-    # 命令行参数的优先级高于 YAML；便于现场临时覆盖单个参数
-    if args.model is not None:
-        CONFIG["paths"]["model_path"] = args.model
-    if args.labels is not None:
-        CONFIG["paths"]["labels_path"] = args.labels
-    if args.camera is not None:
-        CONFIG["camera"]["device"] = args.camera
+    # 命令行只覆盖运行时需要经常调整的参数，模型路径和类别仍按包内资源查找。
     if args.no_preview:
         CONFIG["display"]["show_preview"] = False
     if args.conf is not None:
@@ -792,12 +734,7 @@ def main() -> None:
     if args.topic_name:
         CONFIG["service"]["topic_name"] = args.topic_name
 
-    camera_value = CONFIG["camera"].get("device", 0)
-    server = VisionDetectServer(
-        camera_id=_camera_token(camera_value),
-        onnx_path=str(CONFIG["paths"].get("model_path", "")),
-        labels_path=str(CONFIG["paths"].get("labels_path", "")),
-    )
+    server = VisionDetectServer(camera_id=args.camera)
     server.spin()
 
 

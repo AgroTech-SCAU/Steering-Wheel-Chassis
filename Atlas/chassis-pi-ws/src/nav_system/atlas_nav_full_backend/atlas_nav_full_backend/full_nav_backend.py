@@ -1,9 +1,9 @@
 """
-Atlas 完整导航后端适配器
+Atlas 完整导航后端适配器。
 
-该节点把 atlas_autonomous_transport_manager 的 StartNavigation/CancelNavigation 服务转换为
-Nav2 NavigateToPose action；这样任务状态机不用直接依赖 Nav2 的 action 细节，
-后续也可以继续保留 pseudo 后端作为无导航实车安全联调方案
+该节点把 atlas_mission_manager 的 StartNavigation/CancelNavigation 服务转换为
+Nav2 NavigateToPose action。这样任务状态机不用直接依赖 Nav2 的 action 细节，
+后续也可以继续保留 pseudo 后端作为无导航实车安全联调方案。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from nav_msgs.msg import Odometry
 
 
 def yaw_to_quaternion(yaw: float) -> Quaternion:
-    """把平面 yaw 角转换为 ROS 四元数"""
+    """把平面 yaw 角转换为 ROS 四元数。"""
     half = 0.5 * float(yaw)
     q = Quaternion()
     q.x = 0.0
@@ -36,19 +36,19 @@ def yaw_to_quaternion(yaw: float) -> Quaternion:
 
 
 def quaternion_to_yaw(q: Quaternion) -> float:
-    """从四元数中提取 yaw；这里只用于 odom 平面位姿"""
+    """从四元数中提取 yaw；这里只用于 odom 平面位姿。"""
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(siny_cosp, cosy_cosp)
 
 
 def normalize_angle(angle: float) -> float:
-    """归一化到 [-pi, pi)，便于日志和状态误差阅读"""
+    """归一化到 [-pi, pi)，便于日志和状态误差阅读。"""
     return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
 
 
 class FullNavBackend(Node):
-    """任务状态机使用的 Nav2 NavigateToPose 后端"""
+    """任务状态机使用的 Nav2 NavigateToPose 后端。"""
 
     def __init__(self) -> None:
         super().__init__('atlas_nav_full_backend')
@@ -104,7 +104,7 @@ class FullNavBackend(Node):
         return float(p.x), float(p.y), yaw
 
     def build_goal_pose(self, request: StartNavigation.Request) -> Optional[PoseStamped]:
-        """根据配置把任务点转换为 Nav2 goal pose"""
+        """根据配置把任务点转换为 Nav2 goal pose。"""
         goal = PoseStamped()
         goal.header.stamp = self.get_clock().now().to_msg()
 

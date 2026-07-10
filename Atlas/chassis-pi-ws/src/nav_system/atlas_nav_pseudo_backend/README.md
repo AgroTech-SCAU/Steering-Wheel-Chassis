@@ -229,5 +229,5 @@ ros2 service call /atlas/navigation/cancel atlas_mission_interfaces/srv/CancelNa
 ```text
 单独测试时伪导航只发布 /atlas/navigation/cmd_vel
 不会直接驱动底盘
-要让底盘真实运动，需要通过 atlas_autonomous_transport_manager 的安全门控转发到 /motor_cmd_vel
+要让底盘真实运动，需要通过 atlas_mission_manager 的安全门控转发到 /motor_cmd_vel
 ```

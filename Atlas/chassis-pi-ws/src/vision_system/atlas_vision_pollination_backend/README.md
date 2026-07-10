@@ -2,7 +2,7 @@
 
 `atlas_vision_pollination_backend` 负责视觉授粉任务
 
-> 当前默认说明：Atlas 总启动文件默认使用 `racom_vision` 作为视觉模型入口；本包中的 `vision_pollination_backend` 承担动作序列、手眼变换、机械臂服务调用和作业状态发布；本包内置的 `atlas_camera_target_service` 在 `manipulation_backend:=vision_pollination` 时作为回退方案使用
+> 当前默认说明：Atlas 总启动文件默认使用 `racom_vision` 作为视觉模型入口。本包中的 `vision_pollination_backend` 仍继续承担动作序列、手眼变换、机械臂服务调用和作业状态发布；本包内置的旧 `atlas_camera_target_service` 只在 `manipulation_backend:=vision_pollination` 时作为回退方案使用。
 
 
 它包含视觉目标 service，预识别动作执行，手眼变换，工具点偏移计算和机械臂授粉序列
@@ -230,7 +230,7 @@ pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
 
 ## 六，PI 端吸盘动作
 
-本包现在可以在动作序列中控制 PI 端末端吸盘；吸盘命令最终由 `mcu_comm_bridge` 转换成 `PI_CONTROL` 的 suction 字段下发给 MCU
+本包现在可以在动作序列中控制 PI 端末端吸盘。吸盘命令最终由 `mcu_comm_bridge` 转换成 `PI_CONTROL` 的 suction 字段下发给 MCU。
 
 独立吸盘步骤：
 
@@ -259,9 +259,9 @@ sequence:
     suction_enable: true
 ```
 
-如果步骤里没有 `suction_enable` 或 `suction` 字段，则该步骤不会改变吸盘状态
+如果步骤里没有 `suction_enable` 或 `suction` 字段，则该步骤不会改变吸盘状态。
 
-默认安全条件由 `mcu_comm_bridge` 控制：`require_auto_pi_for_suction=true` 时，MCU 必须处于 `AutoPi`，否则 `/mcu/set_suction` 会拒绝执行
+默认安全条件由 `mcu_comm_bridge` 控制：`require_auto_pi_for_suction=true` 时，MCU 必须处于 `AutoPi`，否则 `/mcu/set_suction` 会拒绝执行。
 
 ---
 
@@ -288,7 +288,7 @@ arm_base_link 下目标点
 通常由总启动文件启动
 
 ```bash
-ros2 launch robot_startup robot_autonomous_transport.launch.py
+ros2 launch atlas_mission_manager mission_stack.launch.py
 ```
 
 单独启动

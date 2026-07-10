@@ -2,6 +2,7 @@
 
 > 文档定位：本文件是 `PC <-> MCU` 与 `Pi <-> MCU` 的统一协议及行为约束
 >
+> 补充：ASRPRO TWEN51 通过 USB 串口与 PI 通信，只负责语音播报和离线识别，不直接控制 MCU，底盘或机械臂
 
 ---
 
@@ -84,6 +85,58 @@ Pi 检测到 1 -> 0
         ↓
 Pi 清理本地自动任务上下文并产生一次 RESET 事件
 ```
+
+### 2.5 ASRPRO -> Pi
+
+ASRPRO 负责：
+
+1. 开机后通过 USB 串口发送 `HELLO`
+2. 接收 PI 的 `SPEAK` 命令并播放固定语音
+3. 在识别到“阿特拉斯启动”等触发词后发送 `EVENT,ASR,atlas_start`
+4. 不直接控制 MCU，不直接发送底盘或机械臂指令
+
+### 2.6 Pi -> ASRPRO
+
+PI 负责：
+
+1. 回复 `HELLO_ACK`
+2. 通过 `LISTEN,1/0` 控制语音识别窗口
+3. 通过 `SPEAK,phrase_id` 请求固定语音播报
+4. 对 ASRPRO 的 `EVENT` 发送 `EVENT_ACK`
+
+ASRPRO 协议详见 `docs/ASRPRO_TWEN51_通信协议.md`
+
+---
+
+## 2.7 智械争锋全自主任务链路
+
+```text
+MCU AutoPi START
+        ↓
+PI 状态机启动
+        ↓
+ASRPRO 播报“遥操作区任务已完成”
+        ↓
+ASRPRO 等待 atlas_start
+        ↓
+PI 调用 /navigate_to_target
+        ↓
+send_navigation_target 调用 Nav2 NavigateToPose
+        ↓
+rui_vison/ 通过 /vision_detect 返回分类标识
+        ↓
+PI 根据分类结果选择园区航点
+        ↓
+PI 上报 DONE 给 MCU
+```
+
+约束：
+
+1. PI 不主动请求 MCU 进入 AutoPi
+2. PI 不修改遥控器手势语义
+3. 导航内部只由 `robot_startup` 和 `at_nav2` 管理
+4. 状态机只通过 `/navigate_to_target` 调用完整导航
+5. 视觉只使用 `vision_system/rui_vison/`
 
 ---
 

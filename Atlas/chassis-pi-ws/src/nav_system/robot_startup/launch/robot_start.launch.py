@@ -1,4 +1,4 @@
-"""Atlas PI 端整车总启动文件。"""
+"""Atlas PI 端整车总启动文件"""
 
 import os
 
@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 def include_launch(package_name: str, relative_path: str, launch_arguments=None):
@@ -19,29 +20,54 @@ def include_launch(package_name: str, relative_path: str, launch_arguments=None)
 
 
 def generate_launch_description():
-    navigation_backend = LaunchConfiguration('navigation_backend')
-    manipulation_backend = LaunchConfiguration('manipulation_backend')
+    camera = LaunchConfiguration('camera')
+    asrpro_port = LaunchConfiguration('asrpro_port')
 
     return LaunchDescription([
-        DeclareLaunchArgument('navigation_backend', default_value='full', description='任务导航后端：full 或 pseudo'),
-        DeclareLaunchArgument('manipulation_backend', default_value='racom_vision', description='任务作业后端：racom_vision 或 vision_pollination'),
+        DeclareLaunchArgument('camera', default_value='0', description='rui_vison 摄像头 ID'),
+        DeclareLaunchArgument('asrpro_port', default_value='/dev/ttyUSB0', description='ASRPRO TWEN51 USB 串口'),
 
-        # 1. MCU 通信桥：提供 /odom、/imu、/arm/joint_states、/motor_cmd_vel 和机械臂/吸盘服务。
+        # 1. MCU 通信桥：提供 /odom、/imu、/arm/joint_states、/motor_cmd_vel 和机械臂/吸盘服务
         include_launch('mcu_comm_bridge', 'launch/mcu_comm_bridge.launch.py'),
 
-        # 2. 激光雷达驱动：完整导航需要 /scan。
+        # 2. 激光雷达驱动：完整导航需要 /scan
         include_launch('lslidar_driver', 'launch/lsn10p_launch.py'),
 
-        # 3. 机器人模型与静态 TF。
+        # 3. 机器人模型与静态 TF
         include_launch('robot_description', 'launch/robot_description.launch.py'),
 
-        # 4. 任务总栈：内部根据 navigation_backend 启动完整导航或伪导航，默认 full + racom_vision。
+        # 4. 完整导航：直接启动已有 at_nav2，不再经过 atlas_nav_full_backend
         include_launch(
-            'atlas_mission_manager',
-            'launch/mission_stack.launch.py',
+            'at_nav2',
+            'launch/at_nav.launch.py',
+            {'cmd_vel_output': '/motor_cmd_vel'},
+        ),
+
+        # 5. 导航目标发送节点：总控只调用 /navigate_to_target
+        Node(
+            package='send_navigation_target',
+            executable='send_navigation_target',
+            name='send_navigation_target',
+            output='screen',
+        ),
+
+        # 6. rui_vison 视觉检测服务，目录名保持现有拼写 rui_vison/
+        include_launch(
+            'vison_topic',
+            'launch/vision_detect.launch.py',
             {
-                'navigation_backend': navigation_backend,
-                'manipulation_backend': manipulation_backend,
+                'camera': camera,
+                'service_name': 'vision_detect',
+                'topic_name': 'vision_detections',
             },
+        ),
+
+        # 7. 智械争锋全自主运输状态机
+        Node(
+            package='atlas_autonomous_task',
+            executable='autonomous_task_node',
+            name='atlas_autonomous_task',
+            output='screen',
+            parameters=[{'asrpro_port': asrpro_port}],
         ),
     ])

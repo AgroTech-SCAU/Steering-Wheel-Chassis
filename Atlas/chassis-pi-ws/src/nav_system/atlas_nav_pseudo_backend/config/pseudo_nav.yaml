@@ -1,7 +1,7 @@
 # atlas_nav_pseudo_backend 伪导航后端配置
 # 本节点只基于 /odom 做局部定点移动
 # 不使用地图，不避障，不做路径规划
-# 输出速度先到 /atlas/navigation/cmd_vel，再由 atlas_autonomous_transport_manager 安全门控后转发到 /motor_cmd_vel
+# 输出速度先到 /atlas/navigation/cmd_vel，再由 atlas_mission_manager 安全门控后转发到 /motor_cmd_vel
 
 atlas_nav_pseudo_backend:
   ros__parameters:
@@ -15,18 +15,18 @@ atlas_nav_pseudo_backend:
 
     # 导航速度输出话题
     # 不要改成 /motor_cmd_vel
-    # /motor_cmd_vel 只能由 atlas_autonomous_transport_manager 发布
+    # /motor_cmd_vel 只能由 atlas_mission_manager 发布
     cmd_vel_topic: "/atlas/navigation/cmd_vel"
 
     # 导航状态输出话题
     status_topic: "/atlas/navigation/status"
 
     # 启动服务
-    # 每个 waypoint 由 atlas_autonomous_transport_manager 调用一次
+    # 每个 waypoint 由 atlas_mission_manager 调用一次
     start_service: "/atlas/navigation/start"
 
     # 取消服务
-    # RESET，Manual，Fault，EStop 时由 atlas_autonomous_transport_manager 调用
+    # RESET，Manual，Fault，EStop 时由 atlas_mission_manager 调用
     cancel_service: "/atlas/navigation/cancel"
 
     # 控制循环频率

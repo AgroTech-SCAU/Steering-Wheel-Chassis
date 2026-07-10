@@ -182,10 +182,6 @@ class VisionPollinationBackend(Node):
         self.target_thetas: List[float] = []
         self.rotation_at_detection: Optional[np.ndarray] = None
         self.dwell_until: Optional[rclpy.time.Time] = None
-
-        # 记录当前任务实际进入动作序列的视觉目标数量
-        # 全自主运输状态机使用该字段区分成功抓取一个目标和无目标按策略跳过
-        self.detected_target_count = 0
         self.get_logger().info('视觉授粉后端已启动')
 
     def load_config(self, path: str) -> None:
@@ -270,8 +266,6 @@ class VisionPollinationBackend(Node):
             response.success = False
             response.message = '机械臂任务正在执行'
             return response
-        # 每个任务开始时清零目标计数；避免上一任务的识别结果影响当前抓取判断
-        self.detected_target_count = 0
         if not self.joints_fresh():
             response.success = False
             response.message = '没有新鲜机械臂关节状态'
@@ -289,9 +283,7 @@ class VisionPollinationBackend(Node):
         self.current_task = self.arrival_tasks.get(self.arrival_task_name, ArrivalTask())
         if self.current_task.task_type == 'noop':
             self.sequence = []
-        elif self.current_task.task_type in ('visual_pollination_multi', 'visual_target_sequence'):
-            # visual_target_sequence 使用识别目标并展开逐目标动作的执行机制
-            # 适用于齿轮；T 型螺栓等按视觉目标执行动作序列的任务
+        elif self.current_task.task_type == 'visual_pollination_multi':
             self.sequence = self.current_task.sequence or [
                 {'type': 'ensure_prepare_pose', 'name': '到达预识别位姿'},
                 {'type': 'detect_targets', 'name': '识别雌花目标'},
@@ -362,7 +354,7 @@ class VisionPollinationBackend(Node):
             self.succeed('空机械臂任务完成')
             return
         if self.step_index >= len(self.sequence):
-            self.succeed('动作序列完成')
+            self.succeed('授粉序列完成')
             return
         step = self.sequence[self.step_index]
         self.step_name = step.get('name', step.get('type', f'step_{self.step_index}'))
@@ -475,7 +467,7 @@ class VisionPollinationBackend(Node):
 
     @staticmethod
     def apply_suction_fields(req, source: dict) -> None:
-        """把 YAML 步骤中的吸盘控制字段透传到 PI 端机械臂服务"""
+        """把 YAML 步骤中的吸盘控制字段透传到 PI 端机械臂服务。"""
         if not hasattr(req, 'suction_valid') or not isinstance(source, dict):
             return
         if 'suction_enable' in source or 'suction' in source:
@@ -483,7 +475,7 @@ class VisionPollinationBackend(Node):
             req.suction_enable = bool(source.get('suction_enable', source.get('suction', False)))
 
     def start_suction_action(self, step: dict) -> None:
-        """执行独立吸盘步骤，YAML 示例：{type: suction, enable: true}"""
+        """执行独立吸盘步骤，YAML 示例：{type: suction, enable: true}。"""
         if not self.suction_client.service_is_ready():
             self.fail(3015, '吸盘服务未就绪')
             return
@@ -541,7 +533,6 @@ class VisionPollinationBackend(Node):
         self.vision_future = None
         if not resp.success:
             if resp.message == 'NO_TARGET' and self.current_task.empty_target_policy == 'skip':
-                self.detected_target_count = 0
                 self.succeed('视觉返回无目标，按策略跳过该任务')
             else:
                 self.fail(3005, f'视觉失败: {resp.message}')
@@ -559,7 +550,6 @@ class VisionPollinationBackend(Node):
             self.fail(3005, f'视觉目标数量不足，目标数={len(camera_points)}，最小需要={self.current_task.min_targets}')
             return
         if not camera_points:
-            self.detected_target_count = 0
             if self.current_task.empty_target_policy == 'skip':
                 self.succeed('视觉返回空目标列表，按策略跳过该任务')
             else:
@@ -575,7 +565,6 @@ class VisionPollinationBackend(Node):
             target_base = transform_point(t_base_tool0, target_tool0)
             self.target_bases.append(target_base)
         self.target_thetas = [normalize_angle_positive(math.atan2(float(p[1]), float(p[0]))) for p in self.target_bases]
-        self.detected_target_count = len(self.target_bases)
         self.order_dynamic_b_targets()
         self.target_base = self.target_bases[0]
 
@@ -586,7 +575,7 @@ class VisionPollinationBackend(Node):
             f'first_base=[{first_base[0]:.4f} {first_base[1]:.4f} {first_base[2]:.4f}]'
         )
 
-        if self.current_task.task_type in ('visual_pollination_multi', 'visual_target_sequence'):
+        if self.current_task.task_type == 'visual_pollination_multi':
             per_target = self.current_task.per_target_sequence or [
                 {'type': 'joints_action', 'name': '到达预识别位姿', 'action_ref': 'prepare_action'},
                 {'type': 'visual_position', 'name': '到达预授粉位姿', 'tool_point_ref': 'pre_pollination_tool_point_m'},
@@ -702,10 +691,6 @@ class VisionPollinationBackend(Node):
         msg.step_name = self.step_name
         msg.error_code = int(self.error_code)
         msg.message = self.message
-        # target_count 只表示本次任务已确认并进入动作序列的目标数量
-        # noop；固定投放和无目标跳过任务均发布 0；避免任务状态机误判为成功抓取
-        msg.target_count = int(max(0, min(255, self.detected_target_count)))
-        msg.target_found = bool(self.detected_target_count > 0)
         self.status_pub.publish(msg)
 
 

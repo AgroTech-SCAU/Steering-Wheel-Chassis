@@ -6,7 +6,7 @@ mcu_comm_bridge_node:
   ros__parameters:
     # 串口设备
     # 树莓派上可能是 /dev/ttyUSB0，/dev/ttyACM0，或自定义 udev 名称
-    port: "/dev/atlas_mcu"
+    port: "/dev/ttyUSB0"
 
     # 串口波特率
     # 必须和 mcu 端 pi_comms 波特率一致
@@ -79,7 +79,7 @@ mcu_comm_bridge_node:
     publish_tf: true
 
     # 最终底盘速度输入话题
-    # 该话题由 atlas_autonomous_transport_manager 发布
+    # 该话题由 atlas_mission_manager 发布
     cmd_vel_topic: "/motor_cmd_vel"
 
     # 刹车服务名

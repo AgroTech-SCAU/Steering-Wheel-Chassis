@@ -10,16 +10,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MissionStatus.msg"
   "msg/NavigationStatus.msg"
   "msg/ManipulationStatus.msg"
-  "msg/AutonomousTransportStatus.msg"
-  "msg/AsrproStatus.msg"
-  "msg/AsrproEvent.msg"
   "srv/DetectCameraTarget.srv"
-  "srv/ClassifySortingRule.srv"
   "srv/StartNavigation.srv"
   "srv/CancelNavigation.srv"
   "srv/StartManipulation.srv"
   "srv/CancelManipulation.srv"
-  "srv/AsrproSpeak.srv"
   DEPENDENCIES std_msgs geometry_msgs
 )
 

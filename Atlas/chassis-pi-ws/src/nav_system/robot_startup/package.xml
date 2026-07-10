@@ -2,28 +2,20 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>robot_startup</name>
-  <version>0.1.0</version>
-  <description>Atlas 智械争锋全自主运输区统一整车启动入口</description>
-  <maintainer email="3465219188@qq.com">yangxuan</maintainer>
+  <version>0.0.0</version>
+  <description>Top-level bringup launch file composing all AGT competition nodes</description>
+  <maintainer email="1219921425@qq.com">funfun</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <exec_depend>python3-yaml</exec_depend>
-  <exec_depend>launch</exec_depend>
-  <exec_depend>launch_ros</exec_depend>
-  <exec_depend>ament_index_python</exec_depend>
-  <exec_depend>mcu_comm_bridge</exec_depend>
-  <exec_depend>atlas_asrpro_bridge</exec_depend>
-  <exec_depend>lslidar_driver</exec_depend>
-  <exec_depend>robot_description</exec_depend>
   <exec_depend>at_nav2</exec_depend>
-  <exec_depend>atlas_nav_full_backend</exec_depend>
-  <exec_depend>atlas_nav_pseudo_backend</exec_depend>
+  <exec_depend>lslidar_driver</exec_depend>
+  <exec_depend>mcu_comm_bridge</exec_depend>
+  <exec_depend>robot_description</exec_depend>
+  <exec_depend>send_navigation_target</exec_depend>
   <exec_depend>vison_topic</exec_depend>
-  <exec_depend>atlas_racom_vision_backend</exec_depend>
-  <exec_depend>atlas_vision_pollination_backend</exec_depend>
-  <exec_depend>atlas_autonomous_transport_manager</exec_depend>
+  <exec_depend>atlas_autonomous_task</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

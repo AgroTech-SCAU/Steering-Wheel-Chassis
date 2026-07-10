@@ -206,7 +206,7 @@ geometry_msgs/msg/Twist
 ```text
 导航后端不能直接发布 /motor_cmd_vel
 导航后端应发布 /atlas/navigation/cmd_vel
-由 atlas_autonomous_transport_manager 决定是否转发
+由 atlas_mission_manager 决定是否转发
 ```
 
 ## 五，服务接口
@@ -279,7 +279,7 @@ bool suction_valid   # true 表示本次机械臂目标同时携带吸盘命令
 bool suction_enable  # suction_valid=true 时生效
 ```
 
-当 suction_valid=false 时，本帧不改变吸盘状态
+当 suction_valid=false 时，本帧不改变吸盘状态。
 
 ### /mcu/report_mission_result
 

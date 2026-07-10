@@ -1,36 +1,39 @@
-"""RUI 视觉检测服务启动文件"""
+"""RUI 视觉检测服务启动文件
 
-from pathlib import Path
+用法:
+  ros2 launch vison_topic vision_detect.launch.py                  # 默认有预览
+  ros2 launch vison_topic vision_detect.launch.py camera:=2        # 指定摄像头
+"""
 
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-def generate_launch_description() -> LaunchDescription:
-    package_share = Path(get_package_share_directory('vison_topic'))
-    default_config = str(package_share / 'config' / 'vision_runtime.yaml')
+def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('config', default_value=default_config),
-        DeclareLaunchArgument('model', default_value=''),
-        DeclareLaunchArgument('labels', default_value=''),
-        DeclareLaunchArgument('camera', default_value='/dev/atlas_camera'),
-        DeclareLaunchArgument('conf', default_value='0.55'),
-        DeclareLaunchArgument('process_every_n', default_value='2'),
-        DeclareLaunchArgument('rate_hz', default_value='10'),
-        DeclareLaunchArgument('service_name', default_value='vision_detect'),
-        DeclareLaunchArgument('topic_name', default_value='vision_detections'),
+        DeclareLaunchArgument('camera', default_value='0',
+                              description='摄像头 ID'),
+        DeclareLaunchArgument('conf', default_value='0.55',
+                              description='ONNX 检测置信度阈值'),
+        DeclareLaunchArgument('process_every_n', default_value='2',
+                              description='每 N 帧推理一次'),
+        DeclareLaunchArgument('rate_hz', default_value='10',
+                              description='检测定时器频率 Hz'),
+        DeclareLaunchArgument('service_name', default_value='vision_detect',
+                              description='检测启停服务名'),
+        DeclareLaunchArgument('topic_name', default_value='vision_detections',
+                              description='检测结果话题名'),
+        DeclareLaunchArgument('no_preview', default_value='true',
+                              description='是否关闭 OpenCV 预览窗口'),
+
         Node(
             package='vison_topic',
             executable='vision_detect_server',
             name='vision_detect_server',
             output='screen',
             arguments=[
-                '--config', LaunchConfiguration('config'),
-                '--model', LaunchConfiguration('model'),
-                '--labels', LaunchConfiguration('labels'),
                 '--camera', LaunchConfiguration('camera'),
                 '--conf', LaunchConfiguration('conf'),
                 '--process-every-n', LaunchConfiguration('process_every_n'),

@@ -1,6 +1,6 @@
 # at_nav2 - 导航系统核心配置包
 
-> **定位：** Nav2 导航栈的一站式配置 / 启动 / 地图管理包；核心功能三件套：Cartographer 纯定位 + Nav2 导航栈 + 地图管理
+> **定位：** Nav2 导航栈的一站式配置 / 启动 / 地图管理包；核心功能三件套：Cartographer 纯定位 + Nav2 导航栈 + 地图管理。
 > **核心依赖：** `nav2_bringup`, `nav2_planner`, `nav2_controller`, `nav2_costmap_2d`, `cartographer_ros`
 
 ---
@@ -92,7 +92,7 @@ at_nav.launch.py
 ### 关键架构说明
 
 - **不启动 AMCL**：Cartographer 负责 `map -> odom` 的 TF 发布，AMCL 不启动以避免冲突
-- **控制器输出路径**：Nav2 默认发布 `/cmd_vel`，本包启动时 remap 到 `/atlas/navigation/cmd_vel`；随后由 `atlas_autonomous_transport_manager` 做安全门控并转发到 `/motor_cmd_vel`，再由 `mcu_comm_bridge` 下发到底盘；不要让 Nav2 直接发布到 `/motor_cmd_vel`
+- **控制器输出路径**：Nav2 默认发布 `/cmd_vel`，本包启动时 remap 到 `/atlas/navigation/cmd_vel`；随后由 `atlas_mission_manager` 做安全门控并转发到 `/motor_cmd_vel`，再由 `mcu_comm_bridge` 下发到底盘。不要让 Nav2 直接发布到 `/motor_cmd_vel`。
 
 ---
 
@@ -100,14 +100,14 @@ at_nav.launch.py
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `cmd_vel_output` | `/atlas/navigation/cmd_vel` | Nav2 `/cmd_vel` remap 目标，供任务状态机安全门控； |
-| `params_file` | `config/at_nav2_params.yaml` | Nav2 参数文件； |
-| `map` | `maps/ruikang.yaml` | map_server 使用的占据栅格地图； |
-| `pbstream` | `maps/ruikang.pbstream` | Cartographer 纯定位使用的 pbstream； |
+| `cmd_vel_output` | `/atlas/navigation/cmd_vel` | Nav2 `/cmd_vel` remap 目标，供任务状态机安全门控。 |
+| `params_file` | `config/at_nav2_params.yaml` | Nav2 参数文件。 |
+| `map` | `maps/ruikang.yaml` | map_server 使用的占据栅格地图。 |
+| `pbstream` | `maps/ruikang.pbstream` | Cartographer 纯定位使用的 pbstream。 |
 
 ## 6. Nav2 参数详解
 
-所有参数集中在 `config/at_nav2_params.yaml`；以下按子系统分类说明
+所有参数集中在 `config/at_nav2_params.yaml`；以下按子系统分类说明。
 
 ### 5.1 bt_navigator — 行为树导航器
 

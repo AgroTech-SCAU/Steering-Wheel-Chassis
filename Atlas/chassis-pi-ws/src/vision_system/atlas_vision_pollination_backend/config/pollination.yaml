@@ -40,7 +40,7 @@ atlas_vision_pollination_backend:
 
     # PI 端末端吸盘服务
     # 动作序列中可使用 {type: suction, enable: true/false} 单独控制，
-    # 也可在 joints_action / visual_position 步骤中加入 suction_enable 字段随动作一起下发
+    # 也可在 joints_action / visual_position 步骤中加入 suction_enable 字段随动作一起下发。
     suction_service: "/mcu/set_suction"
 
     # 动作配置文件路径

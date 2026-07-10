@@ -1,6 +1,6 @@
 # send_navigation_target
 
-> **定位：** 导航目标发送节点 — 通过 ROS2 服务接口将航点标识（P1-P15）转换为 Nav2 导航目标
+> **定位：** 导航目标发送节点 — 通过 ROS2 服务接口将航点标识（P1-P15）转换为 Nav2 导航目标。
 > **核心依赖：** `rclcpp`, `rclcpp_action`, `nav2_msgs`, `geometry_msgs`
 > **上游：** 总控系统（服务调用方）
 > **下游：** `at_nav2`（NavigateToPose Action Server）
@@ -9,7 +9,7 @@
 
 ## 1. 包概述
 
-`send_navigation_target` 是一个 C++ ROS2 节点，提供 `navigate_to_target` 服务，作为总控系统与 Nav2 导航栈之间的桥梁；总控只需指定目标点标识（如 "P1"），节点自动查表获取完整位姿（含朝向），通过 Nav2 的 `NavigateToPose` Action 发送导航目标，并同步等待导航结果
+`send_navigation_target` 是一个 C++ ROS2 节点，提供 `navigate_to_target` 服务，作为总控系统与 Nav2 导航栈之间的桥梁。总控只需指定目标点标识（如 "P1"），节点自动查表获取完整位姿（含朝向），通过 Nav2 的 `NavigateToPose` Action 发送导航目标，并同步等待导航结果。
 
 ## 2. 工作流程
 
@@ -35,7 +35,7 @@
 | 默认互斥组 | `MutuallyExclusive` | 处理 `navigate_to_target` 服务回调（阻塞等待） |
 | Action 回调组 | `Reentrant` | 处理 `NavigateToPose` Action 的 goal_response / feedback / result 回调 |
 
-通过 `condition_variable` 桥接两个线程组，使服务线程可以同步等待 Action 完成
+通过 `condition_variable` 桥接两个线程组，使服务线程可以同步等待 Action 完成。
 
 ## 4. 包结构
 
@@ -90,7 +90,7 @@ send_navigation_target/
 | P14 | -0.002 | -1.843 | 0.001 | 1.000 |
 | P15 | -0.009 | 0.211 | -0.009 | 1.000 |
 
-> 修改航点：编辑 `send_navigation_target.cpp` 中的 `waypoint_map_` 字典
+> 修改航点：编辑 `send_navigation_target.cpp` 中的 `waypoint_map_` 字典。
 
 ## 7. 运行方式
 
@@ -111,7 +111,7 @@ ros2 run send_navigation_target send_navigation_target
 ### 通过 robot_startup 启动（推荐）
 
 ```bash
-ros2 launch robot_startup robot_autonomous_transport.launch.py
+ros2 launch robot_startup robot_start.launch.py
 ```
 
 ### 调用服务

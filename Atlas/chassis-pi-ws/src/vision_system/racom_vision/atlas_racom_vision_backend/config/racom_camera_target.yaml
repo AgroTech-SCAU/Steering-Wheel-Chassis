@@ -11,15 +11,15 @@ atlas_racom_camera_target_service:
     scan_duration_s: 2.0
     service_timeout_s: 5.0
 
-    # 像素到相机坐标的临时近似映射
-    # 当前 racom_vision 只输出 u/v 像素，没有深度，所以这里需要结合实测标定继续修正
+    # 像素到相机坐标的临时近似映射。
+    # 当前 racom_vision 只输出 u/v 像素，没有深度，所以这里需要结合实测标定继续修正。
     default_depth_m: 0.30
     image_center_u_px: 320.0
     image_center_v_px: 320.0
     pixel_to_meter_x: 0.00050
     pixel_to_meter_y: 0.00050
 
-    # 类别过滤策略：请求 target_class 为空时不过滤；非空时匹配 cls_name 或 cls_id 字符串
+    # 类别过滤策略：请求 target_class 为空时不过滤；非空时匹配 cls_name 或 cls_id 字符串。
     accept_empty_target_class: true
 
     # 返回目标排序：center_first 表示优先选择靠近图像中心的目标

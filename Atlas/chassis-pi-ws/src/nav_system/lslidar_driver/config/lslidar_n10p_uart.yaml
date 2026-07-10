@@ -4,7 +4,7 @@ x10:
       lidar_type: "X10"           # 雷达类型
       lidar_model: "N10Plus"          # 雷达型号 M10 M10GPS M10P N10 N10Plus N301
       # serial_port: ""             # 雷达连接串口名称 使用网口请将值改为空
-      serial_port: "/dev/atlas_lidar"             # 雷达连接串口名称 使用网口请将值改为空
+      serial_port: "/dev/ttyCH343USB0"             # 雷达连接串口名称 使用网口请将值改为空
       device_ip: "192.168.1.200"  # 雷达IP地址
       msop_port: 2368             # 雷达目的数据端口
       difop_port: 2369            # 雷达目的设备端口

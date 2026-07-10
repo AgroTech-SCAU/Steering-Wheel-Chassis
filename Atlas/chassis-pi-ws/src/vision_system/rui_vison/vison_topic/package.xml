@@ -7,15 +7,12 @@
   <maintainer email="yuuy@todo.todo">yuuy</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
-
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>vison_topic_interfaces</depend>
   <depend>python3-opencv</depend>
   <depend>python3-numpy</depend>
-  <exec_depend>python3-yaml</exec_depend>
-  <exec_depend>ament_index_python</exec_depend>
+  <depend>python3-pyyaml</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
