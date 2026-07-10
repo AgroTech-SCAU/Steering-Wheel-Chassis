@@ -55,14 +55,16 @@ Atlas/
 │   │   └── teleop.py              # PC 主臂遥操作脚本
 │   └── README.md
 │
-├── navigation_system/
+├── chassis-pi-ws/src/nav_system/
 │   ├── at_nav2/                   # Nav2 导航栈与 Cartographer 纯定位启动
-│   ├── lslidar_driver/            # LSLIDAR N10P 雷达驱动
-│   ├── lslidar_msgs/              # 雷达消息与服务接口
-│   ├── robot_cartographer_mapping/# Cartographer 建图包
-│   ├── robot_description/         # URDF 模型与 TF 发布
-│   ├── robot_gazebo/              # Gazebo 仿真环境
-│   ├── robot_startup/             # 真机 / 仿真总启动入口
+│   ├── atlas_nav_full_backend/    # 任务状态机使用的完整导航后端适配器
+│   ├── atlas_nav_pseudo_backend/  # 伪导航后端，用于安全联调
+│   └── README.md
+│
+├── chassis-pi-ws/src/vision_system/
+│   ├── racom_vision/              # RACOM 视觉适配层，默认替换旧视觉模型
+│   ├── raicom_vsion/              # 原 RACOM/RAICOM 检测服务源码目录
+│   ├── atlas_vision_pollination_backend/ # 动作序列、手眼变换和作业后端
 │   └── README.md
 │
 ├── docs/
@@ -143,6 +145,7 @@ Pi 端对外提供的主要 ROS2 接口：
 | `/mcu/estop` | `mcu_comm_bridge/srv/Estop` | service | 向 MCU 发送急停事件 |
 | `/mcu/set_yaw_hold` | `std_srvs/srv/SetBool` | service | 开启或关闭 MCU 侧 yaw hold |
 | `/mcu/set_yaw_target` | `mcu_comm_bridge/srv/SetYawTarget` | service | 设置 MCU 侧目标 yaw |
+| `/mcu/set_suction` | `std_srvs/srv/SetBool` | service | PI 端条件控制末端吸盘，默认要求 MCU 处于 AutoPi |
 
 ---
 
@@ -172,7 +175,7 @@ MCU
 
 ### 3.4 ROS2 导航系统
 
-`navigation_system` 是 Atlas 的 ROS2 导航工作区，基于 ROS2 Humble、Cartographer 2D 和 Nav2 构建
+`chassis-pi-ws/src/nav_system` 是 Atlas 的 ROS2 导航与整车启动目录，基于 ROS2 Humble、Cartographer 2D 和 Nav2 构建
 
 它主要负责：
 
@@ -180,8 +183,8 @@ MCU
 - 启动 URDF 模型和 `robot_state_publisher`
 - 使用 Cartographer 进行 2D 建图或纯定位
 - 使用 Nav2 完成全局规划和局部控制
-- 通过 `competition_fsm` 对 Nav2 输出速度进行任务级仲裁
-- 将最终速度指令发布到 `/motor_cmd_vel`
+- 通过 `atlas_mission_manager` 对 Nav2 输出速度进行任务级安全门控
+- 将门控后的最终速度指令发布到 `/motor_cmd_vel`
 
 典型导航控制链路：
 
@@ -197,12 +200,69 @@ chassis-pi-ws
 Cartographer / Nav2
 
 Nav2 controller_server
-  -> /cmd_vel
-competition_fsm
+  -> /cmd_vel remap 到 /atlas/navigation/cmd_vel
+atlas_mission_manager
   -> /motor_cmd_vel
-chassis-pi-ws
+mcu_comm_bridge
   -> PI_CONTROL
 MCU
+```
+
+
+---
+
+### 3.5 当前 PI 端默认任务链路
+
+本版本中，PI 端任务系统默认使用完整导航后端和 `racom_vision`：
+
+```text
+/mcu_comm_bridge
+  -> /odom, /imu, /arm/joint_states, /arm/pose
+
+at_nav2
+  -> Cartographer 纯定位
+  -> Nav2 navigation_launch
+  -> /atlas/navigation/cmd_vel
+
+atlas_nav_full_backend
+  -> /atlas/navigation/start
+  -> Nav2 NavigateToPose
+  -> /atlas/navigation/status
+
+atlas_mission_manager
+  -> 根据任务阶段把 /atlas/navigation/cmd_vel 门控到 /motor_cmd_vel
+
+racom_vision + atlas_racom_vision_backend
+  -> /vision_detect
+  -> /vision/detect_camera_target
+
+atlas_vision_pollination_backend
+  -> 复用原动作序列、手眼变换和机械臂服务
+  -> 必要时通过 /mcu/set_suction 或机械臂服务附带字段控制吸盘
+```
+
+推荐总启动：
+
+```bash
+source ~/chassis-pi-ws/install/setup.bash
+ros2 launch atlas_mission_manager mission_stack.launch.py
+```
+
+可选回退：
+
+```bash
+# 不启动 Nav2，只做任务状态机安全联调
+ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=pseudo
+
+# 回退旧视觉目标服务
+ros2 launch atlas_mission_manager mission_stack.launch.py manipulation_backend:=vision_pollination
+```
+
+PI 端吸盘控制默认要求 MCU 处于 `AutoPi`：
+
+```bash
+ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: true}"
+ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: false}"
 ```
 
 ---
@@ -260,7 +320,7 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-如果修改了 service 文件，例如 `Estop.srv` 或 `SetYawTarget.srv`，建议清理后重新编译：
+如果修改了 service 文件，例如 `Estop.srv`、`SetYawTarget.srv` 或 `SetArmJoints/SetArmPose/SetArmPosition/SetArmOrientation.srv`，建议清理后重新编译：
 
 ```bash
 rm -rf build install log
@@ -268,14 +328,9 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 5.2 导航工作区
+### 5.2 导航与任务包
 
-```bash
-cd ~/AT_Atlas_nav_ws
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
-source install/setup.bash
-```
+导航、任务状态机、视觉适配器和 MCU 通信桥都位于 `chassis-pi-ws/src` 下。常规情况下只需要编译 PI 端工作区即可。
 
 ### 5.3 MCU 工程
 
@@ -421,14 +476,14 @@ python3 teleop.py \
 启动 Gazebo 仿真：
 
 ```bash
-source ~/AT_Atlas_nav_ws/install/setup.bash
+source ~/chassis-pi-ws/install/setup.bash
 ros2 launch robot_gazebo gazebo_sim.launch.py
 ```
 
 启动仿真导航：
 
 ```bash
-source ~/AT_Atlas_nav_ws/install/setup.bash
+source ~/chassis-pi-ws/install/setup.bash
 ros2 launch at_nav2 at_nav_gazebo.launch.py
 ```
 
@@ -437,7 +492,7 @@ ros2 launch at_nav2 at_nav_gazebo.launch.py
 启动仿真或真机传感器后，运行 Cartographer 建图：
 
 ```bash
-source ~/AT_Atlas_nav_ws/install/setup.bash
+source ~/chassis-pi-ws/install/setup.bash
 ros2 launch robot_cartographer_mapping robot_cartographer_mapping_gazebo.launch.py
 ```
 
@@ -462,22 +517,17 @@ ros2 run nav2_map_server map_saver_cli -t map -f map
 - Pi 能打开 MCU 串口
 - 雷达设备已连接
 - 地图文件已放到 `at_nav2/maps/`
-- `competition_fsm` 与 `mission_manager` 在工作区中可用
+- `atlas_mission_manager`、`atlas_nav_full_backend`、`atlas_racom_vision_backend` 在工作区中可用
 - MCU 已进入允许 Pi 控制的 `AutoPi` 状态
 
 启动整车系统：
 
 ```bash
-source ~/AT_Atlas_nav_ws/install/setup.bash
+source ~/chassis-pi-ws/install/setup.bash
 ros2 launch robot_startup robot_start.launch.py
 ```
 
-如果总启动文件尚未纳入 `mcu_comm_bridge`，仍需要单独启动：
-
-```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
-```
+当前 `robot_startup` 已纳入 `mcu_comm_bridge`、雷达、机器人模型和任务总栈。如果只分步调试，可单独启动对应 launch。
 
 ---
 
@@ -498,7 +548,7 @@ ros2 topic list
 /arm/joint_states
 /arm/pose
 /arm/pose_position
-/cmd_vel
+/atlas/navigation/cmd_vel
 /motor_cmd_vel
 /tf
 /tf_static
@@ -597,7 +647,7 @@ ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
 ## 11. 当前注意事项
 
 - `chassis-pi-ws` 默认订阅 `/motor_cmd_vel`，不是 `/cmd_vel`
-- `/cmd_vel` 应先由 `competition_fsm` 仲裁，再输出 `/motor_cmd_vel`
+- 完整任务链路中 Nav2 的 `/cmd_vel` 已 remap 为 `/atlas/navigation/cmd_vel`，再由 `atlas_mission_manager` 门控到 `/motor_cmd_vel`
 - MCU 是否执行 Pi 下发速度，最终由 MCU 状态机决定
 - 普通底盘速度属于周期性控制，使用 topic + `PI_CONTROL`
 - 刹车、急停、yaw hold、yaw target 属于一次性命令，使用 service
@@ -613,8 +663,8 @@ ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
 ### 12.1 启动与集成
 
 - [ ] 将 `mcu_comm_bridge` 正式纳入 `robot_startup/launch/robot_start.launch.py`
-- [ ] 确认 `competition_fsm` 和 `mission_manager` 的源码位置、接口和启动顺序
-- [ ] 明确 `/cmd_vel`、`/motor_cmd_vel` 与底盘执行层之间的完整链路
+- [x] 接入 `atlas_mission_manager`、完整导航后端和 PI 端速度门控
+- [x] 明确 `/cmd_vel`、`/atlas/navigation/cmd_vel`、`/motor_cmd_vel` 与底盘执行层之间的完整链路
 - [ ] 确认真机启动时 `/scan`、`/odom`、`/tf` 均已在 Nav2 启动前可用
 
 ### 12.2 地图与定位
@@ -664,12 +714,12 @@ ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
 
 ## 13. 总结
 
-`Atlas` 当前已经具备 MCU 底盘控制、PC 主臂遥操作、Pi 端通信桥和 ROS2 导航系统四条主线
+`Atlas` 当前已经具备 MCU 底盘控制、PC 主臂遥操作、Pi 端通信桥、完整导航后端、RACOM 视觉适配和任务状态机主线
 
 它的最小闭环目标是打通：
 
 ```text
-MCU -> /odom -> Cartographer / Nav2 -> /cmd_vel -> /motor_cmd_vel -> MCU
+MCU -> /odom -> Cartographer / Nav2 -> /atlas/navigation/cmd_vel -> mission_manager -> /motor_cmd_vel -> MCU
 ```
 
 同时补齐：
@@ -679,3 +729,52 @@ PC teleop -> PC_MASTER_JOINTS -> MCU -> 机械臂执行
 ```
 
 在完成启动整合、地图路径修正、FSM 包确认、通信观测性补强以及真机联调后，`Atlas` 就可以进入更稳定的整车闭环验证阶段
+
+---
+
+## 智械争锋全自主运输区
+
+全自主运输区入口位于：
+
+```text
+chassis-pi-ws/src/app/atlas_autonomous_transport_manager
+```
+
+状态机执行以下闭环：
+
+```text
+中转区播报
+→ 语音启动确认
+→ 智能分拣区分类标识识别
+→ 待派送区识别与抓取
+→ 根据园区映射自主导航
+→ 园区投放
+→ 返回待派送区继续运输
+→ 安全停止并向 MCU 上报结果
+```
+
+整车启动命令：
+
+```bash
+cd ~/Atlas/chassis-pi-ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch robot_startup robot_autonomous_transport.launch.py
+```
+
+场地坐标与机械臂动作位于：
+
+```text
+chassis-pi-ws/src/app/atlas_autonomous_transport_manager/config/autonomous_transport.yaml
+chassis-pi-ws/src/vision_system/atlas_vision_pollination_backend/config/transport_actions.yaml
+chassis-pi-ws/src/vision_system/racom_vision/atlas_racom_vision_backend/config/sorting_rule.yaml
+```
+
+实车标定完成前，`autonomous_transport.yaml` 保持：
+
+```yaml
+calibration_confirmed: false
+```
+
+该门控会阻止状态机进入运动阶段。完成地图坐标、停车方向、机械臂抓取/投放位姿、视觉深度和分类标识左右映射确认后，再将其设为 `true`。

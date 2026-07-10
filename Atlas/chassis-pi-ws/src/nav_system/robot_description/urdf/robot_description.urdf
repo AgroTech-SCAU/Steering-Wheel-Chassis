@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="robot_description">
+
+  <!-- Robot Footprint -->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.033" rpy="0 0 0"/>
+  </joint>
+
+  <!-- base link -->
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.00905791507473457 -0.000488795930540497 0.0640826076248514"
+        rpy="0 0 0" />
+      <mass
+        value="3.02079030126272" />
+      <inertia
+        ixx="0.0047459102901528"
+        ixy="3.51756586633145E-06"
+        ixz="9.25187553131626E-07"
+        iyy="0.00495134636228368"
+        iyz="-1.11927483956347E-07"
+        izz="0.00929793533778467" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- laser link -->
+  <link
+    name="laser">
+    <inertial>
+      <origin
+        xyz="-3.28944182967072E-09 -2.79918769626876E-09 -0.034597418415799"
+        rpy="0 0 0" />
+      <mass
+        value="0.0197577859576288" />
+      <inertia
+        ixx="4.82189534964696E-06"
+        ixy="2.48436928325093E-14"
+        ixz="2.38955057703625E-14"
+        iyy="4.82189520756809E-06"
+        iyz="2.28917153671191E-15"
+        izz="9.36232732215207E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/laser_frame.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.376470588235294 0.376470588235294 0.376470588235294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/laser_frame.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- laser joint -->
+  <joint
+    name="laser_joint"
+    type="fixed">
+    <origin
+      xyz="-0.000482541160108889 0 0.111874126705049"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="laser" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+
+  <!-- LFs link -->
+  <link
+    name="LFs_Link">
+    <inertial>
+      <origin
+        xyz="-3.43181859924213E-06 0.00109461595355642 -0.0424747271155292"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980836134" />
+      <inertia
+        ixx="1.43428504844199E-05"
+        ixy="1.07530266321773E-11"
+        ixz="3.39986697862229E-12"
+        iyy="2.96038470108407E-05"
+        iyz="2.80051423962253E-10"
+        izz="2.00828947865518E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LFs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.949019607843137 0.898039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LFs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- LFs joint -->
+  <joint
+    name="LFs"
+    type="continuous">
+    <origin
+      xyz="0.13238 0.13286 0.055124"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LFs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- LFd link -->
+  <link
+    name="LFd_Link">
+    <inertial>
+      <origin
+        xyz="-1.03712429144753E-06 -4.22896943690254E-05 -0.0180040579132936"
+        rpy="0 0 0" />
+      <mass
+        value="0.0555886189628006" />
+      <inertia
+        ixx="2.17656627943887E-05"
+        ixy="1.87563768432862E-16"
+        ixz="8.87301353584558E-17"
+        iyy="2.17656627947915E-05"
+        iyz="1.05868514442875E-16"
+        izz="3.98658756411664E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LFd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LFd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- LFd joint -->
+  <joint
+    name="LFd"
+    type="continuous">
+    <origin
+      xyz="0 -0.0192000070641395 -0.0549577103053597"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="LFs_Link" />
+    <child
+      link="LFd_Link" />
+    <axis
+      xyz="0 0 -1" />
+  </joint>
+
+  <!-- LRs link -->
+  <link
+    name="LRs_Link">
+    <inertial>
+      <origin
+        xyz="-3.45773536702954E-06 0.00109460811387849 -0.0424747271155197"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980835521" />
+      <inertia
+        ixx="1.43428504843719E-05"
+        ixy="1.07530264428732E-11"
+        ixz="3.39986454052669E-12"
+        iyy="2.96038470107929E-05"
+        iyz="2.80051427479846E-10"
+        izz="2.00828947865514E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LRs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LRs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- LRs joint -->
+  <joint
+    name="LRs"
+    type="continuous">
+    <origin
+      xyz="-0.13335 0.13286 0.055124"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LRs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- LRd link -->
+  <link
+    name="LRd_Link">
+    <inertial>
+      <origin
+        xyz="-1.05702918615225E-06 -4.22896946395625E-05 -0.0180040579107741"
+        rpy="0 0 0" />
+      <mass
+        value="0.0555886189628006" />
+      <inertia
+        ixx="2.17656627948538E-05"
+        ixy="-7.90717223889219E-17"
+        ixz="9.89661937500372E-17"
+        iyy="2.17656627943267E-05"
+        iyz="-8.71922434634148E-18"
+        izz="3.98658756411665E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LRd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.796078431372549 0.823529411764706 0.937254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/LRd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- LRd joint -->
+  <joint
+    name="LRd"
+    type="continuous">
+    <origin
+      xyz="0 -0.0192000149011577 -0.0549577103053588"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="LRs_Link" />
+    <child
+      link="LRd_Link" />
+    <axis
+      xyz="0 0 -1" />
+  </joint>
+
+  <!-- RFs link -->
+  <link
+    name="RFs_Link">
+    <inertial>
+      <origin
+        xyz="3.44283421241376E-06 -0.00109462301503799 -0.0424747271155221"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980835538" />
+      <inertia
+        ixx="1.43428504843731E-05"
+        ixy="1.07530264536241E-11"
+        ixz="-3.39986462854254E-12"
+        iyy="2.96038470107942E-05"
+        iyz="-2.80051427386621E-10"
+        izz="2.00828947865514E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RFs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RFs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- RFs joint -->
+  <joint
+    name="RFs"
+    type="continuous">
+    <origin
+      xyz="0.13238 -0.13286 0.055124"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RFs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- RFd link -->
+  <link
+    name="RFd_Link">
+    <inertial>
+      <origin
+        xyz="1.05702960626064E-06 -4.22896943098171E-05 0.0180040579107738"
+        rpy="0 0 0" />
+      <mass
+        value="0.0555886189628007" />
+      <inertia
+        ixx="2.17656627945638E-05"
+        ixy="2.74003517078324E-16"
+        ixz="-7.01209695758619E-17"
+        iyy="2.17656627946164E-05"
+        iyz="-1.23646991662953E-16"
+        izz="3.98658756411663E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RFd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RFd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- RFd joint -->
+  <joint
+    name="RFd"
+    type="continuous">
+    <origin
+      xyz="0 0.0192000000000008 -0.0549577103053633"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="RFs_Link" />
+    <child
+      link="RFd_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- RRs_Link -->
+  <link
+    name="RRs_Link">
+    <inertial>
+      <origin
+        xyz="3.56441174925726E-06 -0.00113327767047011 -0.0438441812611075"
+        rpy="0 0 0" />
+      <mass
+        value="0.110803165091198" />
+      <inertia
+        ixx="1.37587466407648E-05"
+        ixy="1.07530264549324E-11"
+        ixz="-3.39986463165107E-12"
+        iyy="2.89883861963043E-05"
+        iyz="-2.80051427336613E-10"
+        izz="1.89090821817843E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RRs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RRs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- RRs joint -->
+  <joint
+    name="RRs"
+    type="continuous">
+    <origin
+      xyz="-0.133347475742118 -0.132864934582008 0.0551241267050491"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RRs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+
+  <!-- RRd_Link -->
+  <link
+    name="RRd_Link">
+    <inertial>
+      <origin
+        xyz="1.05702937763796E-06 -4.22896944295686E-05 0.0180040579107738"
+        rpy="0 0 0" />
+      <mass
+        value="0.0555886189628006" />
+      <inertia
+        ixx="2.17656627943621E-05"
+        ixy="-1.53737084532589E-16"
+        ixz="2.70310359630393E-17"
+        iyy="2.17656627948185E-05"
+        iyz="-8.95623799269351E-17"
+        izz="3.98658756411666E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RRd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_description/meshes/RRd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- RRd joint -->
+  <joint
+    name="RRd"
+    type="continuous">
+    <origin
+      xyz="0 0.0192000000000007 -0.0549577103053587"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="RRs_Link" />
+    <child
+      link="RRd_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+</robot>

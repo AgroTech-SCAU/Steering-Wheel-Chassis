@@ -1,0 +1,53 @@
+std_msgs/Header header
+
+# 生命周期状态：描述整套全自主运输任务当前是否等待、运行、上报或需要恢复。
+uint8 STATE_BOOTSTRAP=0
+uint8 STATE_WAIT_MCU_STATUS=1
+uint8 STATE_WAIT_START=2
+uint8 STATE_PRECHECK=3
+uint8 STATE_RUNNING=4
+uint8 STATE_REPORTING_DONE=5
+uint8 STATE_REPORTING_FAIL=6
+uint8 STATE_WAIT_RESET=7
+uint8 STATE_RECOVERY_REQUIRED=8
+uint8 STATE_SHUTTING_DOWN=9
+
+# 任务阶段：描述全自主运输区内部的具体执行位置。
+uint8 STAGE_IDLE=0
+uint8 STAGE_ANNOUNCE_TRANSITION=1
+uint8 STAGE_WAIT_VOICE_START=2
+uint8 STAGE_NAVIGATE_SORTING_AREA=3
+uint8 STAGE_CLASSIFY_SORTING_RULE=4
+uint8 STAGE_NAVIGATE_DISPATCH_AREA=5
+uint8 STAGE_SELECT_CARGO=6
+uint8 STAGE_PICK_CARGO=7
+uint8 STAGE_NAVIGATE_TARGET_PARK=8
+uint8 STAGE_PLACE_CARGO=9
+uint8 STAGE_COMPLETE=10
+uint8 STAGE_FAILED=11
+
+uint8 state
+uint8 stage
+uint32 local_run_id
+bool active
+bool mcu_status_fresh
+bool auto_start_latched
+bool voice_start_received
+bool sorting_rule_confirmed
+
+# 智能分拣规则识别服务返回的置信度，范围 0.0 到 1.0。
+float32 sorting_rule_confidence
+string park_1_cargo
+string park_2_cargo
+string current_cargo
+string current_waypoint
+uint8 delivered_total
+uint8 delivered_gear
+uint8 delivered_t_bolt
+uint8 attempted_pick_count
+float32 elapsed_s
+float32 remaining_s
+int32 error_code
+string state_name
+string stage_name
+string message

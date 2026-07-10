@@ -1,0 +1,29 @@
+atlas_sorting_rule_service:
+  ros__parameters:
+    # 全自主运输状态机调用的分类规则服务。
+    service_name: "/vision/classify_sorting_rule"
+
+    # RACOM 视觉检测启停服务。
+    vision_detect_service: "/vision_detect"
+
+    # 每个样本的检测窗口和样本数量。
+    scan_duration_s: 0.8
+    sample_count: 3
+    service_timeout_s: 3.0
+
+    # 相机位于智能分拣区识别位姿时，画面左槽位和右槽位分别对应哪个园区。
+    # 相机安装方向或停车方向确定后，需要在实车上复核这两个参数。
+    left_slot_park: "park_1"
+    right_slot_park: "park_2"
+
+    # 单类别互补推断使用的图像中心和中心死区。
+    # 当前 RACOM 检测输入宽度为 640 像素，因此中心填写 320。
+    image_center_u_px: 320.0
+    center_deadband_px: 20.0
+
+    # 模型类别名称到比赛货物类别的映射。
+    gear_aliases: ["gear", "chilun", "齿轮", "1"]
+    t_bolt_aliases: ["t_bolt", "t-bolt", "bolt", "luosi", "螺栓", "0"]
+
+    # 规则只包含齿轮和 T 型螺栓。识别到其中一类时允许推断另一类。
+    allow_complement_inference: true

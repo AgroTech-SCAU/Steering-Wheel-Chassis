@@ -112,6 +112,13 @@ static AppControlResult app_control_result_from_chassis(ChassisErrorCode status,
 static AppControlResult app_control_result_from_arm(ArmStatus arm_status, SuctionResult suction_result, const char* action);
 
 /**
+ * @brief 根据 PI_CONTROL 中的吸盘标志决定是否更新末端吸盘
+ * @param control PI 端机械臂控制命令
+ * @return SuctionResult 吸盘执行结果；未携带吸盘命令时返回 OK
+ */
+static SuctionResult app_control_apply_pi_suction_from_arm(const PiCommsArmControl* control);
+
+/**
  * @brief 对浮点值做绝对值限幅
  * @param value 输入值
  * @param limit 绝对值上限
@@ -410,6 +417,14 @@ static AppControlResult app_control_result_from_arm(ArmStatus arm_status, Suctio
         log_warn("APP_CONTROL %s failed: suction not initialized", action);
     }
     return APP_CONTROL_RESULT_ARM_ERROR;
+}
+
+static SuctionResult app_control_apply_pi_suction_from_arm(const PiCommsArmControl* control) {
+    if(control == NULL || !control->suction_valid) {
+        return SUCTION_RESULT_OK;
+    }
+
+    return suction_set(control->suction_enable);
 }
 
 static float app_control_limit_abs(float value, float limit) {
@@ -759,7 +774,15 @@ static AppControlResult app_control_apply_pi_yaw(void) {
 static AppControlResult app_control_apply_pi_arm(void) {
     PiCommsArmAction action;
     PiCommsArmControl cmd;
+    PiCommsSuctionControl suction_cmd;
     float speed_rad_s;
+
+    if(pi_comms_take_suction_control(&suction_cmd)) {
+        if(!suction_cmd.valid) {
+            return APP_CONTROL_RESULT_SKIPPED;
+        }
+        return app_control_result_from_arm(ARM_OK, suction_set(suction_cmd.enable), "pi suction set");
+    }
 
     if(pi_comms_take_arm_action(&action)) {
         if(!arm.is_ready()) {
@@ -806,7 +829,9 @@ static AppControlResult app_control_apply_pi_arm(void) {
     switch(cmd.mode) {
         case PI_COMMS_ARM_MODE_JOINTS:
             if(app_control_arm_joints_valid(&cmd.target.joints)) {
-                return app_control_result_from_arm(arm.move_joints(&cmd.target.joints, speed_rad_s), suction_set(false), "pi arm move_joints");
+                return app_control_result_from_arm(arm.move_joints(&cmd.target.joints, speed_rad_s),
+                                                   app_control_apply_pi_suction_from_arm(&cmd),
+                                                   "pi arm move_joints");
             }
             break;
 
@@ -818,7 +843,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                                                                     cmd.target.pose_5d.pitch,
                                                                     cmd.target.pose_5d.yaw,
                                                                     speed_rad_s),
-                                                   suction_set(false),
+                                                   app_control_apply_pi_suction_from_arm(&cmd),
                                                    "pi arm move_pose_5d");
             }
             break;
@@ -829,7 +854,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                                                                      cmd.target.position.y,
                                                                      cmd.target.position.z,
                                                                      speed_rad_s),
-                                                   suction_set(false),
+                                                   app_control_apply_pi_suction_from_arm(&cmd),
                                                    "pi arm move_position");
             }
             break;
@@ -839,7 +864,7 @@ static AppControlResult app_control_apply_pi_arm(void) {
                 return app_control_result_from_arm(arm.move_orientation_2d(cmd.target.orientation_2d.pitch,
                                                                            cmd.target.orientation_2d.yaw,
                                                                            speed_rad_s),
-                                                   suction_set(false),
+                                                   app_control_apply_pi_suction_from_arm(&cmd),
                                                    "pi arm move_orientation_2d");
             }
             break;

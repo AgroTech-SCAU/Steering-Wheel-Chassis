@@ -1,0 +1,124 @@
+# atlas_nav_pseudo_backend 伪导航后端配置
+# 本节点只基于 /odom 做局部定点移动
+# 不使用地图，不避障，不做路径规划
+# 输出速度先到 /atlas/navigation/cmd_vel，再由 atlas_mission_manager 安全门控后转发到 /motor_cmd_vel
+
+atlas_nav_pseudo_backend:
+  ros__parameters:
+    # 后端名称
+    # 必须和 mission_manager.yaml 中 navigation_backend 一致
+    backend_name: "pseudo"
+
+    # 里程计输入话题
+    # 来源是 mcu_comm_bridge 发布的 MCU_ODOM
+    odom_topic: "/odom"
+
+    # 导航速度输出话题
+    # 不要改成 /motor_cmd_vel
+    # /motor_cmd_vel 只能由 atlas_mission_manager 发布
+    cmd_vel_topic: "/atlas/navigation/cmd_vel"
+
+    # 导航状态输出话题
+    status_topic: "/atlas/navigation/status"
+
+    # 启动服务
+    # 每个 waypoint 由 atlas_mission_manager 调用一次
+    start_service: "/atlas/navigation/start"
+
+    # 取消服务
+    # RESET，Manual，Fault，EStop 时由 atlas_mission_manager 调用
+    cancel_service: "/atlas/navigation/cancel"
+
+    # 控制循环频率
+    # mcu 的 PI_CONTROL 推荐 20 Hz 到 50 Hz
+    # 这里保持 50 Hz，便于和 mcu_comm_bridge 的 50 Hz 底盘控制帧对齐
+    control_rate_hz: 50.0
+
+    # odom 最大允许延迟
+    # 超过该时间认为里程计失效，立即失败并输出零速
+    odom_timeout_s: 0.30
+
+    # waypoint 默认超时时间
+    # StartNavigation 请求中的 timeout_s 小于等于 0 时使用该值
+    default_waypoint_timeout_s: 20.0
+
+    # 控制模式
+    # s_curve_tracking: 贴近旧 MCU 的 task_nav_control_follow_s_curve
+    # p_slowdown: 保留上一版纯 P + 减速区控制，必要时回退使用
+    control_mode: "s_curve_tracking"
+
+    # 速度坐标语义
+    # odom_aligned: 直接输出 S 曲线算出的平面 vx/vy，尽量贴近旧 MCU 代码
+    # body: 将平面速度旋转到当前车体坐标系后输出
+    velocity_frame: "odom_aligned"
+
+    # 到点模式
+    # position_brake_hold: 位置到阈值后零速保持 brake_hold_s，再发布 SUCCEEDED
+    # position_velocity_settle: 速度稳定判定模式
+    arrival_mode: "position_brake_hold"
+
+    # 是否要求 yaw 也进入阈值后才算到点
+    require_yaw_reached: false
+
+    # 每个点默认按 1 秒轨迹完成，短距离点不会因为纯 P 减速而蠕动
+    s_curve_reach_time_s: 1.0
+
+    # S 曲线两端加减速比例
+    s_curve_accel_ratio: 0.05
+
+    # 轨迹跟踪 P 修正，越大越贴近期望轨迹，但过大可能抖动
+    s_curve_track_kp: 4.0
+
+    # 速度上限 = 段巡航速度 + 该裕量
+    s_curve_speed_margin_m_s: 0.04
+
+    # 最大平移速度，单位 m/s
+    # S 曲线速度上限还会受该值限制
+    max_linear_speed_m_s: 1.0
+
+    # 最大角速度，单位 rad/s
+    # 当前主要用于保持起始 yaw，默认不参与到点判定
+    max_angular_speed_rad_s: 0.40
+
+    # 偏航比例系数
+    kp_yaw: 1.5
+
+    # 到点位置阈值，单位 m
+    position_tolerance_m: 0.005
+
+    # 到点角度阈值，单位 rad
+    yaw_tolerance_rad: 0.08
+
+    # 到点后零速保持时间，单位 s
+    brake_hold_s: 0.30
+
+    # 到点后最大刹停等待时间，单位 s
+    brake_timeout_s: 1.50
+
+    # 导航运行时调试日志周期，单位 s
+    # 会打印 dist、yaw_err、cmd 和 control_mode，便于判断是否方向反了或速度太小
+    debug_log_period_s: 1.0
+
+    # 平面位置比例系数
+    kp_xy: 0.8
+
+    # 最大线加速度，单位 m/s^2
+    max_linear_accel_m_s2: 0.30
+
+    # 最大角加速度，单位 rad/s^2
+    max_angular_accel_rad_s2: 0.80
+
+    # 减速距离，单位 m
+    slowdown_distance_m: 0.25
+
+    # 稳定判定线速度阈值，单位 m/s
+    settle_linear_speed_m_s: 0.015
+
+    # 稳定判定角速度阈值，单位 rad/s
+    settle_angular_speed_rad_s: 0.03
+
+    # 稳定保持时间，单位 s
+    settle_duration_s: 0.50
+
+    # 到点后等待稳定的最大时间，单位 s
+    settle_timeout_s: 5.0

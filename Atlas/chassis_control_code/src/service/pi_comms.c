@@ -48,6 +48,9 @@ static PiCommsYawAction s_pi_comms_yaw_action = { 0 };
 static PiCommsArmControl s_pi_comms_arm_control = { 0 };
 static uint32_t s_pi_comms_arm_control_rx_ms = 0u;
 static bool s_pi_comms_arm_control_pending = false;
+static PiCommsSuctionControl s_pi_comms_suction_control = { 0 };
+static uint32_t s_pi_comms_suction_control_rx_ms = 0u;
+static bool s_pi_comms_suction_control_pending = false;
 static bool s_pi_comms_arm_command_seq_valid = false;
 static bool s_pi_comms_arm_command_seq_consumed = false;
 static uint16_t s_pi_comms_arm_command_seq = 0u;
@@ -114,6 +117,9 @@ PiCommsStatus pi_comms_init(const PiCommsConfig* config) {
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
     pi_comms_reset_arm_control_state();
+    memset(&s_pi_comms_suction_control, 0, sizeof(s_pi_comms_suction_control));
+    s_pi_comms_suction_control_rx_ms = 0u;
+    s_pi_comms_suction_control_pending = false;
     memset(&s_pi_comms_arm_action, 0, sizeof(s_pi_comms_arm_action));
     memset(&s_pi_comms_estop_event, 0, sizeof(s_pi_comms_estop_event));
     memset(&s_pi_comms_mission_event, 0, sizeof(s_pi_comms_mission_event));
@@ -184,7 +190,8 @@ bool pi_comms_is_online(void) {
 
 bool pi_comms_control_is_fresh(uint32_t timeout_ms) {
     return pi_comms_chassis_control_is_fresh(timeout_ms) ||
-           pi_comms_arm_control_is_fresh(timeout_ms);
+           pi_comms_arm_control_is_fresh(timeout_ms) ||
+           pi_comms_suction_control_is_fresh(timeout_ms);
 }
 
 bool pi_comms_get_control(PiCommsControl* control) {
@@ -196,8 +203,10 @@ bool pi_comms_get_control(PiCommsControl* control) {
     pi_comms_init_arm_control(&control->arm);
     control->chassis = s_pi_comms_chassis_control;
     control->arm = s_pi_comms_arm_control;
+    control->suction = s_pi_comms_suction_control;
     return control->chassis.stamp_ms != 0u ||
-           control->arm.stamp_ms != 0u;
+           control->arm.stamp_ms != 0u ||
+           control->suction.stamp_ms != 0u;
 }
 
 bool pi_comms_get_chassis_control(PiCommsChassisControl* control) {
@@ -216,6 +225,35 @@ bool pi_comms_get_arm_control(PiCommsArmControl* control) {
 
     *control = s_pi_comms_arm_control;
     return true;
+}
+
+bool pi_comms_get_suction_control(PiCommsSuctionControl* control) {
+    if(control == NULL || s_pi_comms_suction_control.stamp_ms == 0u) {
+        return false;
+    }
+
+    *control = s_pi_comms_suction_control;
+    return true;
+}
+
+bool pi_comms_suction_control_is_fresh(uint32_t timeout_ms) {
+    return s_pi_comms_suction_control.stamp_ms != 0u &&
+           (pi_comms_now_ms() - s_pi_comms_suction_control_rx_ms) <= timeout_ms;
+}
+
+bool pi_comms_take_suction_control(PiCommsSuctionControl* control) {
+    if(control == NULL || !s_pi_comms_suction_control_pending) {
+        return false;
+    }
+
+    *control = s_pi_comms_suction_control;
+    s_pi_comms_suction_control_pending = false;
+    log_info("PI_COMMS suction control consumed: enable=%u", control->enable ? 1u : 0u);
+    return true;
+}
+
+bool pi_comms_has_pending_suction_control(void) {
+    return s_pi_comms_suction_control_pending;
 }
 
 bool pi_comms_chassis_control_is_fresh(uint32_t timeout_ms) {
@@ -427,6 +465,9 @@ void pi_comms_clear_controls(void) {
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
     pi_comms_reset_arm_control_state();
+    memset(&s_pi_comms_suction_control, 0, sizeof(s_pi_comms_suction_control));
+    s_pi_comms_suction_control_rx_ms = 0u;
+    s_pi_comms_suction_control_pending = false;
     memset(&s_pi_comms_arm_action, 0, sizeof(s_pi_comms_arm_action));
     memset(&s_pi_comms_mission_event, 0, sizeof(s_pi_comms_mission_event));
 }
@@ -842,6 +883,15 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
         s_pi_comms_chassis_control.stamp_ms = now_ms;
     }
 
+    if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_SUCTION_VALID) != 0u) {
+        s_pi_comms_suction_control.valid = true;
+        s_pi_comms_suction_control.enable = payload[36] ? true : false;
+        s_pi_comms_suction_control.stamp_ms = binary_frame_read_u32_le(&payload[0]);
+        s_pi_comms_suction_control_rx_ms = now_ms;
+        s_pi_comms_suction_control_pending = true;
+        log_info("PI_COMMS suction control received: enable=%u", s_pi_comms_suction_control.enable ? 1u : 0u);
+    }
+
     if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_ARM_VALID) != 0u) {
         if(!pi_comms_arm_mode_from_wire(payload[5], &parsed_arm.mode)) {
             pi_comms_warn_limited("PI_COMMS control dropped: unsupported arm mode");
@@ -850,6 +900,8 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
             parsed_arm.command_seq = binary_frame_read_u16_le(&payload[6]);
             parsed_arm.stamp_ms = binary_frame_read_u32_le(&payload[0]);
             parsed_arm.speed_rad_s = binary_frame_mrad_to_rad(binary_frame_read_u16_le(&payload[34]));
+            parsed_arm.suction_valid = (control_mask & BINARY_FRAME_PI_CONTROL_MASK_SUCTION_VALID) != 0u;
+            parsed_arm.suction_enable = payload[36] ? true : false;
 
             switch(parsed_arm.mode) {
                 case PI_COMMS_ARM_MODE_JOINTS:

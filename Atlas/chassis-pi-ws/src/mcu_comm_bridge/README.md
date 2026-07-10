@@ -24,6 +24,7 @@
 发布 /arm/pose_position
 订阅 /motor_cmd_vel 并发送 PI_CONTROL 底盘部分
 提供机械臂目标服务并发送 PI_CONTROL arm 部分
+提供 PI 端末端吸盘服务并发送 PI_CONTROL suction 部分
 提供任务结果服务并发送 PI_MISSION_EVENT
 提供急停服务并发送 PI_ESTOP
 发送 PI_HEARTBEAT
@@ -248,6 +249,38 @@ geometry_msgs/msg/Twist
 上层必须通过 /arm/pose_position 判断是否到位
 ```
 
+### /mcu/set_suction
+
+类型
+
+```text
+std_srvs/srv/SetBool
+```
+
+用途
+
+```text
+PI 端显式控制末端吸盘
+data=true  打开吸盘
+data=false 关闭吸盘
+```
+
+约束
+
+```text
+默认 require_auto_pi_for_suction=true，只有 MCU 处于 AutoPi 时服务才会下发吸盘命令
+如果只是台架调试吸盘，可在 mcu_comm_bridge.yaml 中临时改成 false
+```
+
+机械臂目标服务的请求中也新增了两个字段：
+
+```text
+bool suction_valid   # true 表示本次机械臂目标同时携带吸盘命令
+bool suction_enable  # suction_valid=true 时生效
+```
+
+当 suction_valid=false 时，本帧不改变吸盘状态。
+
 ### /mcu/report_mission_result
 
 用途
@@ -291,6 +324,8 @@ config/mcu_comm_bridge.yaml
 | `cmd_vel_timeout_ms` | 底盘速度超时时间 |
 | `control_rate_hz` | PI_CONTROL 发送频率 |
 | `arm_command_repeat_count` | 机械臂目标重复发送次数 |
+| `suction_service` | PI 端末端吸盘服务名 |
+| `require_auto_pi_for_suction` | 是否要求 AutoPi 才允许吸盘服务生效 |
 | `mission_event_repeat_count` | DONE 或 FAIL 重复发送次数 |
 | `auto_ack_start_sensor_event` | 是否自动确认未来启动传感器事件 |
 
@@ -328,4 +363,11 @@ ros2 topic echo /arm/pose_position
 
 ```bash
 ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: true}"
+```
+
+确认 PI 端吸盘服务
+
+```bash
+ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: true}"
+ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: false}"
 ```

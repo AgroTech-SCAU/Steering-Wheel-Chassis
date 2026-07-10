@@ -74,12 +74,21 @@ typedef struct {
     } target;
     float speed_rad_s;
     uint16_t command_seq;
+    bool suction_valid;
+    bool suction_enable;
     uint32_t stamp_ms;
 } PiCommsArmControl;
 
 typedef struct {
+    bool valid;
+    bool enable;
+    uint32_t stamp_ms;
+} PiCommsSuctionControl;
+
+typedef struct {
     PiCommsChassisControl chassis;
     PiCommsArmControl arm;
+    PiCommsSuctionControl suction;
 } PiCommsControl;
 
 typedef enum {
@@ -276,6 +285,10 @@ bool pi_comms_chassis_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_arm_control_is_fresh(uint32_t timeout_ms);
 bool pi_comms_take_arm_control(PiCommsArmControl* control);
 bool pi_comms_has_pending_arm_control(void);
+bool pi_comms_get_suction_control(PiCommsSuctionControl* control);
+bool pi_comms_suction_control_is_fresh(uint32_t timeout_ms);
+bool pi_comms_take_suction_control(PiCommsSuctionControl* control);
+bool pi_comms_has_pending_suction_control(void);
 bool pi_comms_take_yaw_action(PiCommsYawAction* action);
 bool pi_comms_take_arm_action(PiCommsArmAction* action);
 bool pi_comms_has_pending_arm_action(void);

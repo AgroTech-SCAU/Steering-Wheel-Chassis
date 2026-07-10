@@ -327,12 +327,14 @@ Payload length: 38 bytes
 
 1. 底盘连续控制
 2. 机械臂离散目标命令
+3. PI 端末端吸盘条件控制
 
-二者消费语义不同：
+三者消费语义不同：
 
 ```text
 chassis 部分：get + fresh timeout
 arm 部分：command_seq 去重 + take/consume
+suction 部分：显式 suction_valid 才消费；可独立控制，也可随 arm 目标同帧下发
 ```
 
 #### 7.2.1 固定头部和底盘字段
@@ -348,7 +350,8 @@ arm 部分：command_seq 去重 + take/consume
 | 12 | 2 | `int16_t` | `wz_mrad_s` | `mrad/s` |
 | 14 | 20 | union | `arm_target[5]` | 由 `arm_mode` 决定 |
 | 34 | 2 | `uint16_t` | `arm_speed_mrad_s` | `mrad/s` |
-| 36 | 2 | `uint16_t` | `reserved2` | 必须填 0 |
+| 36 | 1 | `uint8_t` | `suction_enable` | `control_mask.bit2=1` 时有效，0=关闭，1=打开 |
+| 37 | 1 | `uint8_t` | `reserved` | 必须填 0 |
 
 `control_mask`：
 
@@ -356,15 +359,17 @@ arm 部分：command_seq 去重 + take/consume
 |---:|---|---|
 | bit0 | `chassis_valid` | 本帧更新底盘控制缓存 |
 | bit1 | `arm_valid` | 本帧包含机械臂目标 |
-| bit2 | reserved | 必须为 0 |
+| bit2 | `suction_valid` | 本帧包含 PI 端末端吸盘命令 |
 | bit3 | `brake_request` | 请求底盘刹车 |
 | bit4 ~ bit7 | reserved | 必须为 0 |
 
 注意：
 
 1. `arm_valid` 不只表示关节角，也可表示末端 Pose、位置或姿态目标
-2. 某个 valid bit 为 0，不表示清除该部分旧缓存
-3. 旧缓存是否失效由 fresh timeout 或状态切换清理决定
+2. `suction_valid=0` 表示本帧不改变吸盘状态，不再强制关闭吸盘
+3. `suction_valid=1` 且 `arm_valid=0` 时表示独立吸盘命令；`suction_valid=1` 且 `arm_valid=1` 时表示机械臂目标附带吸盘命令
+4. 某个 valid bit 为 0，不表示清除该部分旧缓存
+5. 旧缓存是否失效由 fresh timeout 或状态切换清理决定
 
 #### 7.2.2 arm_mode
 

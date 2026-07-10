@@ -54,6 +54,7 @@ using SteadyClock = std::chrono::steady_clock;
 
 constexpr uint8_t PI_CONTROL_MASK_CHASSIS_VALID = 1u << 0;
 constexpr uint8_t PI_CONTROL_MASK_ARM_VALID = 1u << 1;
+constexpr uint8_t PI_CONTROL_MASK_SUCTION_VALID = 1u << 2;
 constexpr uint8_t PI_CONTROL_MASK_BRAKE_REQUEST = 1u << 3;
 constexpr uint8_t PI_ARM_MODE_NONE = 0u;
 constexpr uint8_t PI_ARM_MODE_JOINTS = 1u;
@@ -123,6 +124,8 @@ struct ArmCommandCache {
     uint16_t arm_speed_mrad_s = 0u;
     uint16_t command_seq = 0u;
     int repeats_remaining = 0;
+    bool suction_valid = false;
+    bool suction_enable = false;
     bool has_command = false;
 };
 
@@ -478,6 +481,7 @@ private:
         auto_task_event_topic_ = declare_parameter<std::string>("auto_task_event_topic", "/mcu/auto_task_event");
         cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/motor_cmd_vel");
         brake_service_ = declare_parameter<std::string>("brake_service", "/mcu/set_brake");
+        suction_service_ = declare_parameter<std::string>("suction_service", "/mcu/set_suction");
         estop_service_ = declare_parameter<std::string>("estop_service", "/mcu/estop");
         arm_joints_service_ = declare_parameter<std::string>("arm_joints_service", "/mcu/set_arm_joints");
         arm_pose_service_ = declare_parameter<std::string>("arm_pose_service", "/mcu/set_arm_pose");
@@ -501,6 +505,7 @@ private:
         arm_command_repeat_count_ = declare_parameter<int>("arm_command_repeat_count", 3);
         mission_event_repeat_count_ = read_repeat_count("mission_event_repeat_count", 3, 10);
         repeat_estop_count_ = declare_parameter<int>("repeat_estop_count", 3);
+        require_auto_pi_for_suction_ = declare_parameter<bool>("require_auto_pi_for_suction", true);
     }
 
     double read_positive_rate(const char* name, double fallback) {
@@ -561,6 +566,13 @@ private:
             [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
                     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
                 handle_set_brake(request, response);
+            });
+
+        suction_srv_ = create_service<std_srvs::srv::SetBool>(
+            suction_service_,
+            [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                    std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+                handle_set_suction(request, response);
             });
 
         arm_joints_srv_ = create_service<::mcu_comm_bridge::srv::SetArmJoints>(
@@ -1208,6 +1220,30 @@ private:
         response->message = "brake latch disabled";
     }
 
+    bool pi_suction_allowed() {
+        if(!require_auto_pi_for_suction_) {
+            return true;
+        }
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        return has_status_ && latest_status_.app_state == ::mcu_comm_bridge::msg::McuStatus::STATE_AUTO_PI;
+    }
+
+    void handle_set_suction(
+        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+        std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+        if(!pi_suction_allowed()) {
+            response->success = false;
+            response->message = "suction rejected: MCU is not in AutoPi";
+            RCLCPP_WARN(get_logger(), "PI suction command rejected: MCU is not in AutoPi");
+            return;
+        }
+
+        const bool sent = send_pi_control(nullptr, nullptr, false, request->data);
+        response->success = sent;
+        response->message = sent ? "suction command sent" : "failed to send suction command";
+        RCLCPP_INFO(get_logger(), "PI suction command %s", request->data ? "ON" : "OFF");
+    }
+
     uint16_t allocate_arm_command_seq() {
         const uint16_t seq = next_arm_command_seq_;
         next_arm_command_seq_ = static_cast<uint16_t>(next_arm_command_seq_ + 1u);
@@ -1217,13 +1253,17 @@ private:
     bool queue_arm_command(uint8_t arm_mode,
                            const std::array<int32_t, 5>& arm_target,
                            uint16_t arm_speed_mrad_s,
-                           uint16_t command_seq) {
+                           uint16_t command_seq,
+                           bool suction_valid,
+                           bool suction_enable) {
         std::lock_guard<std::mutex> lock(control_mutex_);
         arm_command_cache_.arm_mode = arm_mode;
         arm_command_cache_.arm_target = arm_target;
         arm_command_cache_.arm_speed_mrad_s = arm_speed_mrad_s;
         arm_command_cache_.command_seq = command_seq;
         arm_command_cache_.repeats_remaining = std::max(1, arm_command_repeat_count_);
+        arm_command_cache_.suction_valid = suction_valid;
+        arm_command_cache_.suction_enable = suction_enable;
         arm_command_cache_.has_command = true;
         return true;
     }
@@ -1252,7 +1292,7 @@ private:
         }
 
         response->command_seq = allocate_arm_command_seq();
-        queue_arm_command(PI_ARM_MODE_JOINTS, target, speed_mrad_s, response->command_seq);
+        queue_arm_command(PI_ARM_MODE_JOINTS, target, speed_mrad_s, response->command_seq, request->suction_valid, request->suction_enable);
         response->success = true;
         response->message = "arm joints command queued for transmission";
         RCLCPP_INFO(get_logger(),
@@ -1288,7 +1328,7 @@ private:
         }
 
         response->command_seq = allocate_arm_command_seq();
-        queue_arm_command(PI_ARM_MODE_POSE_5D, target, speed_mrad_s, response->command_seq);
+        queue_arm_command(PI_ARM_MODE_POSE_5D, target, speed_mrad_s, response->command_seq, request->suction_valid, request->suction_enable);
         response->success = true;
         response->message = "arm pose command queued for transmission";
         RCLCPP_INFO(get_logger(),
@@ -1322,7 +1362,7 @@ private:
         }
 
         response->command_seq = allocate_arm_command_seq();
-        queue_arm_command(PI_ARM_MODE_POSITION, target, speed_mrad_s, response->command_seq);
+        queue_arm_command(PI_ARM_MODE_POSITION, target, speed_mrad_s, response->command_seq, request->suction_valid, request->suction_enable);
         response->success = true;
         response->message = "arm position command queued for transmission";
         RCLCPP_INFO(get_logger(),
@@ -1353,7 +1393,7 @@ private:
         }
 
         response->command_seq = allocate_arm_command_seq();
-        queue_arm_command(PI_ARM_MODE_ORIENTATION_2D, target, speed_mrad_s, response->command_seq);
+        queue_arm_command(PI_ARM_MODE_ORIENTATION_2D, target, speed_mrad_s, response->command_seq, request->suction_valid, request->suction_enable);
         response->success = true;
         response->message = "arm orientation command queued for transmission";
         RCLCPP_INFO(get_logger(),
@@ -1617,7 +1657,8 @@ private:
 
     bool send_pi_control(const geometry_msgs::msg::Twist* cmd,
                          const ArmCommandCache* arm_command,
-                         bool brake_request) {
+                         bool brake_request,
+                         std::optional<bool> suction_request = std::nullopt) {
         std::vector<uint8_t> payload(PAYLOAD_PI_CONTROL_LEN, 0u);
         write_u32_le(payload, 0, ros_now_ms_u32());
 
@@ -1641,8 +1682,17 @@ private:
                 write_i32_le(payload, 14u + static_cast<size_t>(i * 4u), arm_command->arm_target[i]);
             }
             write_u16_le(payload, 34, arm_command->arm_speed_mrad_s);
+            if(arm_command->suction_valid) {
+                suction_request = arm_command->suction_enable;
+            }
         }
-        write_u16_le(payload, 36, 0u);
+        if(suction_request.has_value()) {
+            payload[4] |= PI_CONTROL_MASK_SUCTION_VALID;
+            payload[36] = suction_request.value() ? 1u : 0u;
+        }
+        else {
+            write_u16_le(payload, 36, 0u);
+        }
 
         if(send_frame(MSG_PI_CONTROL, 0u, payload)) {
             stats_.tx_control++;
@@ -1976,6 +2026,7 @@ private:
     std::string auto_task_event_topic_ = "/mcu/auto_task_event";
     std::string cmd_vel_topic_ = "/motor_cmd_vel";
     std::string brake_service_ = "/mcu/set_brake";
+    std::string suction_service_ = "/mcu/set_suction";
     std::string estop_service_ = "/mcu/estop";
     std::string arm_joints_service_ = "/mcu/set_arm_joints";
     std::string arm_pose_service_ = "/mcu/set_arm_pose";
@@ -1998,6 +2049,7 @@ private:
     int arm_command_repeat_count_ = 3;
     int mission_event_repeat_count_ = 3;
     int repeat_estop_count_ = 3;
+    bool require_auto_pi_for_suction_ = true;
 
     SerialPort serial_;
     BinaryFrameParser parser_;
@@ -2046,6 +2098,7 @@ private:
     rclcpp::Publisher<::mcu_comm_bridge::msg::AutoTaskEvent>::SharedPtr auto_task_event_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr suction_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmJoints>::SharedPtr arm_joints_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmPose>::SharedPtr arm_pose_srv_;
     rclcpp::Service<::mcu_comm_bridge::srv::SetArmPosition>::SharedPtr arm_position_srv_;

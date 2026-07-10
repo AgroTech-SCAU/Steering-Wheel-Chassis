@@ -1,0 +1,159 @@
+# Atlas 智械争锋全自主运输区状态机配置
+#
+# 配置覆盖以下闭环：
+# 1. 中转区播报与语音启动确认。
+# 2. 前往智能分拣区并识别“齿轮 / T 型螺栓”对应园区。
+# 3. 前往待派送区识别并抓取单个货物。
+# 4. 根据分类规则导航至园区 1 或园区 2，并完成投放。
+# 5. 返回待派送区重复运输，直到达到数量、时间或无目标终止条件。
+#
+# 坐标、机械臂关节位姿、视觉深度和工具点偏移必须在实际场地完成标定。
+# calibration_confirmed=false 时，状态机预检会拒绝产生运动命令。
+
+autonomous_transport:
+  # 完成场地坐标、停车朝向、机械臂动作和视觉抓取标定后改为 true。
+  calibration_confirmed: false
+
+  timing:
+    # 全自主运输阶段使用独立可配置时间预算，避免把赛事文件中的总赛时直接写死在代码中。
+    # 现场应依据裁判实际计时口径以及进入中转区时的剩余时间设置。
+    max_autonomous_duration_s: 300.0
+
+    # 剩余时间小于该值且机械臂没有携带货物时，不再发起下一轮抓取。
+    # 当前正在运送的货物仍会优先完成投放，直到硬时间上限到达。
+    stop_reserve_s: 20.0
+
+    # 单次机械臂动作序列总超时，覆盖视觉请求、抓取/投放动作和到位等待。
+    manipulation_timeout_s: 60.0
+
+    # 智能分拣分类规则服务总超时。
+    classification_timeout_s: 20.0
+
+  classification:
+    # 分类结果置信度低于该值时进入重试，不允许建立园区映射。
+    # 完整识别两个标识时服务置信度不低于 0.75；单标识互补推断为 0.45。
+    minimum_confidence: 0.60
+
+  voice:
+    # true：播报完成后等待 /atlas/voice/command 上的语音识别文本。
+    # false：播报完成后直接执行分类识别与运输。
+    start_required: true
+
+    # 语音等待时长。fallback_enabled=false 时超时后继续保持安全停止并等待指令。
+    start_timeout_s: 30.0
+    fallback_enabled: false
+
+    # 进入中转区后播报该文本，用于赛事中转区语音播报得分项。
+    transition_announcement: "遥操作区任务已完成"
+
+    # 等待语音启动时的提示文本。
+    prompt: "请发出执行全自主运输任务语音指令"
+
+    # 语音识别节点把识别结果发布到 /atlas/voice/command，状态机会进行空格与标点归一化。
+    accepted_phrases:
+      - "执行全自主运输任务"
+      - "开始全自主运输任务"
+      - "启动全自主运输任务"
+
+  cargo:
+    # 待派送区共 8 个货物，齿轮与 T 型螺栓各 4 个。
+    target_total: 8
+    expected_counts:
+      gear: 4
+      t_bolt: 4
+
+    # 抓取顺序采用交替策略，避免一种货物短时遮挡时持续阻塞。
+    # 视觉后端每次最多处理一个目标。
+    plan:
+      - gear
+      - t_bolt
+      - gear
+      - t_bolt
+      - gear
+      - t_bolt
+      - gear
+      - t_bolt
+
+    # 同一类别连续达到该无目标次数后，本轮任务不再选择该类别。
+    no_target_limit_per_class: 2
+
+  recovery:
+    # 导航失败后的重试次数。每次重试都会先取消导航并保持零速度。
+    navigation_retry_count: 1
+
+    # 分类标识识别失败后的重试次数。
+    classification_retry_count: 2
+
+    # 单个货物抓取失败后的重试次数。
+    pick_retry_count: 1
+
+    # false：抓取执行错误时安全终止。
+    # 视觉明确返回“无目标”属于正常跳过，不受该参数影响。
+    continue_on_pick_failure: false
+
+  waypoints:
+    # 以下位置均使用导航地图的 map 坐标系，yaw 单位为 rad。
+    # 数值为安全占位值；必须实测后填写，并确认机器人本体完整位于可行驶区域内。
+    sorting_area:
+      id: "autonomous_sorting_area"
+      x_m: 0.0
+      y_m: 0.0
+      yaw_rad: 0.0
+      timeout_s: 25.0
+
+    dispatch_area:
+      id: "autonomous_dispatch_area"
+      x_m: 0.0
+      y_m: 0.0
+      yaw_rad: 0.0
+      timeout_s: 25.0
+
+    park_1:
+      id: "autonomous_park_1"
+      x_m: 0.0
+      y_m: 0.0
+      yaw_rad: 0.0
+      timeout_s: 25.0
+
+    park_2:
+      id: "autonomous_park_2"
+      x_m: 0.0
+      y_m: 0.0
+      yaw_rad: 0.0
+      timeout_s: 25.0
+
+  manipulation:
+    # 导航时机械臂应保持在不超出底盘安全包络的收拢位姿。
+    safe_prepare_action: "transport_arm_safe"
+
+    # 智能分拣区分类标识的相机观察位姿。
+    sorting_prepare_action: "sorting_scan_prepare"
+
+    # 待派送区抓取前的相机观察位姿。
+    pick_prepare_actions:
+      gear: "dispatch_pick_prepare"
+      t_bolt: "dispatch_pick_prepare"
+
+    # 两类货物分别调用视觉单目标抓取任务。
+    pick_tasks:
+      gear: "pick_one_gear"
+      t_bolt: "pick_one_t_bolt"
+
+    # 到达园区后的投放预备动作。
+    place_prepare_actions:
+      park_1: "park_1_drop_prepare"
+      park_2: "park_2_drop_prepare"
+
+    # 每个园区最多接收 4 个货物。列表索引与该园区已完成数量对应。
+    # 四个任务可以标定为不同投放位置，也可以在确认允许堆叠后设置为同一安全落点。
+    place_tasks:
+      park_1:
+        - "place_park_1_slot_1"
+        - "place_park_1_slot_2"
+        - "place_park_1_slot_3"
+        - "place_park_1_slot_4"
+      park_2:
+        - "place_park_2_slot_1"
+        - "place_park_2_slot_2"
+        - "place_park_2_slot_3"
+        - "place_park_2_slot_4"

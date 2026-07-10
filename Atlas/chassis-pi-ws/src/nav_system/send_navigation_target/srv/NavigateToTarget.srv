@@ -1,0 +1,5 @@
+# 总控节点调用此服务，指定前往哪个目标点
+string waypoint_id   # 目标点标识：P1 ~ P15
+---
+bool success         # 是否成功到达
+string message       # 附加信息（成功/失败原因）

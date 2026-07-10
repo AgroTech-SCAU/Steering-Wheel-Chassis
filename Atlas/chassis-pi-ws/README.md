@@ -1,6 +1,6 @@
 # chassis-pi-ws
 
-本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，伪导航，视觉识别，手眼变换，机械臂授粉序列连接成一条可配置的自动任务链路
+本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，完整导航，RACOM 视觉识别，手眼变换，机械臂动作序列和 PI 端吸盘控制连接成一条可配置的自动任务链路
 
 当前默认任务链路为
 
@@ -13,9 +13,13 @@ atlas_mission_manager 接收 START
   ↓
 读取 mission_route.yaml
   ↓
-调用伪导航后端移动到点位
+atlas_nav_full_backend 调用 Nav2 NavigateToPose 移动到点位
   ↓
-调用视觉授粉后端执行预识别，视觉识别，预授粉，授粉，回退
+Nav2 输出 /atlas/navigation/cmd_vel，由 mission_manager 门控到 /motor_cmd_vel
+  ↓
+racom_vision 检测目标，atlas_racom_vision_backend 适配为 /vision/detect_camera_target
+  ↓
+atlas_vision_pollination_backend 执行动作序列、手眼变换、机械臂服务和必要的 PI 端吸盘控制
   ↓
 全部点位完成后上报 DONE
 ```
@@ -24,22 +28,24 @@ atlas_mission_manager 接收 START
 
 ```text
 总任务状态机
+完整导航后端 Nav2 NavigateToPose 适配器
 伪导航后端
-视觉授粉后端
-视觉目标 service
+RACOM 视觉适配器
+视觉作业动作后端
 手眼变换
+PI 端末端吸盘条件控制
 可配置地图点位
 可配置预识别动作
 可配置工具点偏移
-可配置授粉动作序列
+可配置动作序列
 ```
 
-当前暂未实现
+仍需继续实车标定和完善
 
 ```text
-完整导航后端
-视觉只选择动作序列后端
-动态避障
+RACOM 像素点到相机真实三维点的标定或深度接入
+完整地图 map/pbstream 与点位坐标复核
+动态避障和复杂失败恢复策略
 ```
 
 ---
@@ -49,11 +55,19 @@ atlas_mission_manager 接收 START
 ```text
 src/
 ├── mcu_comm_bridge
-├── atlas_mission_interfaces
-├── atlas_mission_manager
-├── atlas_nav_pseudo_backend
-├── atlas_vision_pollination_backend
-└── handeye_calibration_tool
+├── app/
+│   ├── atlas_mission_interfaces
+│   └── atlas_mission_manager
+├── nav_system/
+│   ├── at_nav2
+│   ├── atlas_nav_full_backend
+│   ├── atlas_nav_pseudo_backend
+│   └── robot_startup
+└── vision_system/
+    ├── racom_vision/atlas_racom_vision_backend
+    ├── raicom_vsion/vison_topic
+    ├── atlas_vision_pollination_backend
+    └── handeye_calibration_tool
 ```
 
 | 功能包 | 作用 |
@@ -61,8 +75,11 @@ src/
 | `mcu_comm_bridge` | 串口协议桥接，发布 MCU 状态，里程计，机械臂状态，提供机械臂和任务结果服务 |
 | `atlas_mission_interfaces` | 定义任务层消息和 service |
 | `atlas_mission_manager` | 总任务状态机，后端选择，安全门控，DONE 和 FAIL 上报 |
+| `atlas_nav_full_backend` | 完整导航后端，把任务点转换为 Nav2 `NavigateToPose` action |
 | `atlas_nav_pseudo_backend` | 伪导航后端，使用 `/odom` 做任务相对点位移动 |
-| `atlas_vision_pollination_backend` | 视觉目标 service，手眼变换，预授粉和授粉动作序列 |
+| `atlas_racom_vision_backend` | RACOM 视觉适配器，把 `/vision_detect` 转换为 `/vision/detect_camera_target` |
+| `vison_topic` | RACOM/RAICOM ONNX 检测服务，包名沿用历史拼写 |
+| `atlas_vision_pollination_backend` | 视觉作业动作后端，手眼变换，机械臂动作序列和吸盘动作 |
 | `handeye_calibration_tool` | 手眼标定辅助工具，生成视觉授粉所需的手眼参数 |
 
 ---
@@ -154,29 +171,27 @@ sudo apt install -y python3-yaml python3-opencv python3-numpy libyaml-cpp-dev
 cd ~/chassis-pi-ws
 source /opt/ros/humble/setup.bash
 
-colcon build \
-  --packages-select \
-  mcu_comm_bridge \
-  atlas_mission_interfaces \
-  atlas_nav_pseudo_backend \
-  atlas_vision_pollination_backend \
-  atlas_mission_manager \
-  handeye_calibration_tool \
-  --symlink-install
+colcon build --symlink-install
 
 source install/setup.bash
 ```
 
-启动串口桥
+启动 PI 端整车任务系统
 
 ```bash
-ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
+ros2 launch robot_startup robot_start.launch.py
 ```
 
-启动完整任务栈
+只启动任务总栈
 
 ```bash
 ros2 launch atlas_mission_manager mission_stack.launch.py
+```
+
+安全联调时切回伪导航
+
+```bash
+ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=pseudo
 ```
 
 查看状态
@@ -193,12 +208,14 @@ ros2 topic echo /atlas/manipulation/status
 
 | 文件 | 内容 |
 |---|---|
-| `src/atlas_mission_manager/config/mission_manager.yaml` | 总状态机参数，后端服务名，安全停止参数 |
-| `src/atlas_mission_manager/config/mission_route.yaml` | 地图点位，点位顺序，预识别动作名称，到点任务名称 |
-| `src/atlas_nav_pseudo_backend/config/pseudo_nav.yaml` | 伪导航控制参数，速度限制，到点阈值，超时 |
-| `src/atlas_vision_pollination_backend/config/pollination_actions.yaml` | 预识别关节位姿，工具点偏移，授粉序列 |
-| `src/atlas_vision_pollination_backend/config/pollination.yaml` | 视觉授粉后端参数，手眼参数，等待阈值 |
-| `src/atlas_vision_pollination_backend/config/camera_target.yaml` | 相机和目标检测参数 |
+| `src/app/atlas_mission_manager/config/mission_manager.yaml` | 总状态机参数，后端服务名，安全停止参数 |
+| `src/app/atlas_mission_manager/config/mission_route.yaml` | 地图点位，点位顺序，预识别动作名称，到点任务名称 |
+| `src/nav_system/atlas_nav_full_backend/config/full_nav.yaml` | 完整导航后端参数，Nav2 action 名称和坐标模式 |
+| `src/nav_system/atlas_nav_pseudo_backend/config/pseudo_nav.yaml` | 伪导航控制参数，速度限制，到点阈值，超时 |
+| `src/vision_system/atlas_vision_pollination_backend/config/pollination_actions.yaml` | 预识别关节位姿，工具点偏移，授粉序列 |
+| `src/vision_system/atlas_vision_pollination_backend/config/pollination.yaml` | 视觉授粉后端参数，手眼参数，等待阈值 |
+| `src/vision_system/racom_vision/atlas_racom_vision_backend/config/racom_camera_target.yaml` | RACOM 视觉适配参数，像素到相机坐标近似转换 |
+| `src/vision_system/atlas_vision_pollination_backend/config/camera_target.yaml` | 旧视觉模型回退配置 |
 | `src/mcu_comm_bridge/config/mcu_comm_bridge.yaml` | 串口和 ROS 话题参数 |
 
 ---
@@ -208,7 +225,7 @@ ros2 topic echo /atlas/manipulation/status
 地图点位写在
 
 ```text
-src/atlas_mission_manager/config/mission_route.yaml
+src/app/atlas_mission_manager/config/mission_route.yaml
 ```
 
 每个点位格式如下
@@ -749,3 +766,28 @@ visual_pollination_c_0_2  每个 job 识别 0 到 2 朵雌花
 ```
 
 每个 job 完成后会执行 `after_all_targets_sequence`，默认回到预识别位姿
+
+---
+
+## 全自主运输区启动
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch robot_startup robot_autonomous_transport.launch.py
+```
+
+状态话题：
+
+```bash
+ros2 topic echo /atlas/autonomous_transport/status
+```
+
+任务配置与动作配置：
+
+```text
+src/app/atlas_autonomous_transport_manager/config/autonomous_transport.yaml
+src/vision_system/atlas_vision_pollination_backend/config/transport_actions.yaml
+src/vision_system/racom_vision/atlas_racom_vision_backend/config/sorting_rule.yaml
+```

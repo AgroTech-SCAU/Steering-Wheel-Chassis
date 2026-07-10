@@ -85,6 +85,14 @@ mcu_comm_bridge_node:
     # 刹车服务名
     brake_service: "/mcu/set_brake"
 
+    # PI 端末端吸盘控制服务名
+    # 类型为 std_srvs/srv/SetBool；true=打开吸盘，false=关闭吸盘
+    suction_service: "/mcu/set_suction"
+
+    # 是否要求 MCU 处于 AutoPi 才允许 PI 端吸盘服务生效
+    # 正式自动任务建议保持 true；单独调试吸盘时可临时改为 false
+    require_auto_pi_for_suction: true
+
     # 机械臂关节目标服务名
     arm_joints_service: "/mcu/set_arm_joints"
 

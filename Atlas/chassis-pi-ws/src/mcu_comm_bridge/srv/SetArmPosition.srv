@@ -1,7 +1,17 @@
+# 机械臂三维末端位置目标，单位 m
 float64 x_m
 float64 y_m
 float64 z_m
+
+# 关节速度上限，单位 rad/s；<=0 时 MCU 使用默认速度
 float64 speed_rad_s
+
+# 是否在同一帧中携带末端吸盘命令
+# false 表示本次机械臂命令不改变吸盘状态
+bool suction_valid
+
+# suction_valid=true 时生效；true=打开吸盘，false=关闭吸盘
+bool suction_enable
 ---
 bool success
 string message

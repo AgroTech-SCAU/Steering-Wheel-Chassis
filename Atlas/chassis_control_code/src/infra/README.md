@@ -69,5 +69,6 @@ InfraStatus infra_update(Infra* self);
 - `binary_frame.h` 维护 Atlas 二进制协议常量
 - `PI_CONTROL` 当前固定为 `38 bytes`
 - `PI_CONTROL` 中 `control_mask` 与 `arm_mode` 为正交字段
+- `control_mask.bit2` 为 `suction_valid`，`payload[36]` 表示 PI 端吸盘开关
 - Pi 机械臂目标共用 `PI_CONTROL(0x31)`，不新增独立目标消息类型
 - 机械臂单次消费语义只适用于 `AutoPi` 模式下的 `Pi -> MCU` 机械臂目标
