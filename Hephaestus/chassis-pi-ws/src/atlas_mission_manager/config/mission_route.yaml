@@ -1,0 +1,335 @@
+# 自动任务路线配置
+# 本文件由 atlas_mission_manager 读取
+# 点位顺序来自 src(142).zip 中的 navigation_route.c
+# 这里统一描述点位顺序，导航目标，移动前动作，以及到位后的作业 job 列表
+# 具体关节角和视觉授粉序列放在 atlas_vision_pollination_backend/config/pollination_actions.yaml
+# 伪导航控制参数放在 atlas_nav_pseudo_backend/config/pseudo_nav.yaml
+# 点位坐标均为任务相对坐标，任务启动后以当前 /odom 作为本轮任务原点
+
+mission:
+  # 坐标模式
+  # task_relative 表示 x，y，yaw 都相对于本轮自动任务开始时的 /odom
+  coordinate_mode: "task_relative"
+
+  # 导航后端名称
+  # 当前实现 pseudo，后续可新增完整导航后端并在这里切换
+  navigation_backend: "pseudo"
+
+  # 到位后任务后端名称
+  # 当前实现 vision_pollination，负责视觉识别，手眼变换和授粉动作序列
+  manipulation_backend: "vision_pollination"
+
+  # 前进路线最大执行点数
+  # 1 表示只执行第一个 7 cm 测试点，用于首次安全联调
+  # 2 表示执行前两个点，用于验证从过渡点到第一个作业点的方向
+  # 0 表示不限制，执行 waypoints 中所有点
+  max_forward_waypoints: 0
+
+  # 是否执行 return_waypoints
+  # 首次实车测试建议保持 false
+  # 前进路线稳定后再改为 true
+  return_home_enabled: true
+
+  # 前进路线点列表
+  # id 是当前 ROS2 任务流使用的点位名，需要全局唯一
+  # nav_index 使用合并重复点后的点位序号，方便和当前任务路线对照
+  # x，y，yaw 是任务相对坐标，单位分别是 m，m，rad
+  # area 是区域标签，只用于日志和任务策略说明
+  # timeout_s 是该点伪导航最大允许时间
+  # pre_move_action 是移动前动作，PASS_BY 也可以通过它移动到安全位姿或预识别位姿
+  # arrival_jobs 是到点后的作业列表，PASS_BY 为空，A/B 每点两个 job，C 每点一个 job
+  waypoints:
+
+    # 前进点 1
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "pass_01"
+      nav_index: 1
+      x: 0.00
+      y: -0.07
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 该点不执行到位后的视觉和机械臂任务
+      arrival_jobs: []
+
+    # 前进点 2
+    # 区域 AREA_A
+    # A 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_a_02_down"
+      nav_index: 2
+      x: 0.71
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_a_02_down_job_1"
+          prepare_action: "pre_detect_nav_02_left"
+          task: "visual_pollination_a_0_3"
+        # 作业 job 2
+        - id: "area_a_02_down_job_2"
+          prepare_action: "pre_detect_nav_02_right"
+          task: "visual_pollination_a_0_3"
+
+    # 前进点 3
+    # 区域 AREA_A
+    # A 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_a_03_none"
+      nav_index: 3
+      x: 1.28
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_a_03_none_job_1"
+          prepare_action: "pre_detect_nav_03_left"
+          task: "visual_pollination_a_0_3"
+        # 作业 job 2
+        - id: "area_a_03_none_job_2"
+          prepare_action: "pre_detect_nav_03_right"
+          task: "visual_pollination_a_0_3"
+
+    # 前进点 4
+    # 区域 AREA_A
+    # A 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_a_04_down"
+      nav_index: 4
+      x: 1.83
+      y: -0.08
+      yaw: 0.00
+      area: "AREA_A"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_a_04_down_job_1"
+          prepare_action: "pre_detect_nav_04_left"
+          task: "visual_pollination_a_0_3"
+        # 作业 job 2
+        - id: "area_a_04_down_job_2"
+          prepare_action: "pre_detect_nav_04_right"
+          task: "visual_pollination_a_0_3"
+
+    # 前进点 5
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "pass_05_turn_entry"
+      nav_index: 5
+      x: 2.19
+      y: -0.08
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 该点不执行到位后的视觉和机械臂任务
+      arrival_jobs: []
+
+    # 前进点 6
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "pass_06_turn_down"
+      nav_index: 6
+      x: 2.19
+      y: -0.89
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 该点不执行到位后的视觉和机械臂任务
+      arrival_jobs: []
+
+    # 前进点 7
+    # 区域 AREA_B
+    # B 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_b_07_right"
+      nav_index: 7
+      x: 1.77
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_b_07_right_job_1"
+          prepare_action: "pre_detect_nav_07_left"
+          task: "visual_pollination_b_0_3"
+        # 作业 job 2
+        - id: "area_b_07_right_job_2"
+          prepare_action: "pre_detect_nav_07_right"
+          task: "visual_pollination_b_0_3"
+
+    # 前进点 8
+    # 区域 AREA_B
+    # B 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_b_08_right"
+      nav_index: 8
+      x: 1.20
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_b_08_right_job_1"
+          prepare_action: "pre_detect_nav_08_left"
+          task: "visual_pollination_b_0_3"
+        # 作业 job 2
+        - id: "area_b_08_right_job_2"
+          prepare_action: "pre_detect_nav_08_right"
+          task: "visual_pollination_b_0_3"
+
+    # 前进点 9
+    # 区域 AREA_B
+    # B 区作业点，每个点执行两个 arrival_jobs，每个 job 最多处理 3 朵雌花
+    - id: "area_b_09_right"
+      nav_index: 9
+      x: 0.70
+      y: -0.89
+      yaw: 0.00
+      area: "AREA_B"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_b_09_right_job_1"
+          prepare_action: "pre_detect_nav_09_left"
+          task: "visual_pollination_b_0_3"
+        # 作业 job 2
+        - id: "area_b_09_right_job_2"
+          prepare_action: "pre_detect_nav_09_right"
+          task: "visual_pollination_b_0_3"
+
+    # 前进点 10
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "pass_10_turn_entry"
+      nav_index: 10
+      x: 0.35
+      y: -0.89
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 该点不执行到位后的视觉和机械臂任务
+      arrival_jobs: []
+
+    # 前进点 11
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "pass_11_turn_down"
+      nav_index: 11
+      x: 0.35
+      y: -1.65
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 该点不执行到位后的视觉和机械臂任务
+      arrival_jobs: []
+
+    # 前进点 12
+    # 区域 AREA_C
+    # C 区作业点，每个点执行一个 arrival_job，每个 job 最多处理 2 朵雌花
+    - id: "area_c_12_mid"
+      nav_index: 12
+      x: 0.83
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_c_12_mid_job_1"
+          prepare_action: "pre_detect_nav_12"
+          task: "visual_pollination_c_0_2"
+
+    # 前进点 13
+    # 区域 AREA_C
+    # C 区作业点，每个点执行一个 arrival_job，每个 job 最多处理 2 朵雌花
+    - id: "area_c_13_mid_right"
+      nav_index: 13
+      x: 1.21
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_c_13_mid_right_job_1"
+          prepare_action: "pre_detect_nav_13"
+          task: "visual_pollination_c_0_2"
+
+    # 前进点 14
+    # 区域 AREA_C
+    # C 区作业点，每个点执行一个 arrival_job，每个 job 最多处理 2 朵雌花
+    - id: "area_c_14_all"
+      nav_index: 14
+      x: 1.70
+      y: -1.65
+      yaw: 0.00
+      area: "AREA_C"
+      timeout_s: 20.00
+      pre_move_action: "noop"
+      # 到位后依次执行以下作业 job
+      # 每个 job 先执行 prepare_action 到预识别位姿，再按 task 的视觉授粉模板处理目标
+      arrival_jobs:
+        # 作业 job 1
+        - id: "area_c_14_all_job_1"
+          prepare_action: "pre_detect_nav_14"
+          task: "visual_pollination_c_0_2"
+
+  # 返航路线点列表
+  # 只有 return_home_enabled 为 true 时才会执行
+  # 返航点同样使用任务相对坐标
+  return_waypoints:
+
+    # 返航点 1
+    # 区域 PASS_BY
+    # 过渡点，只执行底盘移动，arrival_jobs 保持为空
+    - id: "return_pass"
+      x: 0.35
+      y: -1.65
+      yaw: 0.00
+      area: "PASS_BY"
+      timeout_s: 30.00
+      pre_move_action: "noop"
+      arrival_jobs: []
+
+    # 返航点 2
+    # 区域 START_END
+    # 起终点，只用于回到任务起点
+    - id: "return_home"
+      x: 0.01
+      y: 0.03
+      yaw: 0.00
+      area: "START_END"
+      timeout_s: 30.00
+      pre_move_action: "noop"
+      arrival_jobs: []

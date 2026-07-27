@@ -1,0 +1,6 @@
+# 目标偏航角，单位弧度，节点内部转换为微弧度后写入二进制偏航动作帧
+float64 yaw_rad
+---
+# 真表示偏航动作帧已成功写入串口
+bool success
+string message

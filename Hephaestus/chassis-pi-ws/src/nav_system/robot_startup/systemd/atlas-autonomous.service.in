@@ -1,0 +1,18 @@
+[Unit]
+Description=Atlas autonomous transport stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@ATLAS_USER@
+WorkingDirectory=@ATLAS_WORKSPACE@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source @ATLAS_WORKSPACE@/install/setup.bash && exec ros2 launch robot_startup robot_autonomous_transport.launch.py config:=@ATLAS_CONFIG@'
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

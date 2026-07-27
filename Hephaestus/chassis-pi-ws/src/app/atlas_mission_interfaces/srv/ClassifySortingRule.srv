@@ -1,0 +1,21 @@
+# 本次识别请求的唯一名称，用于日志关联
+string request_id
+
+# 允许参与分区规则判断的货物类别名称
+# 服务端会按配置中的类别别名进行归一化
+string[] expected_classes
+---
+# true 表示已得到一组完整且互斥的园区映射
+bool success
+
+# 园区 1 对应的货物类别，例如 gear 或 t_bolt
+string park_1_cargo
+
+# 园区 2 对应的货物类别，例如 gear 或 t_bolt
+string park_2_cargo
+
+# 本次规则识别的置信度，范围 0.0 到 1.0
+float32 confidence
+
+# 便于现场排查的结果说明
+string message

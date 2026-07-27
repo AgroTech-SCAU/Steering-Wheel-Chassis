@@ -1,0 +1,6 @@
+# 急停原因码，直接映射到二进制急停帧的原因字段
+uint8 reason
+---
+# 真表示至少一帧急停帧已成功写入串口
+bool success
+string message

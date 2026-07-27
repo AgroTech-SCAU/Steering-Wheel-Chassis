@@ -1,0 +1,73 @@
+# 视觉授粉后端节点配置
+# 本配置属于 atlas_vision_pollination_backend
+# 该节点不打开相机，而是调用 /vision/detect_camera_target
+# 该节点负责预识别动作，手眼变换，预授粉，授粉，回退动作
+
+atlas_vision_pollination_backend:
+  ros__parameters:
+    # 后端名称
+    # 必须和 mission_manager.yaml 中 manipulation_backend 一致
+    backend_name: "vision_pollination"
+
+    # 状态话题
+    # 总任务状态机通过该话题判断后端是否成功，失败或取消
+    status_topic: "/atlas/manipulation/status"
+
+    # 启动服务
+    # 总任务状态机在每个 waypoint 到点稳定后调用
+    start_service: "/atlas/manipulation/start"
+
+    # 取消服务
+    # RESET，Manual，Fault，EStop 时由总任务状态机调用
+    cancel_service: "/atlas/manipulation/cancel"
+
+    # 机械臂关节反馈话题
+    # 来源是 mcu_comm_bridge 发布的 MCU_ARM_STATE
+    joint_state_topic: "/arm/joint_states"
+
+    # 视觉目标服务
+    # 由同包内 atlas_camera_target_service 提供
+    vision_service: "/vision/detect_camera_target"
+
+    # 机械臂关节目标服务
+    # 用于预识别位姿和回到预识别位姿
+    arm_joints_service: "/mcu/set_arm_joints"
+
+    # 机械臂位置目标服务
+    # 用于预授粉位姿和授粉位姿
+    arm_position_service: "/mcu/set_arm_position"
+
+    # 动作配置文件路径
+    # 留空时由 launch 文件传入 pollination_actions.yaml 的安装路径
+    config_yaml_path: ""
+
+    # 后端主循环频率
+    update_rate_hz: 20.0
+
+    # 关节状态最大允许延迟，单位 s
+    # 超过该时间认为机械臂反馈不新鲜
+    joint_state_timeout_s: 0.5
+
+    # 关节到位阈值，单位 rad
+    joint_tolerance_rad: 0.05
+
+    # 末端位置到位阈值，单位 m
+    position_tolerance_m: 0.012
+
+    # 默认机械臂速度，单位 rad/s
+    # 动作配置中未指定速度时使用该值
+    default_speed_rad_s: 1.0
+
+    # 等待视觉服务响应的超时时间，单位 s
+    # 需要大于 camera_target.yaml 中 max_scan_s，避免持续扫描还没结束就被后端超时取消
+    vision_timeout_s: 20.0
+
+    # 等待机械臂服务响应的超时时间，单位 s
+    command_timeout_s: 2.0
+
+    # 等待机械臂真实到位的超时时间，单位 s
+    motion_timeout_s: 8.0
+
+    # 正解是否包含工具坐标系变换
+    # 当前保持 true，用于复用 hand_eye_ok.py 中的工具点逻辑
+    fk_include_tool_T: true

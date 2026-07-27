@@ -1,0 +1,109 @@
+# atlas_mission_manager 总任务状态机配置
+# 本文件只配置总状态机，后端选择，接口名称，超时和安全策略
+# 不在这里配置伪导航控制参数，不在这里配置视觉模型，不在这里配置授粉动作序列
+# 当前后端选择为 pseudo + vision_pollination
+# 后续接入完整导航或“视觉只选动作序列”时，优先只改后端名称和接口名称
+
+atlas_mission_manager:
+  ros__parameters:
+    # mcu 周期状态话题，由 mcu_comm_bridge 发布
+    # 总状态机依赖该话题判断 mcu 是否处于 AutoPi，是否锁存自动启动，ready 位是否满足
+    mcu_status_topic: "/mcu/status"
+
+    # mcu 自动任务边沿事件话题，由 mcu_comm_bridge 发布
+    # START 来自 auto_start_latched 0 到 1 且 app_state 为 AutoPi
+    # RESET 来自 auto_start_latched 1 到 0
+    auto_task_event_topic: "/mcu/auto_task_event"
+
+    # 任务结果上报服务，由 mcu_comm_bridge 提供
+    # DONE 会让 mcu 从 AutoPi 进入 Finished
+    # FAIL 会让 mcu 进入 recoverable Fault
+    mission_result_service: "/mcu/report_mission_result"
+
+    # 刹车服务，由 mcu_comm_bridge 提供
+    # 总状态机在中止，状态异常，不允许运动时会请求刹车
+    brake_service: "/mcu/set_brake"
+
+    # 最终底盘速度话题，由总状态机发布，由 mcu_comm_bridge 订阅
+    # 导航后端不能直接发布这个话题
+    cmd_vel_topic: "/motor_cmd_vel"
+
+    # 总任务状态发布话题，用于调试当前状态机阶段和错误原因
+    mission_status_topic: "/atlas/mission/status"
+
+    # 当前导航后端名称
+    # 已实现：pseudo
+    # 未来完整导航后端可以使用 nav_full 或其他名称，但必须和后端服务响应中的 backend 一致
+    navigation_backend: "pseudo"
+
+    # 导航后端状态话题
+    # 总状态机通过该话题判断当前 waypoint 是否成功，失败或取消
+    navigation_status_topic: "/atlas/navigation/status"
+
+    # 导航后端速度输出话题
+    # 总状态机只在允许运动时把该速度转发到 /motor_cmd_vel
+    navigation_cmd_vel_topic: "/atlas/navigation/cmd_vel"
+
+    # 导航后端启动服务
+    # 总状态机对每个 waypoint 调用一次
+    navigation_start_service: "/atlas/navigation/start"
+
+    # 导航后端取消服务
+    # RESET，Manual，Fault，EStop，状态超时时调用
+    navigation_cancel_service: "/atlas/navigation/cancel"
+
+    # 当前视觉和动作后端名称
+    # 已实现：vision_pollination
+    # 未来“视觉只选动作序列”可以使用 sequence_select 或其他名称
+    manipulation_backend: "vision_pollination"
+
+    # 视觉和动作后端状态话题
+    # 总状态机通过该话题判断到点任务是否成功，失败或取消
+    manipulation_status_topic: "/atlas/manipulation/status"
+
+    # 视觉和动作后端启动服务
+    # 导航到点并稳定后调用
+    manipulation_start_service: "/atlas/manipulation/start"
+
+    # 视觉和动作后端取消服务
+    # RESET，Manual，Fault，EStop，状态超时时调用
+    manipulation_cancel_service: "/atlas/manipulation/cancel"
+
+    # 总状态机主循环频率
+    # 只负责状态推进和安全门控，不需要设置得很高
+    update_rate_hz: 20.0
+
+    # /atlas/mission/status 的发布频率
+    status_publish_rate_hz: 5.0
+
+    # 安全停止时零速重复发布频率
+    # 该值需要明显高于 mcu 的底盘控制超时要求
+    zero_velocity_publish_rate_hz: 10.0
+
+    # mcu 状态超时时间
+    # 超过该时间未收到 /mcu/status，就认为不能继续自动任务
+    mcu_status_timeout_s: 0.5
+
+    # START 后等待 mcu 状态稳定确认的时间
+    start_confirm_timeout_s: 1.0
+
+    # 调用 DONE 或 FAIL 服务的等待时间
+    result_service_timeout_s: 1.0
+
+    # 上报 DONE 后等待 mcu Finished，或上报 FAIL 后等待 mcu Fault 的时间
+    result_confirm_timeout_s: 3.0
+
+    # 结果上报重试间隔
+    # 当前 bridge 内部已经会重复发送线协议帧，因此这里不建议太多重试
+    result_retry_interval_s: 0.3
+
+    # 结果上报服务调用重试次数
+    result_report_retry_count: 2
+
+    # 当前视觉授粉流程需要机械臂反馈，因此默认要求 arm_ready
+    # 如果只做纯底盘任务，可以改为 false
+    require_arm_ready_in_common_precheck: true
+
+    # 前置检查失败是否上报 FAIL
+    # false 表示进入恢复状态，避免启动条件不足就让 mcu 进 Fault
+    report_fail_on_common_precheck_error: false

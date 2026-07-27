@@ -1,0 +1,4 @@
+PySide6-Essentials>=6.6,<7
+pyserial>=3.5
+dynamixel-sdk>=3.7.31
+crcmod>=1.7

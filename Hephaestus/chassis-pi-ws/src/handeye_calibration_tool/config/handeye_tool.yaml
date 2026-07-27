@@ -1,0 +1,145 @@
+# 手眼标定工具配置
+# 本工具用于采集相机和机械臂位姿，求解相机与机械臂工具坐标之间的关系
+# 自动任务运行时不需要启动本工具
+
+handeye_calibration_tool:
+  ros__parameters:
+    # 相机编号
+    # 可用 ls /dev/video* 查看
+    camera_index: 0
+
+    # 相机后端
+    # v4l2 适合 Linux USB 相机
+    camera_backend: "v4l2"
+
+    # 图像宽度
+    camera_width: 1280
+
+    # 图像高度
+    camera_height: 720
+
+    # 相机帧率
+    camera_fps: 30.0
+
+    # 图像编码
+    # MJPG 常用于 USB 相机高分辨率采集
+    camera_fourcc: "MJPG"
+
+    # 显示窗口名
+    camera_window_name: "Hand-Eye Calibration Camera"
+
+    # 相机内参文件
+    # 留空表示启动后手动选择或使用默认逻辑
+    intrinsics_file: ""
+
+    # 标定板类型
+    # chessboard 表示普通黑白棋盘格
+    # charuco 表示带编码棋盘格
+    board_type: "chessboard"
+
+    # 普通棋盘格横向内角点数量
+    # 注意是内角点，不是方格数
+    chessboard_inner_corners_x: 9
+
+    # 普通棋盘格纵向内角点数量
+    chessboard_inner_corners_y: 6
+
+    # 普通棋盘格方格边长，单位 m
+    chessboard_square_length_m: 0.025
+
+    # 是否使用 OpenCV 更稳定的棋盘格检测
+    chessboard_use_sb: true
+
+    # 编码棋盘格字典
+    charuco_dictionary: "DICT_4X4_50"
+
+    # 编码棋盘格横向完整方格数
+    charuco_squares_x: 7
+
+    # 编码棋盘格纵向完整方格数
+    charuco_squares_y: 5
+
+    # 编码棋盘格方格边长，单位 m
+    charuco_square_length_m: 0.030
+
+    # 编码棋盘格标记边长，单位 m
+    charuco_marker_length_m: 0.022
+
+    # 编码棋盘格最少有效角点数
+    min_charuco_corners: 8
+
+    # 最大重投影误差，单位像素
+    max_reprojection_error_px: 1.5
+
+    # 手眼模式
+    # eye_in_hand 表示相机固定在机械臂末端
+    # eye_to_hand 表示相机固定在外部环境
+    handeye_mode: "eye_in_hand"
+
+    # 机械臂基座坐标系
+    base_frame: "arm_base_link"
+
+    # 工具坐标系
+    gripper_frame: "tool0"
+
+    # 相机光学坐标系
+    camera_frame: "camera_optical_frame"
+
+    # 标定板坐标系
+    target_frame: "handeye_target"
+
+    # 机械臂位姿来源
+    # auto 表示优先使用 /arm/pose，不可用时回退
+    # pose_topic 表示只使用位姿话题
+    # fk 表示根据关节和位置恢复末端姿态
+    arm_pose_source: "auto"
+
+    # 末端完整位姿话题
+    arm_pose_topic: "/arm/pose"
+
+    # 机械臂关节话题
+    arm_joint_state_topic: "/arm/joint_states"
+
+    # 末端位置话题
+    arm_fk_position_topic: "/arm/pose_position"
+
+    # 关节正解姿态恢复系数
+    # 三行分别对应 roll，pitch，yaw
+    orientation_rpy_joint_coeffs: [
+      0.0, 0.0, 0.0, 0.0, 0.0,
+      0.0, 1.0, 1.0, 1.0, 1.0,
+      1.0, 0.0, 0.0, 0.0, 0.0
+    ]
+
+    # 姿态恢复偏置，单位 rad
+    orientation_rpy_offset_rad: [0.0, 0.0, 0.0]
+
+    # 机器人状态最大允许延迟，单位 s
+    max_robot_state_age_s: 0.5
+
+    # 机器人状态和图像时间同步容忍范围，单位 s
+    robot_sync_tolerance_s: 0.20
+
+    # 采样前是否要求机械臂稳定
+    require_stable_before_capture: true
+
+    # 稳定保持时间，单位 s
+    stable_duration_s: 0.5
+
+    # 稳定判定关节变化范围，单位 rad
+    stable_joint_range_rad: 0.008
+
+    # 等待稳定超时时间，单位 s
+    stable_wait_timeout_s: 8.0
+
+    # 机械臂关节控制服务
+    arm_joints_service: "/mcu/set_arm_joints"
+
+    # 机械臂位姿控制服务
+    arm_pose_service: "/mcu/set_arm_pose"
+
+    # 默认机械臂速度，单位 rad/s
+    default_arm_speed_rad_s: 0.8
+
+    # 标定结果输出目录
+    output_directory: "~/handeye_calibration"

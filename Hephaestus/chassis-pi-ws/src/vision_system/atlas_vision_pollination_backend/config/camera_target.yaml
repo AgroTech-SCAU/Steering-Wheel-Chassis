@@ -1,0 +1,107 @@
+# 相机目标服务配置
+# 本配置属于 atlas_camera_target_service
+# 该节点提供 /vision/detect_camera_target 服务
+# 每次服务调用都会读取新图像，等待画面稳定，然后持续扫描直到命中 A/B 业务逻辑或超时
+# 目标点单位必须是米
+
+atlas_camera_target_service:
+  ros__parameters:
+    # 视觉识别服务名称
+    # 视觉授粉后端会调用该服务
+    service_name: "/vision/detect_camera_target"
+
+    # 调试图像话题
+    # 如果安装了 cv_bridge，会发布识别框和调试图
+    debug_image_topic: "/vision/debug_image"
+
+    # 语音文本话题
+    # voice_mode 为 topic 时，节点只发布文本，由外部语音节点播报
+    voice_text_topic: "/vision/voice_text"
+
+    # 相机编号
+    # 常见 USB 相机为 0，1，2
+    # 可以用 v4l2-ctl --list-devices 或 ls /dev/video* 查看
+    camera_index: 0
+
+    # 期望图像宽度
+    image_width: 1280
+
+    # 期望图像高度
+    image_height: 720
+
+    # 相机缓存帧数
+    # 设置为 1 可以尽量减少缓存画面影响
+    camera_buffer_size: 1
+
+    # 目标检测模型路径
+    # 当前实现会尝试使用 ultralytics 加载该路径
+    # 如果模型部署方式变化，需要同步修改 camera_target_service.py
+    model_path: "/home/wheeltec/ros2_shared_dir/CRAIC/czf-ws/scripts/best_ncnn_model"
+
+    # 目标真实宽度，单位 mm
+    # 用于从像素宽度估算深度
+    # 需要按实际花朵或标志物尺寸调整
+    target_real_width_mm: 35.0
+
+    # 收到识别请求后等待画面稳定的时间，单位 s
+    # 机械臂刚到预识别位姿时建议等待一小段时间
+    stabilize_delay_s: 1.0
+
+    # 单次 service 请求最长扫描时间，单位 s
+    # 这不是只处理一两帧，而是持续读取新帧并执行 YOLO + A/B 业务逻辑
+    # 超过该时间仍未命中业务逻辑时返回 NO_TARGET
+    max_scan_s: 12.0
+
+    # 旧参数名，保留兼容
+    # 如果代码或 launch 仍读取 max_processing_s，会使用同样的扫描窗口
+    max_processing_s: 12.0
+
+    # 每次请求前丢弃的缓存帧数量
+    # 用于减少缓存图像导致的错误识别
+    frame_retry_count: 5
+
+    # 启动阶段是否用当前相机画面预热模型
+    # NCNN/YOLO 第一次推理可能存在懒加载，预热可以避免第一次任务请求耗时过长
+    model_warmup_on_start: true
+
+    # 启动预热帧数
+    model_warmup_frames: 1
+
+    # 如果机械臂任务请求到来时后台预热还没完成，service 内部最多等待这段时间
+    # 这样不会因为 NCNN 第一次加载较慢而直接让任务失败
+    service_ready_wait_s: 45.0
+
+    # 视觉扫描调试日志间隔，单位 s
+    # 会打印 boxes 数量、A/B 数量、logic_hit、female_count、solved_count 和 reason
+    debug_log_interval_s: 0.5
+
+    # NO_TARGET 时保存最后一帧和统计 JSON
+    # 用于判断是 YOLO 没框、类别数量不满足，还是 HSV/3D 解算失败
+    debug_save_on_no_target: true
+
+    # NO_TARGET 调试文件保存目录
+    debug_output_dir: "/tmp/atlas_vision_debug"
+
+    # 语音模式
+    # topic 表示只发布 /vision/voice_text
+    # direct 表示节点内部尝试调用 espeak 播报
+    # none 表示不输出语音
+    voice_mode: "topic"
+
+    # direct 模式下使用的声卡设备
+    voice_device: "plughw:2,0"
+
+    # espeak 中文语音名称
+    voice_espeak_voice: "zh+m1"
+
+    # espeak 语速
+    voice_rate: "160"
+
+    # espeak 音调
+    voice_pitch: "70"
+
+    # espeak 音量
+    voice_volume: "200"
+
+    # 语音命令超时时间，单位 s
+    voice_timeout_s: 4.0

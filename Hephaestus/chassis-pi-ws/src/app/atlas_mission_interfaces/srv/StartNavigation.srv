@@ -1,0 +1,10 @@
+string backend
+string waypoint_id
+float64 x_m
+float64 y_m
+float64 yaw_rad
+bool reset_origin
+float64 timeout_s
+---
+bool success
+string message

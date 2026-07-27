@@ -1,0 +1,809 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="Atlas">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.00882808429030593 -0.000340750676586599 0.0954179896198022"
+        rpy="0 0 0" />
+      <mass
+        value="3.07994818862467" />
+      <inertia
+        ixx="0.00477849442445405"
+        ixy="3.61904886731046E-06"
+        ixz="9.73124741072443E-07"
+        iyy="0.0050197448689049"
+        iyz="3.97366944601154E-08"
+        izz="0.00940079322631692" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="rader_link">
+    <inertial>
+      <origin
+        xyz="-3.28944182864182E-09 -2.79918769266761E-09 -0.034597418415799"
+        rpy="0 0 0" />
+      <mass
+        value="0.0197577859576288" />
+      <inertia
+        ixx="4.82189534964696E-06"
+        ixy="2.48436928333001E-14"
+        ixz="2.38955057697207E-14"
+        iyy="4.82189520756809E-06"
+        iyz="2.28917153823305E-15"
+        izz="9.36232732215207E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/rader_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.376470588235294 0.376470588235294 0.376470588235294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/rader_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="rader"
+    type="fixed">
+    <origin
+      xyz="0 0 0.14485"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="rader_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="arm0_Link">
+    <inertial>
+      <origin
+        xyz="4.03163124566112E-05 -0.00439694616931921 0.0181601133638054"
+        rpy="0 0 0" />
+      <mass
+        value="0.497552971363212" />
+      <inertia
+        ixx="0.000474780602248955"
+        ixy="3.32070491932723E-07"
+        ixz="-1.3729396299716E-06"
+        iyy="0.00051376938347247"
+        iyz="1.14161410234304E-05"
+        izz="0.00088921942117942" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm0_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.647058823529412 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm0_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm0"
+    type="continuous">
+    <origin
+      xyz="0.0299999999999805 0 0.2051"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="arm0_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="arm1_Link">
+    <inertial>
+      <origin
+        xyz="-0.111680854140069 0.00198264432767215 0.0167679006371422"
+        rpy="0 0 0" />
+      <mass
+        value="0.146358923007007" />
+      <inertia
+        ixx="3.45401696658124E-05"
+        ixy="-7.55481307918525E-06"
+        ixz="9.774529940559E-07"
+        iyy="0.000334533901691936"
+        iyz="2.15303059821128E-11"
+        izz="0.000351792671495817" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm1_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm1_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm1"
+    type="revolute">
+    <origin
+      xyz="0.0276200491203067 0.0162679040568649 0.0604999999999996"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="arm0_Link" />
+    <child
+      link="arm1_Link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-210"
+      upper="0"
+      effort="1"
+      velocity="3" />
+  </joint>
+  <link
+    name="arm2_Link">
+    <inertial>
+      <origin
+        xyz="0.0938782231507684 0.0435998398556859 -0.00195286688151847"
+        rpy="0 0 0" />
+      <mass
+        value="0.131033847495955" />
+      <inertia
+        ixx="3.07125716333965E-05"
+        ixy="-1.62241339557423E-05"
+        ixz="-6.9023152089313E-07"
+        iyy="0.000234389398504244"
+        iyz="-8.15845730804061E-08"
+        izz="0.0002468732059086" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm2_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm2_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm2"
+    type="revolute">
+    <origin
+      xyz="-0.216724125670017 0 0.0192068569153542"
+      rpy="0 0 0" />
+    <parent
+      link="arm1_Link" />
+    <child
+      link="arm2_Link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="270"
+      effort="1"
+      velocity="3" />
+  </joint>
+  <link
+    name="arm3_Link">
+    <inertial>
+      <origin
+        xyz="0.0203737284918072 -0.000593186652555089 -0.0194413021174199"
+        rpy="0 0 0" />
+      <mass
+        value="0.0296160318942833" />
+      <inertia
+        ixx="1.60846328054098E-05"
+        ixy="-2.86143772626898E-07"
+        ixz="-2.31155596025544E-07"
+        iyy="1.38648021790867E-05"
+        iyz="-7.10368514062635E-09"
+        izz="1.3596257842825E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm3_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm3_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm3"
+    type="revolute">
+    <origin
+      xyz="0.19444619433893 0.0479984083069584 0.0171273498437832"
+      rpy="0.00872697851440046 -0.00872598171315758 -7.61524215243458E-05" />
+    <parent
+      link="arm2_Link" />
+    <child
+      link="arm3_Link" />
+    <axis
+      xyz="-0.00872587097686341 -0.00872653549837514 -0.99992385047757" />
+    <limit
+      lower="0"
+      upper="100"
+      effort="1"
+      velocity="3" />
+  </joint>
+  <link
+    name="arm4_Link">
+    <inertial>
+      <origin
+        xyz="0.0336761719446859 -0.00431914226118644 -0.0209655457993607"
+        rpy="0 0 0" />
+      <mass
+        value="0.0527219852119685" />
+      <inertia
+        ixx="1.39550229710451E-05"
+        ixy="2.77354736619549E-06"
+        ixz="8.67996918822417E-07"
+        iyy="9.91688952951095E-06"
+        iyz="-1.74618941666197E-06"
+        izz="1.79120208004815E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm4_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.650980392156863 0.619607843137255 0.588235294117647 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/arm4_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm4"
+    type="revolute">
+    <origin
+      xyz="0.0442641199736169 -0.02032988697116 -0.0187765660482722"
+      rpy="1.57039834747322 0.00838579561913363 -0.046675354326363" />
+    <parent
+      link="arm3_Link" />
+    <child
+      link="arm4_Link" />
+    <axis
+      xyz="-0.00872587097686579 -0.00872653549837382 -0.99992385047757" />
+    <limit
+      lower="-90"
+      upper="90"
+      effort="1"
+      velocity="3" />
+  </joint>
+  <link
+    name="LFs_Link">
+    <inertial>
+      <origin
+        xyz="-3.43181858528108E-06 0.00109461595354032 -0.042474727115529"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980836134" />
+      <inertia
+        ixx="1.43428504844198E-05"
+        ixy="1.0753026633944E-11"
+        ixz="3.39986697755544E-12"
+        iyy="2.96038470108407E-05"
+        iyz="2.8005142395801E-10"
+        izz="2.00828947865518E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LFs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 0.949019607843137 0.898039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LFs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LFs"
+    type="continuous">
+    <origin
+      xyz="0.132864923566373 0.132864941643627 0.0880999999999993"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LFs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="LFd_Link">
+    <inertial>
+      <origin
+        xyz="1.05702966834986E-06 -4.22896943676034E-05 -0.245388471723"
+        rpy="0 0 0" />
+      <mass
+        value="0.055943603224693" />
+      <inertia
+        ixx="2.18930783589474E-05"
+        ixy="1.87561251650286E-16"
+        ixz="8.78432022301432E-17"
+        iyy="2.18930783593502E-05"
+        iyz="1.04888582542942E-16"
+        izz="4.00898214563541E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LFd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LFd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LFd"
+    type="continuous">
+    <origin
+      xyz="0 -0.246529876225633 -0.0549577103053627"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="LFs_Link" />
+    <child
+      link="LFd_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="LRs_Link">
+    <inertial>
+      <origin
+        xyz="-3.42770024608363E-06 0.00109463116413308 -0.0424747271155208"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980835617" />
+      <inertia
+        ixx="1.43428504843793E-05"
+        ixy="1.07530264707178E-11"
+        ixz="3.39986493614566E-12"
+        iyy="2.96038470108003E-05"
+        iyz="2.80051426972247E-10"
+        izz="2.00828947865514E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LRs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LRs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LRs"
+    type="continuous">
+    <origin
+      xyz="-0.132864949716031 0.132864926432914 0.0880999999999996"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LRs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="LRd_Link">
+    <inertial>
+      <origin
+        xyz="-0.265730935506289 -4.22896946470326E-05 -0.0180586188567917"
+        rpy="0 0 0" />
+      <mass
+        value="0.055943603224693" />
+      <inertia
+        ixx="2.18930783594125E-05"
+        ixy="-7.90714094906841E-17"
+        ixz="9.8105019658909E-17"
+        iyy="2.18930783588854E-05"
+        iyz="-8.72473261227543E-18"
+        izz="4.00898214563543E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LRd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.796078431372549 0.823529411764706 0.937254901960784 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/LRd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LRd"
+    type="continuous">
+    <origin
+      xyz="0.265730950640532 -0.0192000081487032 -0.0549577103053501"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="LRs_Link" />
+    <child
+      link="LRd_Link" />
+    <axis
+      xyz="0 0 -1" />
+  </joint>
+  <link
+    name="RFs_Link">
+    <inertial>
+      <origin
+        xyz="3.4428342126358E-06 -0.00109462301503871 -0.0424747271155201"
+        rpy="0 0 0" />
+      <mass
+        value="0.114715980835538" />
+      <inertia
+        ixx="1.43428504843731E-05"
+        ixy="1.07530264520404E-11"
+        ixz="-3.39986463292546E-12"
+        iyy="2.96038470107942E-05"
+        iyz="-2.80051427391833E-10"
+        izz="2.00828947865514E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RFs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RFs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RFs"
+    type="continuous">
+    <origin
+      xyz="0.132864934581987 -0.132864934582007 0.0880999999999999"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RFs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="RFd_Link">
+    <inertial>
+      <origin
+        xyz="1.05702960509491E-06 -4.22896943118914E-05 0.0180586025589895"
+        rpy="0 0 0" />
+      <mass
+        value="0.055943603224693" />
+      <inertia
+        ixx="2.18930783591225E-05"
+        ixy="2.74004139238426E-16"
+        ixz="-6.94563453021727E-17"
+        iyy="2.18930783591751E-05"
+        iyz="-1.22456034204787E-16"
+        izz="4.00898214563541E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RFd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RFd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RFd"
+    type="continuous">
+    <origin
+      xyz="0 0.0192000000000008 -0.0549577103053633"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="RFs_Link" />
+    <child
+      link="RFd_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="RRs_Link">
+    <inertial>
+      <origin
+        xyz="3.56441174928501E-06 -0.0011332776704702 -0.0438441812611078"
+        rpy="0 0 0" />
+      <mass
+        value="0.110803165091198" />
+      <inertia
+        ixx="1.37587466407647E-05"
+        ixy="1.07530264578093E-11"
+        ixz="-3.39986463049896E-12"
+        iyy="2.89883861963043E-05"
+        iyz="-2.80051427349979E-10"
+        izz="1.89090821817843E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RRs_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RRs_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RRs"
+    type="continuous">
+    <origin
+      xyz="-0.132864934582027 -0.132864934582008 0.0880999999999997"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RRs_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+  <link
+    name="RRd_Link">
+    <inertial>
+      <origin
+        xyz="1.05702937794327E-06 -4.22896944309303E-05 0.0180586025589896"
+        rpy="0 0 0" />
+      <mass
+        value="0.055943603224693" />
+      <inertia
+        ixx="2.18930783589208E-05"
+        ixy="-1.53738176178325E-16"
+        ixz="2.68665466302458E-17"
+        iyy="2.18930783593772E-05"
+        iyz="-8.87889065137292E-17"
+        izz="4.00898214563544E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RRd_Link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Atlas/meshes/RRd_Link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RRd"
+    type="continuous">
+    <origin
+      xyz="0 0.0192000000000007 -0.0549577103053587"
+      rpy="1.5707963267949 0 0" />
+    <parent
+      link="RRs_Link" />
+    <child
+      link="RRd_Link" />
+    <axis
+      xyz="0 0 1" />
+  </joint>
+</robot>

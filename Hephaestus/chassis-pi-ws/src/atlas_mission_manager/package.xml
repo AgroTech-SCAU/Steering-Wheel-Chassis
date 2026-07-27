@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>atlas_mission_manager</name>
+  <version>0.1.0</version>
+  <description>阿特拉斯树莓派端通用任务生命周期与安全状态机</description>
+  <maintainer email="3465219188@qq.com">yangxuan</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>yaml-cpp</depend>
+  <depend>std_srvs</depend>
+  <depend>mcu_comm_bridge</depend>
+  <depend>atlas_mission_interfaces</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>atlas_nav_pseudo_backend</exec_depend>
+  <exec_depend>atlas_vision_pollination_backend</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

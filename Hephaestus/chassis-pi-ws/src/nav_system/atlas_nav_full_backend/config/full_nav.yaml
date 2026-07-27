@@ -1,0 +1,29 @@
+atlas_nav_full_backend:
+  ros__parameters:
+    # 后端名称必须与 mission_route.yaml / mission_manager.yaml 中的 navigation_backend 一致
+    backend_name: "full"
+
+    # 任务状态机统一使用的导航服务与状态话题
+    status_topic: "/atlas/navigation/status"
+    start_service: "/atlas/navigation/start"
+    cancel_service: "/atlas/navigation/cancel"
+
+    # Nav2 NavigateToPose action 名称；通常为 navigate_to_pose
+    action_name: "navigate_to_pose"
+
+    # 坐标模式：
+    # task_relative_odom：任务启动首点记录 /odom 原点，后续 x/y/yaw 解释为任务相对坐标；目标以 odom frame 发给 Nav2。
+    # absolute_map：x/y/yaw 直接解释为 map frame 下的绝对目标。
+    coordinate_mode: "task_relative_odom"
+    odom_topic: "/odom"
+    odom_frame: "odom"
+    map_frame: "map"
+
+    # 等待 Nav2 action server 的时间；完整导航栈未 ready 时拒绝任务，避免状态机卡死
+    action_server_timeout_s: 3.0
+
+    # 状态发布频率
+    status_publish_rate_hz: 5.0
+
+    # 若 Nav2 feedback 暂时没有距离误差，则使用该值
+    unknown_distance_error_m: -1.0

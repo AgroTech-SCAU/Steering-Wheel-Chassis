@@ -1,0 +1,17 @@
+# 请求标识用于状态机日志关联
+string request_id
+
+# ASRPRO 固件中的播报短语标识
+string phrase_id
+---
+# true 表示命令已进入串口发送队列
+bool success
+
+# true 表示当前设备状态允许执行播报
+bool accepted
+
+# 本次命令使用的协议序列号
+uint32 sequence
+
+# 便于现场排查的结果说明
+string message

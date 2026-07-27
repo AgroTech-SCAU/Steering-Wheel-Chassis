@@ -1,0 +1,22 @@
+# 全自主运输区使用的 Nav2 后端配置
+#
+# autonomous_transport.yaml 中的四个停车点均定义在 map 坐标系，
+# 因此 coordinate_mode 必须保持 absolute_map
+
+atlas_nav_full_backend:
+  ros__parameters:
+    backend_name: "full"
+    status_topic: "/atlas/navigation/status"
+    start_service: "/atlas/navigation/start"
+    cancel_service: "/atlas/navigation/cancel"
+    action_name: "navigate_to_pose"
+
+    # 全自主运输停车点使用 map 绝对坐标
+    coordinate_mode: "absolute_map"
+    map_frame: "map"
+    odom_frame: "odom"
+    odom_topic: "/odom"
+
+    action_server_timeout_s: 3.0
+    status_publish_rate_hz: 5.0
+    unknown_distance_error_m: -1.0
