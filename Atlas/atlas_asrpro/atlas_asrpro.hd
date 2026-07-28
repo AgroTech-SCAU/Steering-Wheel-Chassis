@@ -4,24 +4,26 @@ extern "C"{ void * __dso_handle = 0 ;}
 #include "HardwareSerial.h"
 #include "myLib/asr_event.h"
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// Atlas ASRPRO TWEN51 固件；负责离线识别；固定语音播报；USB 串口协议；不直接控制底盘和机械臂
+// Atlas ASRPro TWEN51 固件
+//
+// 定位：ASRPro 是非关键语音播报外设，只接收 MCU 单向指令并执行。
+// 不负责底盘控制、任务控制、语音启动、在线检测或状态反馈。
+//
+// 串口协议（115200，按行解析，无 ACK、无心跳、无握手、无返回）：
+//   SPK,1\n  遥操作区任务已完成
+//   SPK,2\n  请说阿特拉斯启动
+//   SPK,3\n  开始执行全自主运输任务
+//   SPK,4\n  货物派送完成
+//   SPK,5\n  全自主运输任务结束
+//   SPK,6\n  当前阶段已跳过
+//
+// 非法命令、非法参数和溢出数据直接忽略，不影响其他设备运行。
 
-#define ATLAS_PROTOCOL_VERSION 1
-#define ATLAS_FIRMWARE_VERSION "1.0.0"
-#define ATLAS_RX_LINE_MAX 224
-#define ATLAS_PAYLOAD_MAX 224
-#define ATLAS_FRAME_MAX 240
-#define ATLAS_TOKEN_MAX 8
-#define ATLAS_COMMAND_CACHE_SIZE 32
-#define ATLAS_HELLO_PERIOD_MS 500
-#define ATLAS_PI_TIMEOUT_MS 3000
-#define ATLAS_EVENT_RETRY_PERIOD_MS 200
-#define ATLAS_EVENT_RETRY_MAX 5
-#define ATLAS_ASR_DEBOUNCE_MS 2000
+#define ATLAS_RX_LINE_MAX 32
+#define ATLAS_SPEECH_QUEUE_SIZE 4
 
 #define ATLAS_PLAY_TRANSITION_COMPLETE 10500
 #define ATLAS_PLAY_VOICE_PROMPT 10501
@@ -32,7 +34,7 @@ extern "C"{ void * __dso_handle = 0 ;}
 
 uint32_t snid;
 
-// 固定语音资源；Pi 端只发送 phrase_id；模块本地完成播报
+// 固定语音资源；MCU 只需要发送数字 phrase_id。
 //{speak:小蝶-清新女声,vol:14,speed:10,platform:haohaodada}
 //{playid:10500,voice:遥操作区任务已完成}
 //{playid:10501,voice:请说阿特拉斯启动}
@@ -42,632 +44,164 @@ uint32_t snid;
 //{playid:10505,voice:当前阶段已跳过}
 
 typedef struct {
-  char type[16];
-  char payload[48];
-} AtlasProtocolEvent;
-
-typedef struct {
   uint32_t play_id;
-  char phrase_id[32];
 } AtlasSpeechRequest;
 
-typedef struct {
-  bool valid;
-  uint16_t sequence;
-  uint32_t payload_hash;
-  bool is_ack;
-  char command[20];
-  char reason[28];
-} AtlasCommandCache;
-
-typedef struct {
-  uint16_t sequence;
-  char command[20];
-  char *arguments[ATLAS_TOKEN_MAX - 4];
-  uint8_t argument_count;
-  uint32_t payload_hash;
-} AtlasParsedFrame;
-
-static QueueHandle_t g_event_queue = NULL;
 static QueueHandle_t g_speech_queue = NULL;
-
-static volatile bool g_handshake_ok = false;
-static volatile bool g_listen_enabled = false;
-static volatile bool g_speech_busy = false;
-
-static char g_boot_id[40] = {0};
 static char g_rx_line[ATLAS_RX_LINE_MAX] = {0};
-static uint16_t g_rx_length = 0;
-static uint16_t g_tx_sequence = 1;
-static uint32_t g_last_hello_ms = 0;
-static uint32_t g_last_pi_rx_ms = 0;
-static uint32_t g_last_asr_ms = 0;
+static uint8_t g_rx_length = 0;
 
-static AtlasCommandCache g_command_cache[ATLAS_COMMAND_CACHE_SIZE];
-static uint8_t g_command_cache_write_index = 0;
-
-static bool g_pending_event_active = false;
-static uint16_t g_pending_event_sequence = 0;
-static char g_pending_event_type[16] = {0};
-static char g_pending_event_payload[48] = {0};
-static uint8_t g_pending_event_attempts = 0;
-static uint32_t g_pending_event_last_send_ms = 0;
-
-static void atlas_protocol_task(void *parameter);
+static void atlas_serial_task(void *parameter);
 static void atlas_speech_task(void *parameter);
-static void atlas_queue_event(const char *type, const char *payload);
-static void atlas_clear_event_queue(void);
-static void atlas_reset_session(void);
 static void atlas_handle_line(char *line);
-static bool atlas_parse_frame(char *line, AtlasParsedFrame *frame);
-static void atlas_handle_frame(const AtlasParsedFrame *frame);
-static void atlas_event_tick(void);
-static void atlas_hello_tick(void);
-static void atlas_session_timeout_tick(void);
-static uint16_t atlas_allocate_sequence(void);
-static uint32_t atlas_fnv1a(const char *text);
-static uint8_t atlas_xor_checksum(const char *text);
-static int atlas_hex_value(char value);
-static bool atlas_parse_u16(const char *text, uint16_t *value);
-static void atlas_copy_token(char *destination, size_t destination_size, const char *source);
-static void atlas_send_frame(uint16_t sequence, const char *command, const char *argument_1, const char *argument_2);
-static void atlas_send_ack(uint16_t sequence, const char *command);
-static void atlas_send_nack(uint16_t sequence, const char *command, const char *reason);
-static void atlas_send_hello(void);
-static void atlas_send_event(uint16_t sequence, const char *event_type, const char *payload);
-static void atlas_cache_response(uint16_t sequence, uint32_t payload_hash, bool is_ack, const char *command, const char *reason);
-static int atlas_find_cached_sequence(uint16_t sequence);
-static void atlas_replay_cached_response(const AtlasCommandCache *cache);
-static uint32_t atlas_phrase_to_play_id(const char *phrase_id);
-static void atlas_build_boot_id(void);
+static void atlas_enqueue_speech(uint32_t play_id);
+static uint32_t atlas_phrase_to_play_id(uint16_t phrase_id);
+static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id);
 
-static void atlas_copy_token(char *destination, size_t destination_size, const char *source)
+static uint32_t atlas_phrase_to_play_id(uint16_t phrase_id)
 {
-  if(destination == NULL || destination_size == 0){
-    return;
+  switch(phrase_id){
+    case 1:
+      return ATLAS_PLAY_TRANSITION_COMPLETE;
+    case 2:
+      return ATLAS_PLAY_VOICE_PROMPT;
+    case 3:
+      return ATLAS_PLAY_AUTONOMOUS_START;
+    case 4:
+      return ATLAS_PLAY_DELIVERY_COMPLETE;
+    case 5:
+      return ATLAS_PLAY_TASK_COMPLETE;
+    case 6:
+      return ATLAS_PLAY_TASK_SKIPPED;
+    default:
+      return 0;
   }
-  if(source == NULL){
-    destination[0] = '\0';
-    return;
-  }
-  strncpy(destination, source, destination_size - 1);
-  destination[destination_size - 1] = '\0';
 }
 
-static uint16_t atlas_allocate_sequence(void)
+static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id)
 {
-  uint16_t sequence = g_tx_sequence;
-  g_tx_sequence++;
-  if(g_tx_sequence == 0){
-    g_tx_sequence = 1;
-  }
-  return sequence;
-}
-
-static uint32_t atlas_fnv1a(const char *text)
-{
-  uint32_t hash = 2166136261UL;
-  if(text == NULL){
-    return hash;
-  }
-  while(*text != '\0'){
-    hash ^= (uint8_t)(*text);
-    hash *= 16777619UL;
-    text++;
-  }
-  return hash;
-}
-
-static uint8_t atlas_xor_checksum(const char *text)
-{
-  uint8_t checksum = 0;
-  if(text == NULL){
-    return checksum;
-  }
-  while(*text != '\0'){
-    checksum ^= (uint8_t)(*text);
-    text++;
-  }
-  return checksum;
-}
-
-static int atlas_hex_value(char value)
-{
-  if(value >= '0' && value <= '9'){
-    return value - '0';
-  }
-  if(value >= 'A' && value <= 'F'){
-    return value - 'A' + 10;
-  }
-  if(value >= 'a' && value <= 'f'){
-    return value - 'a' + 10;
-  }
-  return -1;
-}
-
-static bool atlas_parse_u16(const char *text, uint16_t *value)
-{
-  if(text == NULL || value == NULL || *text == '\0'){
+  if(text == NULL || phrase_id == NULL || *text == '\0'){
     return false;
   }
+
   char *end_pointer = NULL;
-  unsigned long parsed = strtoul(text, &end_pointer, 10);
-  if(end_pointer == text || *end_pointer != '\0' || parsed > 65535UL){
+  unsigned long value = strtoul(text, &end_pointer, 10);
+  if(end_pointer == text || *end_pointer != '\0' || value > 65535UL){
     return false;
   }
-  *value = (uint16_t)parsed;
+
+  *phrase_id = (uint16_t)value;
   return true;
 }
 
-static void atlas_send_frame(uint16_t sequence, const char *command, const char *argument_1, const char *argument_2)
+static void atlas_enqueue_speech(uint32_t play_id)
 {
-  char payload[ATLAS_PAYLOAD_MAX] = {0};
-  char frame[ATLAS_FRAME_MAX] = {0};
-
-  if(argument_1 != NULL && argument_2 != NULL){
-    snprintf(payload, sizeof(payload), "P2A,%d,%u,%s,%s,%s", ATLAS_PROTOCOL_VERSION, sequence, command, argument_1, argument_2);
-  }
-  else if(argument_1 != NULL){
-    snprintf(payload, sizeof(payload), "P2A,%d,%u,%s,%s", ATLAS_PROTOCOL_VERSION, sequence, command, argument_1);
-  }
-  else{
-    snprintf(payload, sizeof(payload), "P2A,%d,%u,%s", ATLAS_PROTOCOL_VERSION, sequence, command);
-  }
-
-  uint8_t checksum = atlas_xor_checksum(payload);
-  snprintf(frame, sizeof(frame), "@%s*%02X\r\n", payload, checksum);
-  Serial.print(frame);
-}
-
-static void atlas_send_ack(uint16_t sequence, const char *command)
-{
-  atlas_send_frame(sequence, "ACK", command, NULL);
-}
-
-static void atlas_send_nack(uint16_t sequence, const char *command, const char *reason)
-{
-  atlas_send_frame(sequence, "NACK", command, reason);
-}
-
-static void atlas_send_hello(void)
-{
-  atlas_send_frame(atlas_allocate_sequence(), "HELLO", ATLAS_FIRMWARE_VERSION, g_boot_id);
-}
-
-static void atlas_send_event(uint16_t sequence, const char *event_type, const char *payload)
-{
-  atlas_send_frame(sequence, "EVENT", event_type, payload);
-}
-
-static void atlas_cache_response(uint16_t sequence, uint32_t payload_hash, bool is_ack, const char *command, const char *reason)
-{
-  AtlasCommandCache *cache = &g_command_cache[g_command_cache_write_index];
-  cache->valid = true;
-  cache->sequence = sequence;
-  cache->payload_hash = payload_hash;
-  cache->is_ack = is_ack;
-  atlas_copy_token(cache->command, sizeof(cache->command), command);
-  atlas_copy_token(cache->reason, sizeof(cache->reason), reason);
-
-  g_command_cache_write_index++;
-  if(g_command_cache_write_index >= ATLAS_COMMAND_CACHE_SIZE){
-    g_command_cache_write_index = 0;
-  }
-}
-
-static int atlas_find_cached_sequence(uint16_t sequence)
-{
-  for(int index = 0; index < ATLAS_COMMAND_CACHE_SIZE; index++){
-    if(g_command_cache[index].valid && g_command_cache[index].sequence == sequence){
-      return index;
-    }
-  }
-  return -1;
-}
-
-static void atlas_replay_cached_response(const AtlasCommandCache *cache)
-{
-  if(cache == NULL){
-    return;
-  }
-  if(cache->is_ack){
-    atlas_send_ack(cache->sequence, cache->command);
-  }
-  else{
-    atlas_send_nack(cache->sequence, cache->command, cache->reason);
-  }
-}
-
-static uint32_t atlas_phrase_to_play_id(const char *phrase_id)
-{
-  if(phrase_id == NULL){
-    return 0;
-  }
-  if(strcmp(phrase_id, "transition_complete") == 0){
-    return ATLAS_PLAY_TRANSITION_COMPLETE;
-  }
-  if(strcmp(phrase_id, "voice_prompt") == 0){
-    return ATLAS_PLAY_VOICE_PROMPT;
-  }
-  if(strcmp(phrase_id, "autonomous_start") == 0){
-    return ATLAS_PLAY_AUTONOMOUS_START;
-  }
-  if(strcmp(phrase_id, "delivery_complete") == 0){
-    return ATLAS_PLAY_DELIVERY_COMPLETE;
-  }
-  if(strcmp(phrase_id, "task_complete") == 0){
-    return ATLAS_PLAY_TASK_COMPLETE;
-  }
-  if(strcmp(phrase_id, "task_skipped") == 0){
-    return ATLAS_PLAY_TASK_SKIPPED;
-  }
-  return 0;
-}
-
-static void atlas_queue_event(const char *type, const char *payload)
-{
-  if(g_event_queue == NULL || type == NULL || payload == NULL){
+  if(g_speech_queue == NULL || play_id == 0){
     return;
   }
 
-  AtlasProtocolEvent event;
-  memset(&event, 0, sizeof(event));
-  atlas_copy_token(event.type, sizeof(event.type), type);
-  atlas_copy_token(event.payload, sizeof(event.payload), payload);
+  AtlasSpeechRequest request;
+  request.play_id = play_id;
 
-  if(xQueueSend(g_event_queue, &event, 0) != pdTRUE){
-    AtlasProtocolEvent dropped_event;
-    xQueueReceive(g_event_queue, &dropped_event, 0);
-    xQueueSend(g_event_queue, &event, 0);
+  // 队列满时丢弃最旧的一条，优先保留较新的播报请求。
+  if(xQueueSend(g_speech_queue, &request, 0) != pdTRUE){
+    AtlasSpeechRequest dropped_request;
+    xQueueReceive(g_speech_queue, &dropped_request, 0);
+    xQueueSend(g_speech_queue, &request, 0);
   }
-}
-
-static void atlas_clear_event_queue(void)
-{
-  if(g_event_queue == NULL){
-    return;
-  }
-  AtlasProtocolEvent event;
-  while(xQueueReceive(g_event_queue, &event, 0) == pdTRUE){
-  }
-}
-
-static void atlas_reset_session(void)
-{
-  g_handshake_ok = false;
-  g_listen_enabled = false;
-  g_pending_event_active = false;
-  g_pending_event_sequence = 0;
-  g_pending_event_attempts = 0;
-  g_pending_event_last_send_ms = 0;
-  g_pending_event_type[0] = '\0';
-  g_pending_event_payload[0] = '\0';
-  memset(g_command_cache, 0, sizeof(g_command_cache));
-  g_command_cache_write_index = 0;
-  atlas_clear_event_queue();
-}
-
-static bool atlas_parse_frame(char *line, AtlasParsedFrame *frame)
-{
-  if(line == NULL || frame == NULL || line[0] != '@'){
-    return false;
-  }
-
-  char *checksum_separator = strrchr(line, '*');
-  if(checksum_separator == NULL || checksum_separator[1] == '\0' || checksum_separator[2] == '\0' || checksum_separator[3] != '\0'){
-    return false;
-  }
-
-  int checksum_high = atlas_hex_value(checksum_separator[1]);
-  int checksum_low = atlas_hex_value(checksum_separator[2]);
-  if(checksum_high < 0 || checksum_low < 0){
-    return false;
-  }
-
-  *checksum_separator = '\0';
-  char *payload = line + 1;
-  uint8_t received_checksum = (uint8_t)((checksum_high << 4) | checksum_low);
-  if(atlas_xor_checksum(payload) != received_checksum){
-    return false;
-  }
-
-  frame->payload_hash = atlas_fnv1a(payload);
-
-  char *tokens[ATLAS_TOKEN_MAX] = {0};
-  uint8_t token_count = 0;
-  char *save_pointer = NULL;
-  char *token = strtok_r(payload, ",", &save_pointer);
-  while(token != NULL && token_count < ATLAS_TOKEN_MAX){
-    tokens[token_count++] = token;
-    token = strtok_r(NULL, ",", &save_pointer);
-  }
-
-  if(token != NULL || token_count < 4){
-    return false;
-  }
-  if(strcmp(tokens[0], "A2P") != 0){
-    return false;
-  }
-  if(strcmp(tokens[1], "1") != 0){
-    return false;
-  }
-  if(!atlas_parse_u16(tokens[2], &frame->sequence)){
-    return false;
-  }
-
-  atlas_copy_token(frame->command, sizeof(frame->command), tokens[3]);
-  frame->argument_count = token_count - 4;
-  for(uint8_t index = 0; index < frame->argument_count; index++){
-    frame->arguments[index] = tokens[index + 4];
-  }
-  return true;
-}
-
-static void atlas_handle_frame(const AtlasParsedFrame *frame)
-{
-  if(frame == NULL){
-    return;
-  }
-
-  g_last_pi_rx_ms = millis();
-
-  if(strcmp(frame->command, "PING") == 0){
-    const char *timestamp = frame->argument_count >= 1 ? frame->arguments[0] : "0";
-    atlas_send_frame(frame->sequence, "PONG", timestamp, NULL);
-    return;
-  }
-
-  if(strcmp(frame->command, "EVENT_ACK") == 0){
-    if(frame->argument_count >= 1 && g_pending_event_active && frame->sequence == g_pending_event_sequence && strcmp(frame->arguments[0], g_pending_event_type) == 0){
-      g_pending_event_active = false;
-      g_pending_event_sequence = 0;
-      g_pending_event_attempts = 0;
-      g_pending_event_type[0] = '\0';
-      g_pending_event_payload[0] = '\0';
-    }
-    return;
-  }
-
-  int cached_index = atlas_find_cached_sequence(frame->sequence);
-  if(cached_index >= 0){
-    AtlasCommandCache *cache = &g_command_cache[cached_index];
-    if(cache->payload_hash == frame->payload_hash){
-      atlas_replay_cached_response(cache);
-    }
-    else{
-      atlas_send_nack(frame->sequence, frame->command, "SEQUENCE_CONFLICT");
-    }
-    return;
-  }
-
-  if(strcmp(frame->command, "HELLO_ACK") == 0){
-    if(frame->argument_count != 1 || strcmp(frame->arguments[0], g_boot_id) != 0){
-      atlas_send_nack(frame->sequence, "HELLO_ACK", "BAD_ARGUMENT");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "HELLO_ACK", "BAD_ARGUMENT");
-      return;
-    }
-    g_handshake_ok = true;
-    atlas_send_ack(frame->sequence, "HELLO_ACK");
-    atlas_cache_response(frame->sequence, frame->payload_hash, true, "HELLO_ACK", "");
-    return;
-  }
-
-  if(!g_handshake_ok){
-    atlas_send_nack(frame->sequence, frame->command, "NOT_READY");
-    atlas_cache_response(frame->sequence, frame->payload_hash, false, frame->command, "NOT_READY");
-    return;
-  }
-
-  if(strcmp(frame->command, "LISTEN") == 0){
-    if(frame->argument_count != 1 || (strcmp(frame->arguments[0], "0") != 0 && strcmp(frame->arguments[0], "1") != 0)){
-      atlas_send_nack(frame->sequence, "LISTEN", "BAD_ARGUMENT");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "LISTEN", "BAD_ARGUMENT");
-      return;
-    }
-    g_listen_enabled = strcmp(frame->arguments[0], "1") == 0;
-    atlas_send_ack(frame->sequence, "LISTEN");
-    atlas_cache_response(frame->sequence, frame->payload_hash, true, "LISTEN", "");
-    return;
-  }
-
-  if(strcmp(frame->command, "SPEAK") == 0){
-    if(frame->argument_count != 1){
-      atlas_send_nack(frame->sequence, "SPEAK", "BAD_ARGUMENT");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "SPEAK", "BAD_ARGUMENT");
-      return;
-    }
-
-    uint32_t play_id = atlas_phrase_to_play_id(frame->arguments[0]);
-    if(play_id == 0){
-      atlas_send_nack(frame->sequence, "SPEAK", "UNKNOWN_PHRASE");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "SPEAK", "UNKNOWN_PHRASE");
-      return;
-    }
-    if(g_speech_busy){
-      atlas_send_nack(frame->sequence, "SPEAK", "BUSY");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "SPEAK", "BUSY");
-      return;
-    }
-
-    AtlasSpeechRequest request;
-    memset(&request, 0, sizeof(request));
-    request.play_id = play_id;
-    atlas_copy_token(request.phrase_id, sizeof(request.phrase_id), frame->arguments[0]);
-    if(g_speech_queue == NULL || xQueueSend(g_speech_queue, &request, 0) != pdTRUE){
-      atlas_send_nack(frame->sequence, "SPEAK", "BUSY");
-      atlas_cache_response(frame->sequence, frame->payload_hash, false, "SPEAK", "BUSY");
-      return;
-    }
-
-    g_speech_busy = true;
-    atlas_send_ack(frame->sequence, "SPEAK");
-    atlas_cache_response(frame->sequence, frame->payload_hash, true, "SPEAK", "");
-    return;
-  }
-
-  atlas_send_nack(frame->sequence, frame->command, "UNKNOWN_COMMAND");
-  atlas_cache_response(frame->sequence, frame->payload_hash, false, frame->command, "UNKNOWN_COMMAND");
 }
 
 static void atlas_handle_line(char *line)
 {
-  AtlasParsedFrame frame;
-  memset(&frame, 0, sizeof(frame));
-  if(!atlas_parse_frame(line, &frame)){
+  if(line == NULL){
     return;
   }
-  atlas_handle_frame(&frame);
+
+  // 当前只支持：SPK,<phrase_id>
+  if(strncmp(line, "SPK,", 4) != 0){
+    return;
+  }
+
+  uint16_t phrase_id = 0;
+  if(!atlas_parse_phrase_id(line + 4, &phrase_id)){
+    return;
+  }
+
+  uint32_t play_id = atlas_phrase_to_play_id(phrase_id);
+  if(play_id == 0){
+    return;
+  }
+
+  atlas_enqueue_speech(play_id);
 }
 
-static void atlas_hello_tick(void)
-{
-  if(g_handshake_ok){
-    return;
-  }
-  uint32_t now = millis();
-  if((uint32_t)(now - g_last_hello_ms) >= ATLAS_HELLO_PERIOD_MS){
-    g_last_hello_ms = now;
-    atlas_send_hello();
-  }
-}
-
-static void atlas_session_timeout_tick(void)
-{
-  if(!g_handshake_ok){
-    return;
-  }
-  uint32_t now = millis();
-  if((uint32_t)(now - g_last_pi_rx_ms) > ATLAS_PI_TIMEOUT_MS){
-    atlas_reset_session();
-    g_last_hello_ms = 0;
-  }
-}
-
-static void atlas_event_tick(void)
-{
-  if(!g_handshake_ok){
-    return;
-  }
-
-  uint32_t now = millis();
-  if(g_pending_event_active){
-    if((uint32_t)(now - g_pending_event_last_send_ms) < ATLAS_EVENT_RETRY_PERIOD_MS){
-      return;
-    }
-    if(g_pending_event_attempts >= ATLAS_EVENT_RETRY_MAX){
-      g_pending_event_active = false;
-      g_pending_event_sequence = 0;
-      g_pending_event_attempts = 0;
-      g_pending_event_type[0] = '\0';
-      g_pending_event_payload[0] = '\0';
-      return;
-    }
-    atlas_send_event(g_pending_event_sequence, g_pending_event_type, g_pending_event_payload);
-    g_pending_event_attempts++;
-    g_pending_event_last_send_ms = now;
-    return;
-  }
-
-  if(g_event_queue == NULL){
-    return;
-  }
-  AtlasProtocolEvent event;
-  if(xQueueReceive(g_event_queue, &event, 0) != pdTRUE){
-    return;
-  }
-
-  g_pending_event_sequence = atlas_allocate_sequence();
-  atlas_copy_token(g_pending_event_type, sizeof(g_pending_event_type), event.type);
-  atlas_copy_token(g_pending_event_payload, sizeof(g_pending_event_payload), event.payload);
-  g_pending_event_attempts = 1;
-  g_pending_event_last_send_ms = now;
-  g_pending_event_active = true;
-  atlas_send_event(g_pending_event_sequence, g_pending_event_type, g_pending_event_payload);
-}
-
-static void atlas_protocol_task(void *parameter)
+static void atlas_serial_task(void *parameter)
 {
   (void)parameter;
+
   while(1){
     while(Serial.available() > 0){
       int input_value = Serial.read();
       if(input_value < 0){
         break;
       }
+
       char input_character = (char)input_value;
 
       if(input_character == '\n'){
         while(g_rx_length > 0 && g_rx_line[g_rx_length - 1] == '\r'){
           g_rx_length--;
         }
+
         g_rx_line[g_rx_length] = '\0';
         if(g_rx_length > 0){
           atlas_handle_line(g_rx_line);
         }
+
         g_rx_length = 0;
         g_rx_line[0] = '\0';
       }
-      else if(g_rx_length < ATLAS_RX_LINE_MAX - 1){
-        g_rx_line[g_rx_length++] = input_character;
-      }
-      else{
-        g_rx_length = 0;
-        g_rx_line[0] = '\0';
+      else if(input_character != '\r'){
+        if(g_rx_length < ATLAS_RX_LINE_MAX - 1){
+          g_rx_line[g_rx_length++] = input_character;
+        }
+        else{
+          // 当前行过长时直接丢弃，等待下一行。
+          g_rx_length = 0;
+          g_rx_line[0] = '\0';
+        }
       }
     }
 
-    atlas_hello_tick();
-    atlas_event_tick();
-    atlas_session_timeout_tick();
     delay(2);
   }
+
   vTaskDelete(NULL);
 }
 
 static void atlas_speech_task(void *parameter)
 {
   (void)parameter;
+
   while(1){
     AtlasSpeechRequest request;
-    if(g_speech_queue != NULL && xQueueReceive(g_speech_queue, &request, 10) == pdTRUE){
-      g_speech_busy = true;
+    if(g_speech_queue != NULL && xQueueReceive(g_speech_queue, &request, 20) == pdTRUE){
       while(prompt_play_by_cmd_id(request.play_id, -1, NULL, false)){
         delay(1);
       }
-      g_speech_busy = false;
-      atlas_queue_event("SPEAK_DONE", request.phrase_id);
     }
+
     delay(2);
   }
-  vTaskDelete(NULL);
-}
 
-static void atlas_build_boot_id(void)
-{
-  uint32_t tick_value = (uint32_t)xTaskGetTickCount();
-  uint32_t time_value = millis();
-  snprintf(g_boot_id, sizeof(g_boot_id), "ATLAS_%08lX_%08lX", (unsigned long)time_value, (unsigned long)tick_value);
+  vTaskDelete(NULL);
 }
 
 void ASR_CODE()
 {
-  // 识别回调只投递稳定 intent；复杂串口处理由独立任务完成；避免阻塞语音识别线程
-  // 三条语句均可直接触发 atlas_start；其中中文语句作为正式比赛主触发词
-  //{ID:1,keyword:"唤醒词",ASR:"阿特拉斯启动",ASRTO:""}
-  //{ID:2,keyword:"唤醒词",ASR:"阿特拉斯开始全自动模式",ASRTO:""}
-  //{ID:3,keyword:"唤醒词",ASR:"阿特拉斯开始全自主运输",ASRTO:""}
-
-  if(!g_handshake_ok || !g_listen_enabled || g_speech_busy){
-    return;
-  }
-
-  if(snid == 1 || snid == 2 || snid == 3){
-    uint32_t now = millis();
-    if((uint32_t)(now - g_last_asr_ms) >= ATLAS_ASR_DEBOUNCE_MS){
-      g_last_asr_ms = now;
-      atlas_queue_event("ASR", "atlas_start");
-    }
-  }
+  // 本版本不使用离线识别结果，不向 MCU 或树莓派发送任何事件。
+  // 保留空回调以满足 ASRPro 工程生成要求。
+  (void)snid;
 }
 
 void setup()
@@ -675,14 +209,13 @@ void setup()
   Serial.begin(115200);
   Serial.setTimeout(5);
 
-  memset(g_command_cache, 0, sizeof(g_command_cache));
-  atlas_build_boot_id();
+  g_speech_queue = xQueueCreate(
+    ATLAS_SPEECH_QUEUE_SIZE,
+    sizeof(AtlasSpeechRequest)
+  );
 
-  g_event_queue = xQueueCreate(4, sizeof(AtlasProtocolEvent));
-  g_speech_queue = xQueueCreate(2, sizeof(AtlasSpeechRequest));
-
-  xTaskCreate(atlas_protocol_task, "atlas_protocol", 1024, NULL, 4, NULL);
-  xTaskCreate(atlas_speech_task, "atlas_speech", 768, NULL, 3, NULL);
+  xTaskCreate(atlas_serial_task, "atlas_serial", 768, NULL, 4, NULL);
+  xTaskCreate(atlas_speech_task, "atlas_speech", 640, NULL, 3, NULL);
 }
 
 
