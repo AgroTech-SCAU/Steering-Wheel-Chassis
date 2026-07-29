@@ -330,7 +330,7 @@ source install/setup.bash
 
 ### 5.2 导航与任务包
 
-导航、任务状态机、视觉适配器和 MCU 通信桥都位于 `chassis-pi-ws/src` 下。常规情况下只需要编译 PI 端工作区即可。
+导航、任务状态机、视觉适配器和 MCU 通信桥都位于 `chassis-pi-ws/src` 下；常规情况下只需要编译 PI 端工作区即可
 
 ### 5.3 MCU 工程
 
@@ -527,7 +527,7 @@ source ~/chassis-pi-ws/install/setup.bash
 ros2 launch robot_startup robot_start.launch.py
 ```
 
-当前 `robot_startup` 已纳入 `mcu_comm_bridge`、雷达、机器人模型和任务总栈。如果只分步调试，可单独启动对应 launch。
+当前 `robot_startup` 已纳入 `mcu_comm_bridge`、雷达、机器人模型和任务总栈；如果只分步调试，可单独启动对应 launch
 
 ---
 

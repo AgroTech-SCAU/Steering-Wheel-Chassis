@@ -8,33 +8,49 @@ extern "C"{ void * __dso_handle = 0 ;}
 #include <string.h>
 
 // Atlas ASRPro TWEN51 固件
+// 
+// 工作流程：
+// 1. 上电后等待 MCU 发送 SPK,1
+// 2. 收到 SPK,1 后，依次播报：
+//      “遥操作区任务已完成”
+//      “请说阿特拉斯启动”
+// 3. 两句播报结束后，才接受一次“阿特拉斯启动”识别结果
+// 4. 识别成功后立即向 MCU 发送一次：EVT,AUTO_START\n
+// 5. 随后播报“开始执行全自主运输任务”
+// 6. 第 5 步播报结束后进入 READY，才接受 SPK,4～6
+// 7. READY 状态再次收到 SPK,1，可开始下一个任务周期
 //
-// 定位：ASRPro 是非关键语音播报外设，只接收 MCU 单向指令并执行。
-// 不负责底盘控制、任务控制、语音启动、在线检测或状态反馈。
+// 最小双向串口协议，115200 8N1，ASCII 按行解析：
 //
-// 串口协议（115200，按行解析，无 ACK、无心跳、无握手、无返回）：
-//   SPK,1\n  遥操作区任务已完成
-//   SPK,2\n  请说阿特拉斯启动
-//   SPK,3\n  开始执行全自主运输任务
-//   SPK,4\n  货物派送完成
-//   SPK,5\n  全自主运输任务结束
-//   SPK,6\n  当前阶段已跳过
+// MCU -> ASRPro：
+//   SPK,1\n  遥操作区完成，启动一次性语音门控流程
+//   SPK,4\n  货物派送完成（仅 READY 状态有效）
+//   SPK,5\n  全自主运输任务结束（仅 READY 状态有效）
+//   SPK,6\n  当前阶段已跳过（仅 READY 状态有效）
 //
-// 非法命令、非法参数和溢出数据直接忽略，不影响其他设备运行。
+// ASRPro -> MCU：
+//   EVT,AUTO_START\n
+//     仅在本周期首次识别到“阿特拉斯启动”时发送一次
+//
+// 无握手、无心跳、无 ACK、无自动重发
+// ASRPro 不参与底盘安全；ASRPro 失效不得影响底盘基本控制
 
 #define ATLAS_RX_LINE_MAX 32
 #define ATLAS_SPEECH_QUEUE_SIZE 4
 
-#define ATLAS_PLAY_TRANSITION_COMPLETE 10500
-#define ATLAS_PLAY_VOICE_PROMPT 10501
-#define ATLAS_PLAY_AUTONOMOUS_START 10502
-#define ATLAS_PLAY_DELIVERY_COMPLETE 10503
-#define ATLAS_PLAY_TASK_COMPLETE 10504
-#define ATLAS_PLAY_TASK_SKIPPED 10505
+// 必须与 ASRPro 工程中“阿特拉斯启动”命令词的识别 ID 一致
+#define ATLAS_START_INTENT_SNID 1U
+
+#define ATLAS_PLAY_TRANSITION_COMPLETE 10500U
+#define ATLAS_PLAY_VOICE_PROMPT 10501U
+#define ATLAS_PLAY_AUTONOMOUS_START 10502U
+#define ATLAS_PLAY_DELIVERY_COMPLETE 10503U
+#define ATLAS_PLAY_TASK_COMPLETE 10504U
+#define ATLAS_PLAY_TASK_SKIPPED 10505U
 
 uint32_t snid;
 
-// 固定语音资源；MCU 只需要发送数字 phrase_id。
+// 固定语音资源
 //{speak:小蝶-清新女声,vol:14,speed:10,platform:haohaodada}
 //{playid:10500,voice:遥操作区任务已完成}
 //{playid:10501,voice:请说阿特拉斯启动}
@@ -42,43 +58,66 @@ uint32_t snid;
 //{playid:10503,voice:货物派送完成}
 //{playid:10504,voice:全自主运输任务结束}
 //{playid:10505,voice:当前阶段已跳过}
+//
+// 识别命令词应在 ASRPro 工程中配置为：
+// “阿特拉斯启动” -> snid = ATLAS_START_INTENT_SNID
+
+typedef enum {
+  ATLAS_STATE_WAIT_TRANSITION = 0,
+  ATLAS_STATE_GATE_QUEUED,
+  ATLAS_STATE_PLAYING_GATE_PROMPTS,
+  ATLAS_STATE_WAIT_START_VOICE,
+  ATLAS_STATE_START_CONFIRMED,
+  ATLAS_STATE_PLAYING_AUTONOMOUS_START,
+  ATLAS_STATE_READY
+} AtlasRuntimeState;
+
+typedef enum {
+  ATLAS_SPEECH_PLAY_ONLY = 0,
+  ATLAS_SPEECH_GATE_SEQUENCE,
+  ATLAS_SPEECH_AUTONOMOUS_START
+} AtlasSpeechType;
 
 typedef struct {
+  uint8_t type;
   uint32_t play_id;
 } AtlasSpeechRequest;
 
 static QueueHandle_t g_speech_queue = NULL;
+
 static char g_rx_line[ATLAS_RX_LINE_MAX] = {0};
 static uint8_t g_rx_length = 0;
+static bool g_rx_discard_until_newline = false;
+
+static volatile AtlasRuntimeState g_runtime_state =
+  ATLAS_STATE_WAIT_TRANSITION;
+
+static volatile bool g_start_event_sent = false;
 
 static void atlas_serial_task(void *parameter);
 static void atlas_speech_task(void *parameter);
+
 static void atlas_handle_line(char *line);
-static void atlas_enqueue_speech(uint32_t play_id);
-static uint32_t atlas_phrase_to_play_id(uint16_t phrase_id);
-static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id);
+static bool atlas_parse_phrase_id(
+  const char *text,
+  uint16_t *phrase_id
+);
 
-static uint32_t atlas_phrase_to_play_id(uint16_t phrase_id)
-{
-  switch(phrase_id){
-    case 1:
-      return ATLAS_PLAY_TRANSITION_COMPLETE;
-    case 2:
-      return ATLAS_PLAY_VOICE_PROMPT;
-    case 3:
-      return ATLAS_PLAY_AUTONOMOUS_START;
-    case 4:
-      return ATLAS_PLAY_DELIVERY_COMPLETE;
-    case 5:
-      return ATLAS_PLAY_TASK_COMPLETE;
-    case 6:
-      return ATLAS_PLAY_TASK_SKIPPED;
-    default:
-      return 0;
-  }
-}
+static bool atlas_enqueue_request(
+  AtlasSpeechType type,
+  uint32_t play_id,
+  TickType_t wait_ticks
+);
 
-static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id)
+static void atlas_enqueue_normal_speech(uint32_t play_id);
+static void atlas_begin_voice_gate(void);
+static void atlas_play_until_done(uint32_t play_id);
+static void atlas_send_auto_start_event_once(void);
+
+static bool atlas_parse_phrase_id(
+  const char *text,
+  uint16_t *phrase_id
+)
 {
   if(text == NULL || phrase_id == NULL || *text == '\0'){
     return false;
@@ -86,7 +125,10 @@ static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id)
 
   char *end_pointer = NULL;
   unsigned long value = strtoul(text, &end_pointer, 10);
-  if(end_pointer == text || *end_pointer != '\0' || value > 65535UL){
+
+  if(end_pointer == text ||
+     *end_pointer != '\0' ||
+     value > 65535UL){
     return false;
   }
 
@@ -94,20 +136,69 @@ static bool atlas_parse_phrase_id(const char *text, uint16_t *phrase_id)
   return true;
 }
 
-static void atlas_enqueue_speech(uint32_t play_id)
+static bool atlas_enqueue_request(
+  AtlasSpeechType type,
+  uint32_t play_id,
+  TickType_t wait_ticks
+)
 {
-  if(g_speech_queue == NULL || play_id == 0){
+  if(g_speech_queue == NULL){
+    return false;
+  }
+
+  AtlasSpeechRequest request;
+  request.type = (uint8_t)type;
+  request.play_id = play_id;
+
+  return xQueueSend(
+    g_speech_queue,
+    &request,
+    wait_ticks
+  ) == pdTRUE;
+}
+
+static void atlas_enqueue_normal_speech(uint32_t play_id)
+{
+  if(play_id == 0U || g_speech_queue == NULL){
     return;
   }
 
   AtlasSpeechRequest request;
+  request.type = (uint8_t)ATLAS_SPEECH_PLAY_ONLY;
   request.play_id = play_id;
 
-  // 队列满时丢弃最旧的一条，优先保留较新的播报请求。
+  // 普通播报队列满时丢弃最旧请求，优先保留新状态播报
   if(xQueueSend(g_speech_queue, &request, 0) != pdTRUE){
     AtlasSpeechRequest dropped_request;
     xQueueReceive(g_speech_queue, &dropped_request, 0);
     xQueueSend(g_speech_queue, &request, 0);
+  }
+}
+
+static void atlas_begin_voice_gate(void)
+{
+  AtlasRuntimeState state = g_runtime_state;
+
+  // 只允许从初始等待状态或上一周期 READY 状态开始新周期
+  if(state != ATLAS_STATE_WAIT_TRANSITION &&
+     state != ATLAS_STATE_READY){
+    return;
+  }
+
+  g_runtime_state = ATLAS_STATE_GATE_QUEUED;
+  g_start_event_sent = false;
+
+  // 新的 SPK,1 表示开始新的任务周期
+  // 清除尚未执行的普通播报，确保门控流程优先
+  if(g_speech_queue != NULL){
+    xQueueReset(g_speech_queue);
+  }
+
+  if(!atlas_enqueue_request(
+      ATLAS_SPEECH_GATE_SEQUENCE,
+      0U,
+      pdMS_TO_TICKS(20))){
+    g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
   }
 }
 
@@ -117,7 +208,6 @@ static void atlas_handle_line(char *line)
     return;
   }
 
-  // 当前只支持：SPK,<phrase_id>
   if(strncmp(line, "SPK,", 4) != 0){
     return;
   }
@@ -127,12 +217,41 @@ static void atlas_handle_line(char *line)
     return;
   }
 
-  uint32_t play_id = atlas_phrase_to_play_id(phrase_id);
-  if(play_id == 0){
-    return;
-  }
+  switch(phrase_id){
+    case 1:
+      // 唯一的门控启动信号
+      atlas_begin_voice_gate();
+      break;
 
-  atlas_enqueue_speech(play_id);
+    case 4:
+      if(g_runtime_state == ATLAS_STATE_READY){
+        atlas_enqueue_normal_speech(
+          ATLAS_PLAY_DELIVERY_COMPLETE
+        );
+      }
+      break;
+
+    case 5:
+      if(g_runtime_state == ATLAS_STATE_READY){
+        atlas_enqueue_normal_speech(
+          ATLAS_PLAY_TASK_COMPLETE
+        );
+      }
+      break;
+
+    case 6:
+      if(g_runtime_state == ATLAS_STATE_READY){
+        atlas_enqueue_normal_speech(
+          ATLAS_PLAY_TASK_SKIPPED
+        );
+      }
+      break;
+
+    // SPK,2 和 SPK,3 已改为门控流程内部自动播报，
+    // MCU 不应直接发送；收到时直接忽略
+    default:
+      break;
+  }
 }
 
 static void atlas_serial_task(void *parameter)
@@ -149,26 +268,36 @@ static void atlas_serial_task(void *parameter)
       char input_character = (char)input_value;
 
       if(input_character == '\n'){
-        while(g_rx_length > 0 && g_rx_line[g_rx_length - 1] == '\r'){
-          g_rx_length--;
-        }
+        if(!g_rx_discard_until_newline){
+          while(g_rx_length > 0 &&
+                g_rx_line[g_rx_length - 1] == '\r'){
+            g_rx_length--;
+          }
 
-        g_rx_line[g_rx_length] = '\0';
-        if(g_rx_length > 0){
-          atlas_handle_line(g_rx_line);
+          g_rx_line[g_rx_length] = '\0';
+
+          if(g_rx_length > 0){
+            atlas_handle_line(g_rx_line);
+          }
         }
 
         g_rx_length = 0;
         g_rx_line[0] = '\0';
+        g_rx_discard_until_newline = false;
       }
       else if(input_character != '\r'){
+        if(g_rx_discard_until_newline){
+          continue;
+        }
+
         if(g_rx_length < ATLAS_RX_LINE_MAX - 1){
           g_rx_line[g_rx_length++] = input_character;
         }
         else{
-          // 当前行过长时直接丢弃，等待下一行。
+          // 当前行过长：丢弃整行，直到下一个换行符
           g_rx_length = 0;
           g_rx_line[0] = '\0';
+          g_rx_discard_until_newline = true;
         }
       }
     }
@@ -179,15 +308,91 @@ static void atlas_serial_task(void *parameter)
   vTaskDelete(NULL);
 }
 
+static void atlas_play_until_done(uint32_t play_id)
+{
+  if(play_id == 0U){
+    return;
+  }
+
+  // 该等待只发生在独立播报任务中，
+  // 不会阻塞串口接收和 ASR_CODE 回调
+  while(prompt_play_by_cmd_id(
+      play_id,
+      -1,
+      NULL,
+      false)){
+    delay(1);
+  }
+}
+
+static void atlas_send_auto_start_event_once(void)
+{
+  if(g_start_event_sent){
+    return;
+  }
+
+  // 先置位再发送，确保同一识别周期只返回一次
+  g_start_event_sent = true;
+
+  Serial.print("EVT,AUTO_START\n");
+}
+
 static void atlas_speech_task(void *parameter)
 {
   (void)parameter;
 
   while(1){
     AtlasSpeechRequest request;
-    if(g_speech_queue != NULL && xQueueReceive(g_speech_queue, &request, 20) == pdTRUE){
-      while(prompt_play_by_cmd_id(request.play_id, -1, NULL, false)){
-        delay(1);
+
+    if(g_speech_queue != NULL &&
+       xQueueReceive(
+         g_speech_queue,
+         &request,
+         pdMS_TO_TICKS(20)) == pdTRUE){
+
+      switch((AtlasSpeechType)request.type){
+        case ATLAS_SPEECH_GATE_SEQUENCE:
+          g_runtime_state =
+            ATLAS_STATE_PLAYING_GATE_PROMPTS;
+
+          atlas_play_until_done(
+            ATLAS_PLAY_TRANSITION_COMPLETE
+          );
+
+          atlas_play_until_done(
+            ATLAS_PLAY_VOICE_PROMPT
+          );
+
+          // 必须等两句提示全部播完，才开放一次启动识别
+          if(g_runtime_state ==
+             ATLAS_STATE_PLAYING_GATE_PROMPTS){
+            g_runtime_state =
+              ATLAS_STATE_WAIT_START_VOICE;
+          }
+          break;
+
+        case ATLAS_SPEECH_AUTONOMOUS_START:
+          g_runtime_state =
+            ATLAS_STATE_PLAYING_AUTONOMOUS_START;
+
+          atlas_play_until_done(
+            ATLAS_PLAY_AUTONOMOUS_START
+          );
+
+          // 播报“开始全自主区”完成后，
+          // 才开放 SPK,4～6 普通播报
+          if(g_runtime_state ==
+             ATLAS_STATE_PLAYING_AUTONOMOUS_START){
+            g_runtime_state =
+              ATLAS_STATE_READY;
+          }
+          break;
+
+        case ATLAS_SPEECH_PLAY_ONLY:
+        default:
+          // 普通播报只可能在 READY 状态进入队列
+          atlas_play_until_done(request.play_id);
+          break;
       }
     }
 
@@ -199,9 +404,33 @@ static void atlas_speech_task(void *parameter)
 
 void ASR_CODE()
 {
-  // 本版本不使用离线识别结果，不向 MCU 或树莓派发送任何事件。
-  // 保留空回调以满足 ASRPro 工程生成要求。
-  (void)snid;
+  // 识别引擎可以持续产生回调，但只有在明确的门控状态中，
+  // “阿特拉斯启动”才被接受一次
+  if(g_runtime_state != ATLAS_STATE_WAIT_START_VOICE){
+    return;
+  }
+
+  if(snid != ATLAS_START_INTENT_SNID){
+    return;
+  }
+
+  // 先离开 WAIT_START_VOICE，防止连续识别回调重复触发
+  g_runtime_state = ATLAS_STATE_START_CONFIRMED;
+
+  // 语音识别成功后，立即向 MCU 返回一次启动事件
+  atlas_send_auto_start_event_once();
+
+  // 随后安排“开始执行全自主运输任务”播报
+  // 在该播报完成前，SPK,4～6 仍然无效
+  if(!atlas_enqueue_request(
+      ATLAS_SPEECH_AUTONOMOUS_START,
+      ATLAS_PLAY_AUTONOMOUS_START,
+      pdMS_TO_TICKS(20))){
+    // 极端情况下队列写入失败：
+    // 启动事件已经返回 MCU，但仍保持普通播报锁定，
+    // 等待 MCU 下一周期重新发送 SPK,1
+    g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
+  }
 }
 
 void setup()
@@ -214,8 +443,26 @@ void setup()
     sizeof(AtlasSpeechRequest)
   );
 
-  xTaskCreate(atlas_serial_task, "atlas_serial", 768, NULL, 4, NULL);
-  xTaskCreate(atlas_speech_task, "atlas_speech", 640, NULL, 3, NULL);
+  g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
+  g_start_event_sent = false;
+
+  xTaskCreate(
+    atlas_serial_task,
+    "atlas_serial",
+    768,
+    NULL,
+    4,
+    NULL
+  );
+
+  xTaskCreate(
+    atlas_speech_task,
+    "atlas_speech",
+    768,
+    NULL,
+    3,
+    NULL
+  );
 }
 
 
