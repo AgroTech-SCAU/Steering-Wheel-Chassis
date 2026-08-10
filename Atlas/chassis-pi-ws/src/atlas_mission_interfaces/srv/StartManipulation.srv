@@ -1,7 +1,0 @@
-string backend
-string waypoint_id
-string prepare_action
-string arrival_task
----
-bool success
-string message
