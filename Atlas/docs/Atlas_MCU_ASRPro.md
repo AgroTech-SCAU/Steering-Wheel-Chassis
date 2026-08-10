@@ -1,572 +1,235 @@
-# Atlas MCU–ASRPro 一次性语音启动通信协议
+# Atlas ASRPro ↔ MCU 最小双向串口协议
 
-> 协议版本：V1.2  
-> 固件：`atlas_asrpro_voice_gate_return_v1_2_20260729.hd`  
-> 串口：115200 8N1  
-> 编码：ASCII  
-> 帧结束符：`\n`，兼容 `\r\n`  
-> 通信模型：最小双向、无握手、无心跳、无 ACK、无自动重发
+> 协议版本：V1.4
+> ASRPro 固件：`atlas_asrpro/atlas_asrpro.hd`
+> MCU：STM32H723VGTX
+> 通信模型：最小双向 ASCII UART
 
----
-
-## 1. 协议目标
-
-ASRPro 负责两类功能：
-
-1. 固定语音播报。
-2. 在 MCU 明确通知“遥操作区完成”之后，开放一次“阿特拉斯启动”识别，并将识别结果返回 MCU。
-
-ASRPro 不负责：
-
-- 底盘安全。
-- 急停判断。
-- 自动任务执行。
-- MCU 在线判断。
-- 树莓派在线判断。
-- 周期性状态上报。
-- ACK/NACK。
-- 命令重发。
-
----
-
-## 2. 完整业务顺序
+## 1. 架构与职责
 
 ```text
-ASRPro 上电
-  ↓
-等待 MCU 的 SPK,1
-  ↓
-MCU → ASRPro：SPK,1
-  ↓
-ASRPro 播报“遥操作区任务已完成”
-  ↓
-ASRPro 播报“请说阿特拉斯启动”
-  ↓
-ASRPro 开放一次启动词识别
-  ↓
-识别到“阿特拉斯启动”
-  ↓
-ASRPro → MCU：EVT,AUTO_START
-  ↓
-ASRPro 播报“开始执行全自主运输任务”
-  ↓
-播报完成后进入 READY
-  ↓
-才允许 MCU 发送 SPK,4～6
+遥控器 ──> MCU ── UART8 ──> ASRPro
+                 <──────────
 ```
 
-关键点：
+ASRPro 是非关键语音交互外设，只负责：
 
-- `SPK,1` 之前的任何识别结果均被忽略。
-- 两句门控提示播完之前的识别结果均被忽略。
-- 一个任务周期只接受一次启动识别。
-- 启动识别成功后立即返回一次 `EVT,AUTO_START`。
-- “开始执行全自主运输任务”播完后，才允许普通播报。
-- READY 状态再次收到 `SPK,1`，开始下一个任务周期。
+- 固定语音播报
+- 一次性“阿特拉斯启动”识别门控
+- 向 MCU 返回 `EVT,AUTO_START`
 
----
+MCU 是系统状态和安全权威，负责决定何时开启语音门控、是否接受语音事件以及是否执行 `Idle -> AutoPi`
 
-## 3. 物理连接
+Pi/YASMIN 不直接连接 ASRPro，不检查 ASRPro 在线状态，不等待播报完成，ASRPro 也不进入 Pi/YASMIN 状态图
 
-由于 ASRPro 需要返回启动事件，必须连接双向 UART：
+ASRPro 不负责底盘安全、EStop、Fault、Pi 在线状态、底盘/里程计 ready、任务状态或状态机切换
+
+## 2. UART 与接线
+
+| 项目 | 配置 |
+|---|---|
+| MCU 外设 | UART8，异步 TX/RX |
+| 波特率 | 115200 |
+| 数据格式 | 8 data bits，1 stop bit，no parity，no flow control |
+| 编码 | ASCII |
+| 行结束符 | `\n`，接收兼容 `\r\n` |
 
 ```text
-MCU UART_TX  ─────────→  ASRPro UART_RX
-MCU UART_RX  ←─────────  ASRPro UART_TX
-MCU GND      ──────────  ASRPro GND
+MCU PE1 / UART8_TX  ───> ASRPro RX
+MCU PE0 / UART8_RX  <─── ASRPro TX
+MCU GND              ─── ASRPro GND
 ```
 
-双方电平必须兼容。
+双方串口电平必须兼容并共地
 
----
+## 3. MCU -> ASRPro
 
-## 4. MCU → ASRPro 命令
+| 命令 | 含义 | 接受条件 |
+|---|---|---|
+| `SPK,1\n` | 开始或重新开始一次语音启动门控 | `PLAYING_TRANSITION` 中幂等；其余状态抢占当前播报并清理 SDK 播放队列 |
+| `SPK,2\n` | MCU 已正式接受自动任务启动，播报“开始执行全自主运输任务” | 仅 `READY` |
+| `SPK,4\n` | 播报“货物派送完成” | 仅 `READY` |
+| `SPK,5\n` | 播报“全自主运输任务结束” | 仅 `READY` |
+| `SPK,6\n` | 播报“当前阶段已跳过” | 仅 `READY` |
 
-### 4.1 启动语音门控周期
+`SPK,1` 每次只发送一次，不周期重发；除第一句正在播放时保持当前周期外，它会从“遥操作区任务已完成”重新开始完整门控周期，因此 MCU 不需要单独的 ASRPro RESET 命令
 
-```text
-SPK,1\n
-```
+`SPK,2` 只在 MCU 完成全部安全复核并实际进入 `AutoPi` 后 best-effort 发送；它是业务播报命令，不是 ACK，也不参与 ASR 识别门控
 
-含义：
+`SPK,4` 和 `SPK,6` 当前只保留 MCU 发送能力，尚未绑定上游业务事件；不得为使用它们修改 MCU ↔ Pi 协议或提前实现 YASMIN
 
-- 遥操作区已完成。
-- ASRPro 开始执行门控播报。
-- 门控播报结束后只开放一次“阿特拉斯启动”识别。
+## 4. ASRPro -> MCU
 
-只有以下状态接受：
+| 事件 | 含义 |
+|---|---|
+| `EVT,AUTO_START\n` | 用户在已开放的本周期门控内完成一次有效“阿特拉斯启动”输入 |
 
-```text
-WAIT_TRANSITION
-READY
-```
+一个 `SPK,1` 周期最多产生一次 `EVT,AUTO_START`
 
-在其他状态重复发送会被忽略。
+该事件不是机器人安全许可，也不表示机器人已经进入自动运行；MCU 必须先确认本地 `voice_gate_armed`，再调用现有 `app_runtime_try_accept_auto_start_event()` 完成最终安全检查
 
----
+## 5. ASRPro 状态机
 
-### 4.2 货物派送完成
-
-```text
-SPK,4\n
-```
-
-仅在 `READY` 状态有效。
-
----
-
-### 4.3 全自主任务结束
-
-```text
-SPK,5\n
-```
-
-仅在 `READY` 状态有效。
-
----
-
-### 4.4 当前阶段跳过
-
-```text
-SPK,6\n
-```
-
-仅在 `READY` 状态有效。
-
----
-
-## 5. 不再由 MCU 发送的编号
-
-以下语句由 ASRPro 门控流程内部自动播报：
-
-```text
-SPK,2
-SPK,3
-```
-
-因此 MCU 不应发送它们。
-
-即使收到，ASRPro 也会忽略。
-
-内部映射：
-
-| 内部 phrase_id | 播报 |
-|---:|---|
-| 2 | 请说阿特拉斯启动 |
-| 3 | 开始执行全自主运输任务 |
-
----
-
-## 6. ASRPro → MCU 事件
-
-### 6.1 启动口令识别成功
-
-```text
-EVT,AUTO_START\n
-```
-
-触发条件必须同时满足：
-
-1. 当前状态为 `WAIT_START_VOICE`。
-2. 识别结果为“阿特拉斯启动”。
-3. 本任务周期尚未发送过该事件。
-
-事件含义：
-
-```text
-本周期一次性启动口令已识别成功
-```
-
-MCU 收到后可以：
-
-- 锁存语音启动结果。
-- 通知树莓派进入全自主任务。
-- 切换对应应用状态。
-
-MCU不应把该事件当作底盘安全许可；底盘安全仍由 MCU 自身条件判断。
-
----
-
-## 7. 返回事件时机
-
-V1.2 规定：
-
-```text
-识别成功后立即发送 EVT,AUTO_START
-```
-
-然后 ASRPro 播报：
-
-```text
-开始执行全自主运输任务
-```
-
-在该播报结束前：
-
-```text
-SPK,4
-SPK,5
-SPK,6
-```
-
-仍会被忽略。
-
-这样可以同时保证：
-
-- MCU 能及时收到识别结果。
-- 后续普通播报不会插入“开始全自主区”之前。
-
----
-
-## 8. ASRPro 状态机
+Prompt Player 接口是非阻塞接口，每个播放请求只调用一次；门控流程由 SDK 播放完成 callback 驱动，callback 签名为 `void callback(cmd_handle_t cmd_handle)`
 
 ```mermaid
 stateDiagram-v2
-    [*] --> WAIT_TRANSITION
+    [*] --> ATLAS_STATE_WAIT_TRANSITION
 
-    WAIT_TRANSITION --> GATE_QUEUED: SPK,1
-    READY --> GATE_QUEUED: SPK,1（新周期）
+    ATLAS_STATE_WAIT_TRANSITION --> ATLAS_STATE_PLAYING_TRANSITION: SPK,1 / 抢占播放第一句
+    ATLAS_STATE_PLAYING_TRANSITION --> ATLAS_STATE_PLAYING_TRANSITION: SPK,1 / 幂等保持当前周期
+    ATLAS_STATE_PLAYING_VOICE_PROMPT --> ATLAS_STATE_PLAYING_TRANSITION: SPK,1 / 重新抢占第一句
+    ATLAS_STATE_WAIT_START_VOICE --> ATLAS_STATE_PLAYING_TRANSITION: SPK,1 / 重新抢占第一句
+    ATLAS_STATE_READY --> ATLAS_STATE_PLAYING_TRANSITION: SPK,1 / 新周期
 
-    GATE_QUEUED --> PLAYING_GATE_PROMPTS
-    PLAYING_GATE_PROMPTS --> WAIT_START_VOICE: 两句门控提示播完
+    ATLAS_STATE_PLAYING_TRANSITION --> ATLAS_STATE_PLAYING_VOICE_PROMPT: 第一句完成 / 播放第二句
+    ATLAS_STATE_PLAYING_TRANSITION --> ATLAS_STATE_WAIT_TRANSITION: 第一句启动失败
+    ATLAS_STATE_PLAYING_VOICE_PROMPT --> ATLAS_STATE_WAIT_TRANSITION: 第二句启动失败
+    ATLAS_STATE_PLAYING_VOICE_PROMPT --> ATLAS_STATE_WAIT_START_VOICE: 第二句完成
 
-    WAIT_START_VOICE --> START_CONFIRMED: 首次识别启动词
-    START_CONFIRMED --> PLAYING_AUTONOMOUS_START
-    PLAYING_AUTONOMOUS_START --> READY: 开始全自主区播报完成
-
-    READY --> READY: SPK,4～6
+    ATLAS_STATE_WAIT_START_VOICE --> ATLAS_STATE_READY: 识别启动词 / 发送 EVT
+    ATLAS_STATE_READY --> ATLAS_STATE_READY: SPK,2、SPK,4～6 / SDK 排队播报
 ```
 
----
+状态语义：
 
-## 9. 一次性识别规则
+1. 上电处于 `ATLAS_STATE_WAIT_TRANSITION`
+2. `SPK,1` 抢占当前播报，播放“遥操作区任务已完成”；若该句已经在播放，则保持当前周期且不重新调用播放器
+3. 第一句完成 callback 播放“请说阿特拉斯启动”
+4. 第二句完成后才进入 `ATLAS_STATE_WAIT_START_VOICE`
+5. 仅在该状态且 `snid == ATLAS_START_INTENT_SNID` 时离开门控、进入 `ATLAS_STATE_READY` 并发送一次事件
+6. ASRPro 不根据识别结果自行宣布任务开始；仅在 `READY` 收到 MCU 的 `SPK,2` 后播报“开始执行全自主运输任务”
+7. 门控播报启动失败回到 `ATLAS_STATE_WAIT_TRANSITION`
 
-识别引擎可以持续运行，但固件只在以下状态处理启动词：
+Prompt Player 官方文档说明抢占会清理播放队列，但没有说明被抢占请求是否还会触发 completion callback；为避免旧 callback 推进刚重启的新周期，第一句播放中的重复 `SPK,1` 采用保守幂等语义
 
-```text
-WAIT_START_VOICE
-```
-
-首次有效识别后立即切换为：
-
-```text
-START_CONFIRMED
-```
-
-因此连续回调、重复识别或环境回声不会重复触发事件。
-
-同一周期：
-
-```text
-EVT,AUTO_START
-```
-
-最多发送一次。
-
-下一个周期必须重新收到：
-
-```text
-SPK,1
-```
-
----
-
-## 10. 识别 ID
-
-固件默认：
+默认识别 ID：
 
 ```cpp
 #define ATLAS_START_INTENT_SNID 1U
 ```
 
-ASRPro 工程中的命令词必须配置为：
+ASRPro 工程必须配置“阿特拉斯启动”对应相同 `snid`
 
-```text
-阿特拉斯启动 -> snid = 1
-```
-
-如果实际工程生成的识别 ID 不是 `1`，必须同步修改宏：
-
-```cpp
-#define ATLAS_START_INTENT_SNID <实际ID>
-```
-
-否则不会触发启动事件。
-
----
-
-## 11. 完整时序
+## 6. 完整自动启动时序
 
 ```mermaid
 sequenceDiagram
-    participant MCU
-    participant ASR as ASRPro
+    participant R as Remote
+    participant U as User
+    participant M as MCU
+    participant A as ASRPro
+    participant P as Pi mission
 
-    MCU->>ASR: SPK,1\n
-    ASR-->>ASR: 播报“遥操作区任务已完成”
-    ASR-->>ASR: 播报“请说阿特拉斯启动”
-    Note over ASR: 进入 WAIT_START_VOICE
-
-    ASR-->>ASR: 识别“阿特拉斯启动”
-    ASR->>MCU: EVT,AUTO_START\n
-    ASR-->>ASR: 播报“开始执行全自主运输任务”
-    Note over ASR: 播报结束后进入 READY
-
-    MCU->>ASR: SPK,4\n
-    ASR-->>ASR: 播报“货物派送完成”
+    R->>M: 自动启动手势边沿
+    M-->>M: 检查 Idle/Fault/EStop/Pi/chassis/odom/latched
+    M->>A: SPK,1\n
+    M-->>M: voice_gate_armed = true
+    A-->>A: 播报“遥操作区任务已完成”
+    A-->>A: completion callback
+    A-->>A: 播报“请说阿特拉斯启动”
+    A-->>A: completion callback -> WAIT_START_VOICE
+    U->>A: “阿特拉斯启动”
+    A->>M: EVT,AUTO_START\n
+    A-->>A: 进入 READY，不自行宣布任务开始
+    M-->>M: 消费 armed，并重新完整检查安全条件
+    alt accepted
+        M-->>M: auto_start_latched = 1
+        M-->>M: Idle -> AutoPi
+        M->>A: SPK,2\n
+        A-->>U: 播报“开始执行全自主运输任务”
+        P->>M: 自动控制与任务流程
+        P->>M: PI_COMMS_MISSION_EVENT_DONE
+        M-->>M: AutoPi -> Finished
+        M->>A: SPK,5\n
+        A-->>U: 播报“全自主运输任务结束”
+    else rejected
+        M-->>M: 保持非 AutoPi 状态
+        Note over M,A: 不发送 SPK,2，不播报任务开始
+    end
 ```
 
----
+## 7. MCU 安全规则
 
-## 12. MCU 接收示例
+遥控自动手势只请求开启一次语音门控，不直接设置 `auto_start_latched`，也不直接切换 `AutoPi`
 
-MCU 按行解析 ASRPro 返回：
+开启门控前和收到事件后都检查：
 
-```c
-void asrpro_handle_line(const char *line)
-{
-    if (line == NULL) {
-        return;
-    }
+- 当前状态为 `Idle`
+- `auto_start_latched == 0`
+- 无锁存 Fault
+- 非 EStop
+- Pi online
+- chassis ready
+- odom ready
 
-    if (strcmp(line, "EVT,AUTO_START") == 0) {
-        app_on_voice_auto_start();
-    }
-}
-```
+收到 `EVT,AUTO_START` 时 MCU 先检查本地 `voice_gate_armed`；未武装事件直接忽略；已武装事件会先消费本周期 armed，再调用 `app_runtime_try_accept_auto_start_event()` 重新检查全部条件
 
-建议 MCU 在当前任务周期内再做一次本地锁存：
+只有 AutoPi 事件投递成功且 MCU 已实际进入 `AutoPi`，才 best-effort 发送 `SPK,2`；复核拒绝时不发送；`SPK,2` 发送失败只记录日志，不回滚 `AutoPi`、不清除锁存，也不产生 Fault
 
-```c
-static bool voice_start_latched = false;
+Manual 请求优先级高于 ASR 事件；进入 Manual、Fault 或 EStop 后，晚到事件不能切换到 `AutoPi`
 
-void app_on_voice_auto_start(void)
-{
-    if (voice_start_latched) {
-        return;
-    }
+以下情况清除 `voice_gate_armed` 和 pending ASR 事件：
 
-    voice_start_latched = true;
+- 初始化或遥控 clear/reset
+- 切回 Manual
+- 进入 Fault 或 EStop
+- ASR 自动启动事件被消费
+- 任务 DONE 或 FAIL
 
-    // 通知树莓派或进入全自主任务准备状态。
-}
-```
+## 8. 故障与降级规则
 
-新任务周期开始或系统复位时：
+ASRPro 是非关键外设：
 
-```c
-voice_start_latched = false;
-```
+- ASRPro 断开不产生 MCU Fault
+- ASRPro 断开不影响 Manual
+- ASRPro 断开不影响 EStop
+- ASRPro 断开不影响 PC 控制或 MCU ↔ Pi 链路
+- ASRPro 串口错误只重新启动 UART8 单字节接收
+- 本周期若无法获得 `EVT,AUTO_START`，则无法通过语音完成 `AutoPi` 启动
+- 播报命令发送失败只记录日志，不改变任务状态
 
----
+## 9. 无 ACK 原则
 
-## 13. MCU 发送示例
+本协议明确不包含：
 
-```c
-void asrpro_notify_teleop_complete(void)
-{
-    static const char command[] = "SPK,1\n";
+- handshake 或 HELLO
+- heartbeat 或在线检测
+- ACK / NACK
+- CRC
+- sequence
+- 版本协商
+- 自动重发
 
-    uart_send_nonblocking(
-        ASRPRO_UART,
-        (const uint8_t *)command,
-        sizeof(command) - 1U
-    );
-}
-```
+非法行、未知命令和超长行均直接丢弃，不返回错误
 
-普通播报：
+`SPK,2` 是 MCU 授权后的单向业务播报，不是对 `EVT,AUTO_START` 的协议 ACK
 
-```c
-void asrpro_speak(uint16_t phrase_id)
-{
-    if (phrase_id != 4U &&
-        phrase_id != 5U &&
-        phrase_id != 6U) {
-        return;
-    }
+## 10. Reset 与重启
 
-    char command[16];
+MCU 不发送专门 RESET 命令；新的 `SPK,1` 可从 ASRPro 任意内部状态发起；第一句播放中保持当前周期，其余状态使用抢占播放清理旧 SDK 播放队列，并重新从“遥操作区任务已完成”开始门控周期
 
-    int length = snprintf(
-        command,
-        sizeof(command),
-        "SPK,%u\n",
-        (unsigned int)phrase_id
-    );
+MCU reset 后只需在下一次合法遥控手势时发送新的 `SPK,1`
 
-    if (length <= 0 ||
-        length >= (int)sizeof(command)) {
-        return;
-    }
+## 11. 接收边界
 
-    uart_send_nonblocking(
-        ASRPRO_UART,
-        (const uint8_t *)command,
-        (size_t)length
-    );
-}
-```
+双方均按 `\n` 分行并兼容 `\r\n`
 
----
+- ASRPro 最大接收行长度为 32 字节量级
+- MCU 使用固定长度 ring buffer 和 32 字节行缓冲
+- UART ISR 只喂入字节并重新启动单字节接收
+- 字符串比较在 MCU 100 Hz `asr_comms_process()` 中完成
+- 超长行从溢出处丢弃到下一换行符
+- 无动态内存分配
 
-## 14. 无 ACK 与无重发规则
+## 12. 验证要点
 
-协议仍然没有 ACK。
-
-MCU 不应执行：
-
-```text
-未收到 ACK 就重复发送 SPK,1
-```
-
-因为本协议根本没有 ACK。
-
-建议：
-
-- MCU 每个“遥操作区完成”事件只发送一次 `SPK,1`。
-- MCU 不周期性重发。
-- ASRPro 不对 `SPK` 命令返回确认。
-- `EVT,AUTO_START` 不要求 MCU 返回确认。
-- ASRPro 不自动重发 `EVT,AUTO_START`。
-
-若 MCU 丢失一次启动事件，本任务周期不会自动补发。该取舍用于保持协议最小化。
-
----
-
-## 15. 非法或越权命令
-
-| 输入或行为 | ASRPro 处理 |
-|---|---|
-| 上电后直接语音启动 | 忽略 |
-| 门控提示播完前识别启动词 | 忽略 |
-| 同周期第二次识别启动词 | 忽略 |
-| 非 READY 状态发送 `SPK,4～6` | 忽略 |
-| MCU 发送 `SPK,2` | 忽略 |
-| MCU 发送 `SPK,3` | 忽略 |
-| `SPK,0` 或 `SPK,7` | 忽略 |
-| 非法 ASCII 行 | 忽略 |
-| 超长行 | 丢弃整行 |
-| 重复 `SPK,1` | 门控进行中时忽略 |
-
-所有非法输入均不返回错误。
-
----
-
-## 16. ASRPro 断电或异常
-
-ASRPro 是任务启动交互外设，而不是底盘安全设备。
-
-ASRPro 异常时：
-
-- MCU 不应进入底盘硬件故障。
-- 遥控和急停必须仍然工作。
-- MCU 收不到 `EVT,AUTO_START`，因此本次语音启动条件不会成立。
-- 可以由人工重新发起任务周期或采用其他授权启动方式。
-
----
-
-## 17. 测试用例
-
-### 17.1 上电直接识别
-
-操作：
-
-```text
-不发送 SPK,1，直接说“阿特拉斯启动”
-```
-
-预期：
-
-- 无播报。
-- 无 `EVT,AUTO_START`。
-
-### 17.2 正常流程
-
-操作：
-
-```text
-MCU 发送 SPK,1
-等待两句提示播完
-说“阿特拉斯启动”
-```
-
-预期：
-
-1. 播报遥操作区完成。
-2. 播报语音提示。
-3. 返回一次 `EVT,AUTO_START`。
-4. 播报开始全自主任务。
-5. 进入 READY。
-
-### 17.3 门控提示期间提前说启动词
-
-预期：
-
-- 识别结果被忽略。
-- 必须等提示播完后重新说。
-
-### 17.4 连续说两次启动词
-
-预期：
-
-```text
-EVT,AUTO_START
-```
-
-只返回一次。
-
-### 17.5 启动播报期间发送 SPK,4
-
-预期：
-
-- `SPK,4` 被忽略。
-- 不得插入到“开始全自主任务”播报之前。
-
-### 17.6 READY 后发送 SPK,4
-
-预期：
-
-- 正常播报“货物派送完成”。
-
-### 17.7 下一周期
-
-操作：
-
-```text
-READY 状态发送 SPK,1
-```
-
-预期：
-
-- 清除上一周期的一次性识别锁存。
-- 重新开始门控流程。
-- 下一周期仍最多返回一次启动事件。
-
----
-
-## 18. 协议摘要
-
-```text
-版本：V1.2
-UART：115200 8N1
-编码：ASCII
-结束符：\n
-
-MCU -> ASRPro：
-  SPK,1
-  SPK,4
-  SPK,5
-  SPK,6
-
-ASRPro -> MCU：
-  EVT,AUTO_START
-
-握手：无
-心跳：无
-ACK：无
-NACK：无
-自动重发：无
-启动识别：每个 SPK,1 周期一次
-普通播报开放：开始全自主区播报完成后
-```
+1. 未发送 `SPK,1` 时说启动词，不产生事件
+2. 两句门控提示完成前说启动词，不产生事件
+3. 提示完成后首次说启动词，只产生一次事件
+4. 有效识别后 ASRPro 直接进入 `READY`，不自行播放“开始执行全自主运输任务”
+5. `PLAYING_TRANSITION` 中重复 `SPK,1` 不重新调用播放器；其余中间状态收到新 `SPK,1` 时从第一句重新开始
+6. MCU 未 armed、复核失败或 Manual 优先时，不进入 `AutoPi` 且不发送 `SPK,2`
+7. MCU 实际进入 `AutoPi` 后发送一次 `SPK,2`；发送失败不回滚状态或产生 Fault
+8. `READY` 中的 `SPK,2`、`SPK,4`、`SPK,5`、`SPK,6` 均只进入 SDK 播放队列
+9. ASRPro 断电时 MCU、Manual、PC 和 EStop 保持正常

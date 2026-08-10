@@ -8,6 +8,7 @@
 #include "app_control.h"
 #include "app_fsm.h"
 #include "arm.h"
+#include "asr_comms.h"
 #include "chassis.h"
 #include "chassis_yaw_hold.h"
 #include "delay.h"
@@ -44,6 +45,7 @@ static ms_t s_auto_start_fault_log_timer = 0u;
 static ms_t s_auto_start_estop_log_timer = 0u;
 static ms_t s_remote_reset_log_timer = 0u;
 static bool s_auto_start_latched = false;
+static bool s_voice_gate_armed = false;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -58,6 +60,7 @@ static bool app_runtime_pi_arm_cmd_pending(void);
 static bool app_runtime_try_accept_auto_start_event(void);
 static bool app_runtime_can_accept_auto_start(void);
 static void app_runtime_set_auto_start_latched(bool latched);
+static void app_runtime_clear_voice_gate(void);
 static void app_runtime_handle_remote_clear_reset(void);
 static void app_runtime_reset_auto_task_context(void);
 static void app_runtime_finish_reset_transition(void);
@@ -80,6 +83,8 @@ void app_runtime_init(void) {
     s_auto_start_estop_log_timer = 0u;
     s_remote_reset_log_timer = 0u;
     s_auto_start_latched = false;
+    s_voice_gate_armed = false;
+    asr_comms_clear_pending_auto_start_event();
 
     app_control_init();
     app_fsm_init();
@@ -129,6 +134,7 @@ static void app_runtime_update_mode(void) {
 
     if(pi_comms_take_estop(&estop_event)) {
         log_warn("APP_RUNTIME estop event requested by Pi: reason=%u", estop_event.reason);
+        app_runtime_clear_voice_gate();
         (void)app_fsm_request_estop();
         return;
     }
@@ -144,6 +150,7 @@ static void app_runtime_update_mode(void) {
     }
 
     if(app_fsm_get_state() == APP_FSM_STATE_FAULT || app_fsm_get_state() == APP_FSM_STATE_ESTOP) {
+        app_runtime_clear_voice_gate();
         return;
     }
 
@@ -152,6 +159,7 @@ static void app_runtime_update_mode(void) {
                                                    ? APP_MANUAL_MODE_ARM_FS
                                                    : APP_MANUAL_MODE_CHASSIS_PC_ARM;
 
+        app_runtime_clear_voice_gate();
         if(app_fsm_get_state() == APP_FSM_STATE_AUTO_PI) {
             app_runtime_leave_auto_pi();
         }
@@ -165,8 +173,33 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
-    if(remote_take_auto_start_event()) {
+    if(asr_comms_take_auto_start_event()) {
+        if(!s_voice_gate_armed) {
+            log_info("AUTO voice event ignored: gate not armed");
+            return;
+        }
+
+        s_voice_gate_armed = false;
         (void)app_runtime_try_accept_auto_start_event();
+        return;
+    }
+
+    if(remote_take_auto_start_event()) {
+        s_voice_gate_armed = false;
+        asr_comms_clear_pending_auto_start_event();
+
+        if(app_runtime_can_accept_auto_start()) {
+            if(asr_comms_speak(ASR_COMMS_PHRASE_VOICE_GATE)) {
+                s_voice_gate_armed = true;
+                log_info("AUTO voice gate armed");
+            }
+            else {
+                log_warn("AUTO voice gate send failed");
+            }
+        }
+        else {
+            log_info("AUTO voice gate rejected: system not ready");
+        }
         return;
     }
 
@@ -189,6 +222,7 @@ static bool app_runtime_apply_safety(void) {
     }
 
     if(state == APP_FSM_STATE_FAULT || state == APP_FSM_STATE_ESTOP) {
+        app_runtime_clear_voice_gate();
         (void)app_control_stop_all();
         return false;
     }
@@ -310,6 +344,7 @@ static void app_runtime_leave_auto_pi(void) {
 static void app_runtime_raise_fault_once(AppFaultSource source, AppFaultLevel level, int32_t code) {
     AppFault fault;
 
+    app_runtime_clear_voice_gate();
     if(app_fsm_has_fault()) {
         return;
     }
@@ -397,7 +432,22 @@ static bool app_runtime_try_accept_auto_start_event(void) {
     pi_comms_clear_controls();
     chassis_yaw_hold_reset();
     app_runtime_set_auto_start_latched(true);
-    (void)app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI);
+    if(!app_fsm_post(APP_FSM_EVENT_SWITCH_TO_AUTO_PI)) {
+        app_runtime_set_auto_start_latched(false);
+        log_warn("AUTO start rejected: AutoPi event post failed");
+        return false;
+    }
+
+    app_fsm_process();
+    if(app_fsm_get_state() != APP_FSM_STATE_AUTO_PI) {
+        app_runtime_set_auto_start_latched(false);
+        log_warn("AUTO start rejected: AutoPi transition failed");
+        return false;
+    }
+
+    if(!asr_comms_speak(ASR_COMMS_PHRASE_AUTONOMOUS_START)) {
+        log_warn("AUTO start speech send failed");
+    }
     if(delay_nb_ms(&s_auto_start_accept_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
         log_info("AUTO start event accepted, latched=1");
     }
@@ -420,9 +470,15 @@ static void app_runtime_set_auto_start_latched(bool latched) {
     s_auto_start_latched = latched;
 }
 
+static void app_runtime_clear_voice_gate(void) {
+    s_voice_gate_armed = false;
+    asr_comms_clear_pending_auto_start_event();
+}
+
 static void app_runtime_handle_remote_clear_reset(void) {
     app_runtime_set_auto_start_latched(false);
     remote_clear_pending_auto_start_event();
+    app_runtime_clear_voice_gate();
     app_runtime_reset_auto_task_context();
     app_runtime_finish_reset_transition();
     if(delay_nb_ms(&s_remote_reset_log_timer, APP_RUNTIME_EVENT_LOG_PERIOD_MS)) {
@@ -527,13 +583,18 @@ static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event
     }
 
     if(event->type == PI_COMMS_MISSION_EVENT_DONE) {
+        app_runtime_clear_voice_gate();
         app_runtime_leave_auto_pi();
         (void)app_control_stop_all();
         (void)app_fsm_post(APP_FSM_EVENT_FINISHED);
+        if(!asr_comms_speak(ASR_COMMS_PHRASE_TASK_COMPLETE)) {
+            log_warn("AUTO task complete speech send failed");
+        }
         return;
     }
 
     if(event->type == PI_COMMS_MISSION_EVENT_FAIL) {
+        app_runtime_clear_voice_gate();
         app_runtime_leave_auto_pi();
         app_runtime_raise_fault_once(APP_FAULT_SOURCE_PI_MISSION,
                                      APP_FAULT_LEVEL_RECOVERABLE,

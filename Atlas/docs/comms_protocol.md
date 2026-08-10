@@ -2,7 +2,7 @@
 
 > 文档定位：本文件是 `PC <-> MCU` 与 `Pi <-> MCU` 的统一协议及行为约束
 >
-> 补充：ASRPRO TWEN51 通过 USB 串口与 PI 通信，只负责语音播报和离线识别，不直接控制 MCU，底盘或机械臂
+> 补充：ASRPro TWEN51 通过 UART8 与 MCU 最小双向连接；详细协议见 [`asrpro_mcu_protocol.md`](asrpro_mcu_protocol.md)
 
 ---
 
@@ -54,16 +54,22 @@ MCU 负责：
 
 ### 2.4 全自动任务启动权
 
-当前阶段仅考虑遥控器启动：
+当前阶段由遥控器请求一次 ASRPro 语音门控，再由 MCU 对语音事件执行最终授权：
 
 ```text
 遥控器产生有效自动启动边沿
         ↓
 MCU 检查状态、Pi 在线、底盘和里程计 ready
         ↓
-MCU 将 auto_start_latched 从 0 置为 1
+MCU -> ASRPro：SPK,1
         ↓
-MCU 执行 Idle -> AutoPi
+ASRPro 开放一次“阿特拉斯启动”门控
+        ↓
+ASRPro -> MCU：EVT,AUTO_START
+        ↓
+MCU 重新检查完整安全条件
+        ↓
+MCU 将 auto_start_latched 从 0 置为 1，并执行 Idle -> AutoPi
         ↓
 MCU 通过 MCU_STATUS 持续通知 Pi
         ↓
@@ -86,38 +92,34 @@ Pi 检测到 1 -> 0
 Pi 清理本地自动任务上下文并产生一次 RESET 事件
 ```
 
-### 2.5 ASRPRO -> Pi
+### 2.5 MCU <-> ASRPro
 
-ASRPRO 负责：
+MCU 通过 UART8 向 ASRPro 发送最小 `SPK` 命令；ASRPro 只返回一次性 `EVT,AUTO_START` 用户输入事件
 
-1. 开机后通过 USB 串口发送 `HELLO`
-2. 接收 PI 的 `SPEAK` 命令并播放固定语音
-3. 在识别到“阿特拉斯启动”等触发词后发送 `EVENT,ASR,atlas_start`
-4. 不直接控制 MCU，不直接发送底盘或机械臂指令
+该链路无 HELLO、心跳、ACK、CRC、sequence 或自动重发；ASRPro 不直接控制底盘、机械臂或 MCU 状态机
 
-### 2.6 Pi -> ASRPRO
+### 2.6 Pi/YASMIN 与 ASRPro 边界
 
-PI 负责：
+Pi/YASMIN 不直接连接 ASRPro，不检查 ASRPro 在线，不等待 ASRPro 播报完成，也不把 ASRPro 放入任务状态图
 
-1. 回复 `HELLO_ACK`
-2. 通过 `LISTEN,1/0` 控制语音识别窗口
-3. 通过 `SPEAK,phrase_id` 请求固定语音播报
-4. 对 ASRPRO 的 `EVENT` 发送 `EVENT_ACK`
-
-ASRPRO 协议详见 `docs/ASRPRO_TWEN51_通信协议.md`
+`EVT,AUTO_START` 不是安全许可；最终授权只由 MCU 的 `app_runtime_try_accept_auto_start_event()` 决定
 
 ---
 
 ## 2.7 智械争锋全自主任务链路
 
 ```text
-MCU AutoPi START
+遥控器请求 MCU 开启语音门控
         ↓
-PI 状态机启动
+MCU 向 ASRPro 发送 SPK,1
         ↓
 ASRPRO 播报“遥操作区任务已完成”
         ↓
-ASRPRO 等待 atlas_start
+ASRPRO 等待“阿特拉斯启动”并向 MCU 返回 EVT,AUTO_START
+        ↓
+MCU 重新检查安全条件并进入 AutoPi
+        ↓
+PI 状态机启动
         ↓
 PI 调用 /navigate_to_target
         ↓
@@ -133,7 +135,7 @@ PI 上报 DONE 给 MCU
 约束：
 
 1. PI 不主动请求 MCU 进入 AutoPi
-2. PI 不修改遥控器手势语义
+2. PI 不修改遥控器手势和语音门控语义
 3. 导航内部只由 `robot_startup` 和 `at_nav2` 管理
 4. 状态机只通过 `/navigate_to_target` 调用完整导航
 5. 视觉只使用 `vision_system/rui_vison/`
@@ -958,7 +960,7 @@ VRA >= REMOTE_AUTO_THRESHOLD
 VRB >= REMOTE_AUTO_THRESHOLD
 ```
 
-该条件只能生成一次边沿事件，不能作为持续电平命令
+该条件只能生成一次边沿事件，不能作为持续电平命令；该事件的新语义是请求 MCU 发送 `SPK,1` 开启一次语音门控，不是直接启动 `AutoPi`
 
 边沿规则：
 
@@ -966,7 +968,7 @@ VRB >= REMOTE_AUTO_THRESHOLD
 2. 遥控器重新上线时自动启动边沿默认未武装
 3. 必须先观察到一次“非自动启动条件”，才能武装
 4. 从非自动条件进入自动条件时产生一次 pending 启动事件
-5. 自动条件持续保持时不得重复产生事件
+5. 自动条件持续保持时不得重复产生门控请求
 6. 自动条件释放后可以重新形成输入边沿，但若 `auto_start_latched=1`，app 层仍必须拒绝再次启动
 
 ### 9.3 clear/reset 条件
@@ -991,7 +993,7 @@ clear/reset 也使用边沿事件：
 
 ### 9.4 启动接受条件
 
-MCU 只在以下条件全部满足时接受启动：
+MCU 只在以下条件全部满足时接受语音门控请求，并发送一次 `SPK,1`：
 
 ```text
 auto_start_latched == 0
@@ -1005,7 +1007,7 @@ not ESTOP
 
 机械臂 ready 不作为仅底盘任务的强制启动条件
 
-启动被拒绝时：
+门控请求被拒绝时：
 
 1. `auto_start_latched` 保持 0
 2. MCU 保持 `Idle`
@@ -1013,9 +1015,11 @@ not ESTOP
 4. 输出限频拒绝原因
 5. 操作员必须退出自动条件并重新触发边沿后才能重试
 
+收到 ASRPro 的 `EVT,AUTO_START` 后，MCU 必须先确认本周期 `voice_gate_armed`，消费 armed 状态，再按同一组条件重新检查；只有复检通过才接受启动
+
 ### 9.5 启动接受顺序
 
-推荐顺序：
+收到已武装的 `EVT,AUTO_START` 并复检通过后的顺序：
 
 ```text
 1. app_control_stop_all()
@@ -1033,14 +1037,15 @@ not ESTOP
 ```text
 1. auto_start_latched = 0
 2. 清除 pending auto-start event
-3. 清除 Pi 普通底盘控制缓存
-4. 清除 Pi 普通机械臂目标和普通一次性动作
-5. 清除普通 yaw action 和 yaw hold 上下文
-6. 清除 pending mission event
-7. 不清除 pending EStop
-8. 停止底盘和机械臂
-9. 按现有规则清除 recoverable Fault
-10. 根据当前状态进入安全状态
+3. 清除 voice_gate_armed 和 pending ASR AUTO_START event
+4. 清除 Pi 普通底盘控制缓存
+5. 清除 Pi 普通机械臂目标和普通一次性动作
+6. 清除普通 yaw action 和 yaw hold 上下文
+7. 清除 pending mission event
+8. 不清除 pending EStop
+9. 停止底盘和机械臂
+10. 按现有规则清除 recoverable Fault
+11. 根据当前状态进入安全状态
 ```
 
 不同状态下的行为：
@@ -1427,7 +1432,7 @@ STATUS:     1 次 / 100 ms = 10 Hz
 1. `remote.c` 只负责遥控器在线状态、通道解析和边沿事件生成
 2. `remote.c` 不得直接修改 `auto_start_latched`
 3. `remote.c` 不得调用状态机
-4. `app_runtime` 负责锁存标志、状态权限和启动条件检查
+4. `app_runtime` 负责语音门控 armed、锁存标志、状态权限和启动条件检查
 5. `app_status` 负责组装状态快照
 6. `pi_comms` 只负责将状态快照打包为 `MCU_STATUS`
 7. `pi_comms_clear_controls()` 只能清普通控制和普通一次性动作，不得清 pending EStop
@@ -1435,6 +1440,7 @@ STATUS:     1 次 / 100 ms = 10 Hz
 9. 上层任务管理器订阅 `/mcu/auto_task_event`，执行任务启动和取消
 10. UART/HAL 绑定由 assemble 层完成
 11. 不使用动态内存实现 MCU 协议状态
+12. `asr_comms` 只负责 `SPK` 编码、`EVT,AUTO_START` 解析和 pending 事件，不得调用 `app_fsm`
 
 ---
 
@@ -1467,6 +1473,9 @@ Pi 建立 0 基线
 遥控器先处于非自动条件
 再进入自动条件
 Pi online，chassis/odom ready
+MCU -> ASRPro: SPK,1
+两句提示完成后说“阿特拉斯启动”
+ASRPro -> MCU: EVT,AUTO_START
 ```
 
 预期：
@@ -1482,6 +1491,7 @@ Pi:  发布一次 START
 预期：
 
 ```text
+不重复发送 SPK,1
 不重复启动
 不重复清理 Pi 控制缓存
 不重复发布 START
@@ -1507,6 +1517,7 @@ Pi -> MCU: MISSION DONE
 ```text
 MCU: AutoPi -> Finished
 auto_start_latched 仍为 1
+MCU -> ASRPro: SPK,5
 Pi 不重复 START
 ```
 
@@ -1533,6 +1544,7 @@ SWC 高，VRA 低，VRB 低
 
 ```text
 MCU: auto_start_latched 1 -> 0
+MCU 清除 voice_gate_armed 和 pending ASR AUTO_START event
 MCU 清自动任务上下文
 Pi: 清本地任务上下文
 Pi: 发布一次 RESET
@@ -1554,6 +1566,7 @@ Pi: 发布一次 RESET
 clear/reset 完成
 离开 clear/reset 手势
 重新形成自动启动边沿
+完成新一轮语音门控
 ```
 
 预期：

@@ -13,6 +13,9 @@ static void (*uart5_rx_complete_callback)(void) = NULL;
 static void (*uart5_rx_event_callback)(uint16_t size) = NULL;
 static void (*uart5_error_callback)(void) = NULL;
 
+static void (*uart8_rx_complete_callback)(void) = NULL;
+static void (*uart8_error_callback)(void) = NULL;
+
 static void (*uart10_rx_complete_callback)(void) = NULL;
 static void (*uart10_rx_event_callback)(uint16_t size) = NULL;
 static void (*uart10_error_callback)(void) = NULL;
@@ -41,6 +44,14 @@ bool uart7_write_blocking(const char* data, uint32_t len) {
     }
 
     return HAL_UART_Transmit(&huart7, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
+}
+
+bool uart8_write_blocking(const char* data, uint32_t len) {
+    if(data == NULL || len == 0u || len > UINT16_MAX) {
+        return false;
+    }
+
+    return HAL_UART_Transmit(&huart8, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 bool uart10_write_blocking(const char* data, uint32_t len) {
@@ -138,6 +149,9 @@ void uart_register_rx_complete_callback(UART_HandleTypeDef* huart, void (*callba
     else if(huart == &huart5) {
         uart5_rx_complete_callback = callback;
     }
+    else if(huart == &huart8) {
+        uart8_rx_complete_callback = callback;
+    }
     else if(huart == &huart10) {
         uart10_rx_complete_callback = callback;
     }
@@ -162,6 +176,9 @@ void uart_register_error_callback(UART_HandleTypeDef* huart, void (*callback)(vo
     else if(huart == &huart5) {
         uart5_error_callback = callback;
     }
+    else if(huart == &huart8) {
+        uart8_error_callback = callback;
+    }
     else if(huart == &huart10) {
         uart10_error_callback = callback;
     }
@@ -181,6 +198,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
     }
     else if(huart == &huart5 && uart5_rx_complete_callback != NULL) {
         uart5_rx_complete_callback();
+    }
+    else if(huart == &huart8 && uart8_rx_complete_callback != NULL) {
+        uart8_rx_complete_callback();
     }
     else if(huart == &huart10 && uart10_rx_complete_callback != NULL) {
         uart10_rx_complete_callback();
@@ -205,6 +225,9 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
     }
     else if(huart == &huart5 && uart5_error_callback != NULL) {
         uart5_error_callback();
+    }
+    else if(huart == &huart8 && uart8_error_callback != NULL) {
+        uart8_error_callback();
     }
     else if(huart == &huart10 && uart10_error_callback != NULL) {
         uart10_error_callback();
