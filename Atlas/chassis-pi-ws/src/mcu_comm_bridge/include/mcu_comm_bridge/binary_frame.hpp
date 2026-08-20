@@ -38,8 +38,7 @@ constexpr uint16_t PAYLOAD_MCU_IMU_LEN = 48u;
 constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;
 constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 48u;
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;
-// PI_CONTROL payload[4] control_mask: bit0=chassis, bit1=arm, bit2=suction, bit3=brake。
-// 吸盘命令复用 payload[36]：0=关闭，1=打开。
+
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;
 constexpr uint16_t PAYLOAD_PI_MISSION_EVENT_LEN = 8u;
 constexpr uint16_t PAYLOAD_PI_ESTOP_LEN = 8u;

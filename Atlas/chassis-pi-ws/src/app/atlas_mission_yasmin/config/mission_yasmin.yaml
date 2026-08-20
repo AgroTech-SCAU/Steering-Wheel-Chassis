@@ -1,0 +1,23 @@
+atlas_mission_yasmin:
+  ros__parameters:
+    topics:
+      mcu_status: "/mcu/status"
+      mcu_auto_task_event: "/mcu/auto_task_event"
+      navigation_status: "/atlas/navigation/status"
+      navigation_cmd_vel: "/atlas/navigation/cmd_vel"
+      manipulation_status: "/atlas/manipulation/status"
+      mission_status: "/atlas/mission/status"
+      motor_cmd_vel: "/motor_cmd_vel"
+    services:
+      report_mission_result: "/mcu/report_mission_result"
+      set_brake: "/mcu/set_brake"
+      navigation_start: "/atlas/navigation/start"
+      navigation_cancel: "/atlas/navigation/cancel"
+      manipulation_start: "/atlas/manipulation/start"
+      manipulation_cancel: "/atlas/manipulation/cancel"
+    timeouts:
+      mcu_status_timeout_s: 1.0
+      wait_start_poll_s: 0.1
+      backend_service_timeout_s: 3.0
+      navigation_result_timeout_s: 60.0
+      manipulation_result_timeout_s: 30.0

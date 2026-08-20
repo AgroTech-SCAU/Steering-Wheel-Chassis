@@ -279,7 +279,7 @@ bool suction_valid   # true 表示本次机械臂目标同时携带吸盘命令
 bool suction_enable  # suction_valid=true 时生效
 ```
 
-当 suction_valid=false 时，本帧不改变吸盘状态。
+当 suction_valid=false 时，本帧不改变吸盘状态
 
 ### /mcu/report_mission_result
 
