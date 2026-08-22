@@ -1,5 +1,11 @@
 atlas_mission_yasmin:
   ros__parameters:
+    route_yaml_path: ""
+    mcu_status_timeout_s: 1.0
+    service_timeout_s: 3.0
+    backend_grace_s: 0.2
+    result_confirm_timeout_s: 30.0
+    required_ready_mask: 0
     topics:
       mcu_status: "/mcu/status"
       mcu_auto_task_event: "/mcu/auto_task_event"
@@ -15,9 +21,6 @@ atlas_mission_yasmin:
       navigation_cancel: "/atlas/navigation/cancel"
       manipulation_start: "/atlas/manipulation/start"
       manipulation_cancel: "/atlas/manipulation/cancel"
-    timeouts:
-      mcu_status_timeout_s: 1.0
-      wait_start_poll_s: 0.1
-      backend_service_timeout_s: 3.0
-      navigation_result_timeout_s: 60.0
-      manipulation_result_timeout_s: 30.0
+    wait_start_poll_s: 0.1
+    navigation_result_timeout_s: 60.0
+    manipulation_result_timeout_s: 30.0

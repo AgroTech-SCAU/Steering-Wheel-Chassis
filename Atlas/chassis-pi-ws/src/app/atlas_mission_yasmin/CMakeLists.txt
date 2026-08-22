@@ -19,6 +19,28 @@ find_package(yasmin REQUIRED)
 find_package(yasmin_ros REQUIRED)
 find_package(yasmin_viewer REQUIRED)
 
+add_library(atlas_mission_yasmin_runtime
+  src/runtime.cpp
+)
+
+target_include_directories(atlas_mission_yasmin_runtime
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(atlas_mission_yasmin_runtime
+  rclcpp
+  geometry_msgs
+  std_srvs
+  mcu_comm_bridge
+  atlas_mission_interfaces
+)
+
+target_link_libraries(atlas_mission_yasmin_runtime
+  yaml-cpp
+)
+
 add_executable(atlas_mission_yasmin_node
   src/atlas_mission_yasmin_node.cpp
 )
@@ -32,10 +54,22 @@ ament_target_dependencies(atlas_mission_yasmin_node
 )
 
 target_link_libraries(atlas_mission_yasmin_node
+  atlas_mission_yasmin_runtime
   yaml-cpp
   yasmin::yasmin
   yasmin_ros::yasmin_ros
   yasmin_viewer::yasmin_viewer
+)
+
+install(DIRECTORY include/
+  DESTINATION include
+)
+
+install(TARGETS atlas_mission_yasmin_runtime
+  EXPORT export_${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 
 install(TARGETS atlas_mission_yasmin_node
@@ -54,7 +88,28 @@ install(PROGRAMS
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(runtime_unit_test
+    test/runtime_unit_test.cpp
+  )
+  target_link_libraries(runtime_unit_test
+    atlas_mission_yasmin_runtime
+  )
+  set_tests_properties(runtime_unit_test PROPERTIES
+    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
+  )
+
   ament_lint_auto_find_test_dependencies()
 endif()
+
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+ament_export_dependencies(
+  rclcpp
+  geometry_msgs
+  std_srvs
+  mcu_comm_bridge
+  atlas_mission_interfaces
+)
 
 ament_package()

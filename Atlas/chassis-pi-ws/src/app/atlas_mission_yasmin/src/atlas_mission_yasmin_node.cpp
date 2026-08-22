@@ -1,15 +1,29 @@
+// Copyright 2026 yangxuan
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include <memory>
 
-#include "rclcpp/rclcpp.hpp"
+#include "atlas_mission_yasmin/runtime.hpp"
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
 
-  auto node = std::make_shared<rclcpp::Node>("atlas_mission_yasmin");
+  auto node = std::make_shared<atlas_mission_yasmin::Runtime>();
   RCLCPP_INFO(
     node->get_logger(),
-    "atlas_mission_yasmin skeleton node started; Runtime and YASMIN states are not implemented yet");
+    "atlas_mission_yasmin Runtime started; YASMIN states are not implemented yet");
 
   rclcpp::spin(node);
   rclcpp::shutdown();
