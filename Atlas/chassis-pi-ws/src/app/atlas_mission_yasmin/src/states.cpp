@@ -29,23 +29,6 @@ namespace
 
 using MissionStatus = atlas_mission_interfaces::msg::MissionStatus;
 
-std::string wait_result_to_outcome(const WaitResult result)
-{
-  switch (result) {
-    case WaitResult::kSuccess:
-      return outcomes::kOk;
-    case WaitResult::kRetry:
-      return outcomes::kRetry;
-    case WaitResult::kReset:
-      return outcomes::kReset;
-    case WaitResult::kRecovery:
-      return outcomes::kRecovery;
-    case WaitResult::kShutdown:
-      return outcomes::kShutdown;
-  }
-  return outcomes::kShutdown;
-}
-
 std::string action_result_to_outcome(const ActionResult result)
 {
   switch (result) {
@@ -119,7 +102,7 @@ RuntimeState::RuntimeState(Runtime::SharedPtr runtime, yasmin::Outcomes state_ou
 }
 
 BootstrapState::BootstrapState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kShutdown})
+: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kRecovery, outcomes::kShutdown})
 {
 }
 
@@ -131,7 +114,7 @@ std::string BootstrapState::execute(yasmin::Blackboard::SharedPtr blackboard)
 }
 
 WaitMcuState::WaitMcuState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kRetry, outcomes::kShutdown})
+: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kShutdown})
 {
 }
 
@@ -139,17 +122,22 @@ std::string WaitMcuState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_MCU_STATUS, "WAIT_MCU", "");
-  const auto result = runtime_->wait_mcu();
-  if (result == WaitResult::kRecovery || result == WaitResult::kReset) {
-    return outcomes::kRetry;
+  while (rclcpp::ok()) {
+    const auto result = runtime_->wait_mcu();
+    if (result == WaitResult::kSuccess) {
+      return outcomes::kOk;
+    }
+    if (result == WaitResult::kShutdown) {
+      return outcomes::kShutdown;
+    }
   }
-  return wait_result_to_outcome(result);
+  return outcomes::kShutdown;
 }
 
 WaitStartState::WaitStartState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),
-    {outcomes::kOk, outcomes::kReset, outcomes::kRecovery, outcomes::kShutdown})
+    {outcomes::kOk, outcomes::kRecovery, outcomes::kShutdown})
 {
 }
 
@@ -157,7 +145,19 @@ std::string WaitStartState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_START, "WAIT_START", "");
-  return wait_result_to_outcome(runtime_->wait_start());
+  while (rclcpp::ok()) {
+    const auto result = runtime_->wait_start();
+    if (result == WaitResult::kSuccess) {
+      return outcomes::kOk;
+    }
+    if (result == WaitResult::kRecovery || result == WaitResult::kReset) {
+      return outcomes::kRecovery;
+    }
+    if (result == WaitResult::kShutdown) {
+      return outcomes::kShutdown;
+    }
+  }
+  return outcomes::kShutdown;
 }
 
 PrecheckState::PrecheckState(Runtime::SharedPtr runtime)
