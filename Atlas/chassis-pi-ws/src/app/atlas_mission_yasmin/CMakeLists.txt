@@ -21,6 +21,7 @@ find_package(yasmin_viewer REQUIRED)
 
 add_library(atlas_mission_yasmin_runtime
   src/runtime.cpp
+  src/states.cpp
 )
 
 target_include_directories(atlas_mission_yasmin_runtime
@@ -39,6 +40,7 @@ ament_target_dependencies(atlas_mission_yasmin_runtime
 
 target_link_libraries(atlas_mission_yasmin_runtime
   yaml-cpp
+  yasmin::yasmin
 )
 
 add_executable(atlas_mission_yasmin_node
@@ -97,6 +99,17 @@ if(BUILD_TESTING)
     atlas_mission_yasmin_runtime
   )
   set_tests_properties(runtime_unit_test PROPERTIES
+    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
+  )
+
+  ament_add_gtest(states_unit_test
+    test/states_unit_test.cpp
+  )
+  target_link_libraries(states_unit_test
+    atlas_mission_yasmin_runtime
+    yasmin::yasmin
+  )
+  set_tests_properties(states_unit_test PROPERTIES
     ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
   )
 

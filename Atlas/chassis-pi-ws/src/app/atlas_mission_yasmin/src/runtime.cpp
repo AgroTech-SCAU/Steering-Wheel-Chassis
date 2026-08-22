@@ -331,13 +331,65 @@ bool Runtime::can_move() const
   return can_move_locked(Clock::now());
 }
 
-bool Runtime::wait_start()
+WaitResult Runtime::wait_mcu()
 {
   std::unique_lock<std::mutex> lock(mutex_);
-  return condition_.wait_for(
+  const bool changed = condition_.wait_for(
+    lock, std::chrono::milliseconds(100), [&]() {
+      return mcu_fresh_locked(Clock::now()) || reset_event_ || !rclcpp::ok();
+    });
+  if (!rclcpp::ok()) {
+    return WaitResult::kShutdown;
+  }
+  if (reset_event_) {
+    return WaitResult::kReset;
+  }
+  if (!changed && !mcu_fresh_locked(Clock::now())) {
+    return WaitResult::kRetry;
+  }
+  return mcu_fresh_locked(Clock::now()) ? WaitResult::kSuccess : WaitResult::kRetry;
+}
+
+WaitResult Runtime::wait_start()
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  const bool changed = condition_.wait_for(
     lock, std::chrono::milliseconds(100), [&]() {
       return start_event_ || reset_event_ || !rclcpp::ok();
-    }) && start_event_;
+    });
+  if (!rclcpp::ok()) {
+    return WaitResult::kShutdown;
+  }
+  if (reset_event_) {
+    return WaitResult::kReset;
+  }
+  if (!changed || !start_event_) {
+    return WaitResult::kRetry;
+  }
+  return guard_locked(Clock::now()) == GuardResult::kOk ?
+         WaitResult::kSuccess :
+         WaitResult::kRecovery;
+}
+
+WaitResult Runtime::wait_reset()
+{
+  safe_stop("wait reset");
+  std::unique_lock<std::mutex> lock(mutex_);
+  const bool changed = condition_.wait_for(
+    lock, std::chrono::milliseconds(100), [&]() {
+      return reset_event_ || !rclcpp::ok();
+    });
+  if (!rclcpp::ok()) {
+    return WaitResult::kShutdown;
+  }
+  if (changed && reset_event_) {
+    reset_event_ = false;
+    start_event_ = false;
+    active_ = false;
+    motion_enabled_ = false;
+    return WaitResult::kSuccess;
+  }
+  return WaitResult::kRetry;
 }
 
 void Runtime::begin_run()
@@ -447,10 +499,21 @@ bool Runtime::request_brake(const bool enabled)
 
 ActionResult Runtime::run_navigation(const Waypoint & waypoint)
 {
+  return run_navigation(waypoint, false);
+}
+
+ActionResult Runtime::run_navigation(const Waypoint & waypoint, const bool reset_origin)
+{
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_navigation_status_.reset();
     motion_enabled_ = false;
+    last_navigation_reset_origin_for_test_ = reset_origin;
+    if (next_navigation_result_for_test_) {
+      const auto result = *next_navigation_result_for_test_;
+      next_navigation_result_for_test_.reset();
+      return result;
+    }
   }
 
   if (guard() != GuardResult::kOk) {
@@ -466,7 +529,7 @@ ActionResult Runtime::run_navigation(const Waypoint & waypoint)
   request->x_m = waypoint.x_m;
   request->y_m = waypoint.y_m;
   request->yaw_rad = waypoint.yaw_rad;
-  request->reset_origin = false;
+  request->reset_origin = reset_origin;
   request->timeout_s = waypoint.timeout_s;
 
   auto future = nav_start_->async_send_request(request);
@@ -501,7 +564,7 @@ ActionResult Runtime::run_navigation(const Waypoint & waypoint)
 
 ActionResult Runtime::run_pre_move(const Waypoint & waypoint)
 {
-  if (waypoint.pre_move_action.empty()) {
+  if (waypoint.pre_move_action.empty() || waypoint.pre_move_action == "noop") {
     return ActionResult::kSucceeded;
   }
   Job pre_move;
@@ -514,6 +577,11 @@ ActionResult Runtime::run_job(const Waypoint & waypoint, const Job & job)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_manipulation_status_.reset();
+    if (next_job_result_for_test_) {
+      const auto result = *next_job_result_for_test_;
+      next_job_result_for_test_.reset();
+      return result;
+    }
   }
 
   if (guard() != GuardResult::kOk) {
@@ -710,6 +778,30 @@ std::size_t Runtime::safe_stop_count_for_test() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return safe_stop_count_;
+}
+
+void Runtime::set_plan_for_test(const Plan & plan)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  plan_ = plan;
+}
+
+void Runtime::set_next_navigation_result_for_test(const ActionResult result)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  next_navigation_result_for_test_ = result;
+}
+
+void Runtime::set_next_job_result_for_test(const ActionResult result)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  next_job_result_for_test_ = result;
+}
+
+std::optional<bool> Runtime::last_navigation_reset_origin_for_test() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return last_navigation_reset_origin_for_test_;
 }
 
 }  // namespace atlas_mission_yasmin

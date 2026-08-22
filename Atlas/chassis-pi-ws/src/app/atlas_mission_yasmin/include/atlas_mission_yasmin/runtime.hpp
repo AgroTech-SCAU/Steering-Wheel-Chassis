@@ -60,6 +60,15 @@ enum class ActionResult
   kShutdown,
 };
 
+enum class WaitResult
+{
+  kSuccess,
+  kRetry,
+  kReset,
+  kRecovery,
+  kShutdown,
+};
+
 struct Job
 {
   std::string task_id;
@@ -101,7 +110,9 @@ public:
   GuardResult guard() const;
   bool can_move() const;
 
-  bool wait_start();
+  WaitResult wait_mcu();
+  WaitResult wait_start();
+  WaitResult wait_reset();
   void begin_run();
   void clear_run();
   void set_state(uint8_t state, const std::string & name, const std::string & message);
@@ -111,6 +122,7 @@ public:
   bool request_brake(bool enabled);
 
   ActionResult run_navigation(const Waypoint & waypoint);
+  ActionResult run_navigation(const Waypoint & waypoint, bool reset_origin);
   ActionResult run_pre_move(const Waypoint & waypoint);
   ActionResult run_job(const Waypoint & waypoint, const Job & job);
   bool cancel_navigation(const std::string & reason);
@@ -122,6 +134,10 @@ public:
   void set_mcu_status_timeout_for_test(double timeout_s);
   void set_motion_enabled_for_test(bool enabled);
   std::size_t safe_stop_count_for_test() const;
+  void set_plan_for_test(const Plan & plan);
+  void set_next_navigation_result_for_test(ActionResult result);
+  void set_next_job_result_for_test(ActionResult result);
+  std::optional<bool> last_navigation_reset_origin_for_test() const;
 
 private:
   using McuStatus = mcu_comm_bridge::msg::McuStatus;
@@ -185,6 +201,9 @@ private:
 
   std::optional<NavigationStatus> last_navigation_status_;
   std::optional<ManipulationStatus> last_manipulation_status_;
+  std::optional<ActionResult> next_navigation_result_for_test_;
+  std::optional<ActionResult> next_job_result_for_test_;
+  std::optional<bool> last_navigation_reset_origin_for_test_;
 
   rclcpp::Subscription<McuStatus>::SharedPtr mcu_sub_;
   rclcpp::Subscription<AutoTaskEvent>::SharedPtr auto_task_event_sub_;
