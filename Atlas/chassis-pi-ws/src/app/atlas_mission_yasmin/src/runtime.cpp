@@ -106,6 +106,21 @@ bool is_manipulation_terminal(const uint8_t state)
          state == ManipulationStatus::STATE_CANCELLED;
 }
 
+template<typename HeaderT>
+bool status_is_current_for_request(
+  const HeaderT & header,
+  const std::optional<rclcpp::Time> & request_start)
+{
+  if (!request_start) {
+    return true;
+  }
+  const rclcpp::Time stamp(header.stamp);
+  if (stamp.nanoseconds() == 0) {
+    return true;
+  }
+  return stamp.nanoseconds() >= request_start->nanoseconds();
+}
+
 }  // namespace
 
 Runtime::Runtime(const rclcpp::NodeOptions & options)
@@ -452,6 +467,8 @@ void Runtime::clear_run()
   result_reported_ = false;
   last_navigation_status_.reset();
   last_manipulation_status_.reset();
+  navigation_request_start_.reset();
+  manipulation_request_start_.reset();
   publish_mission_status_locked();
 }
 
@@ -541,6 +558,7 @@ ActionResult Runtime::run_navigation(const Waypoint & waypoint, const bool reset
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_navigation_status_.reset();
+    navigation_request_start_ = now();
     motion_enabled_ = false;
     last_navigation_reset_origin_for_test_ = reset_origin;
     if (next_navigation_result_for_test_) {
@@ -611,6 +629,7 @@ ActionResult Runtime::run_job(const Waypoint & waypoint, const Job & job)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     last_manipulation_status_.reset();
+    manipulation_request_start_ = now();
     if (next_job_result_for_test_) {
       const auto result = *next_job_result_for_test_;
       next_job_result_for_test_.reset();
@@ -702,6 +721,7 @@ ActionResult Runtime::wait_navigation_terminal(const Waypoint & waypoint, const 
     }
     if (last_navigation_status_ &&
       last_navigation_status_->waypoint_id == waypoint.id &&
+      status_is_current_for_request(last_navigation_status_->header, navigation_request_start_) &&
       is_navigation_terminal(last_navigation_status_->state))
     {
       if (last_navigation_status_->state == NavigationStatus::STATE_SUCCEEDED) {
@@ -735,6 +755,8 @@ ActionResult Runtime::wait_manipulation_terminal(
     if (last_manipulation_status_ &&
       last_manipulation_status_->waypoint_id == waypoint_id &&
       last_manipulation_status_->task_id == task_id &&
+      status_is_current_for_request(
+        last_manipulation_status_->header, manipulation_request_start_) &&
       is_manipulation_terminal(last_manipulation_status_->state))
     {
       if (last_manipulation_status_->state == ManipulationStatus::STATE_SUCCEEDED) {

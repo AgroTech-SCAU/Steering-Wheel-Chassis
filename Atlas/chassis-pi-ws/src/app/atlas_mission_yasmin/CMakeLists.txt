@@ -92,6 +92,7 @@ install(PROGRAMS
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   ament_add_gtest(runtime_unit_test
     test/runtime_unit_test.cpp
@@ -125,6 +126,14 @@ if(BUILD_TESTING)
     yasmin::yasmin
   )
   set_tests_properties(machine_unit_test PROPERTIES
+    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
+  )
+
+  ament_add_pytest_test(mission_mock_acceptance_test
+    test/mission_mock_acceptance_test.py
+    TIMEOUT 180
+  )
+  set_tests_properties(mission_mock_acceptance_test PROPERTIES
     ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
   )
 

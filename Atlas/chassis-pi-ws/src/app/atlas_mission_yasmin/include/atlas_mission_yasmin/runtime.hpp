@@ -204,6 +204,8 @@ private:
 
   std::optional<NavigationStatus> last_navigation_status_;
   std::optional<ManipulationStatus> last_manipulation_status_;
+  std::optional<rclcpp::Time> navigation_request_start_;
+  std::optional<rclcpp::Time> manipulation_request_start_;
   std::optional<ActionResult> next_navigation_result_for_test_;
   std::optional<ActionResult> next_job_result_for_test_;
   std::optional<bool> last_navigation_reset_origin_for_test_;

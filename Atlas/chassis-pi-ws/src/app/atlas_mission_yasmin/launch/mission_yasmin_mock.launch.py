@@ -24,6 +24,10 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     config_file = LaunchConfiguration("config_file")
     route_file = LaunchConfiguration("route_file")
+    scenario = LaunchConfiguration("scenario")
+    mcu_status_timeout_s = LaunchConfiguration("mcu_status_timeout_s")
+    service_timeout_s = LaunchConfiguration("service_timeout_s")
+    manipulation_result_timeout_s = LaunchConfiguration("manipulation_result_timeout_s")
 
     default_config_file = PathJoinSubstitution(
         [FindPackageShare("atlas_mission_yasmin"), "config", "mission_yasmin.yaml"]
@@ -37,12 +41,18 @@ def generate_launch_description():
         executable="mock_mcu.py",
         name="atlas_mock_mcu",
         output="screen",
+        parameters=[
+            {"scenario": scenario},
+        ],
     )
     mock_backends = Node(
         package="atlas_mission_yasmin",
         executable="mock_backends.py",
         name="atlas_mock_backends",
         output="screen",
+        parameters=[
+            {"scenario": scenario},
+        ],
     )
     mission_node = Node(
         package="atlas_mission_yasmin",
@@ -52,6 +62,10 @@ def generate_launch_description():
         parameters=[
             config_file,
             {"route_yaml_path": route_file},
+            {"mcu_status_timeout_s": mcu_status_timeout_s},
+            {"service_timeout_s": service_timeout_s},
+            {"manipulation_result_timeout_s": manipulation_result_timeout_s},
+            {"enable_viewer": False},
         ],
     )
 
@@ -66,6 +80,26 @@ def generate_launch_description():
                 "route_file",
                 default_value=default_route_file,
                 description="Mission route configuration",
+            ),
+            DeclareLaunchArgument(
+                "scenario",
+                default_value="normal",
+                description="Mock scenario name",
+            ),
+            DeclareLaunchArgument(
+                "mcu_status_timeout_s",
+                default_value="1.0",
+                description="Runtime MCU status freshness timeout",
+            ),
+            DeclareLaunchArgument(
+                "service_timeout_s",
+                default_value="3.0",
+                description="Runtime service call timeout",
+            ),
+            DeclareLaunchArgument(
+                "manipulation_result_timeout_s",
+                default_value="30.0",
+                description="Runtime manipulation result timeout",
             ),
             mock_mcu,
             mock_backends,

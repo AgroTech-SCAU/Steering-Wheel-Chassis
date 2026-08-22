@@ -122,7 +122,7 @@ std::string WaitMcuState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_MCU_STATUS, "WAIT_MCU", "");
-  while (rclcpp::ok()) {
+  while (rclcpp::ok() && !is_canceled()) {
     const auto result = runtime_->wait_mcu();
     if (result == WaitResult::kSuccess) {
       return outcomes::kOk;
@@ -145,7 +145,7 @@ std::string WaitStartState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_START, "WAIT_START", "");
-  while (rclcpp::ok()) {
+  while (rclcpp::ok() && !is_canceled()) {
     const auto result = runtime_->wait_start();
     if (result == WaitResult::kSuccess) {
       return outcomes::kOk;
@@ -238,6 +238,9 @@ std::string WaitResetState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_RESET, "WAIT_RESET", "");
+  if (is_canceled()) {
+    return outcomes::kShutdown;
+  }
   const auto result = runtime_->wait_reset();
   return result == WaitResult::kShutdown ? outcomes::kShutdown : outcomes::kOk;
 }

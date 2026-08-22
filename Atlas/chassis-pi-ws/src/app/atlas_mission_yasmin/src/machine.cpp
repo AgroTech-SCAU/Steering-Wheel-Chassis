@@ -32,7 +32,7 @@ yasmin::StateMachine::SharedPtr build_route_machine(const Runtime::SharedPtr & r
       outcomes::kRecovery,
       outcomes::kShutdown,
     }),
-    true);
+    false);
 
   route->add_state(
     "PREPARE_WAYPOINT",
