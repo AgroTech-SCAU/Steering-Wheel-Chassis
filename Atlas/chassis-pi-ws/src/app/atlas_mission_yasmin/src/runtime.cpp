@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <initializer_list>
 #include <stdexcept>
 #include <utility>
 
@@ -37,26 +38,52 @@ T yaml_value(const YAML::Node & node, const char * key, const T & default_value)
   return node[key].as<T>();
 }
 
+template<typename T>
+T yaml_value_any(
+  const YAML::Node & node,
+  const std::initializer_list<const char *> keys,
+  const T & default_value)
+{
+  for (const auto key : keys) {
+    if (node && node[key]) {
+      return node[key].as<T>();
+    }
+  }
+  return default_value;
+}
+
+Job parse_job(const YAML::Node & node)
+{
+  Job job;
+  if (node.IsScalar()) {
+    job.task_id = node.as<std::string>();
+    return job;
+  }
+
+  job.id = yaml_value<std::string>(node, "id", "");
+  job.prepare_action = yaml_value<std::string>(node, "prepare_action", "");
+  job.task_id = yaml_value_any<std::string>(node, {"task", "task_id", "id"}, "");
+  return job;
+}
+
 Waypoint parse_waypoint(const YAML::Node & node)
 {
   Waypoint waypoint;
   waypoint.id = yaml_value<std::string>(node, "id", "");
-  waypoint.x_m = yaml_value<double>(node, "x_m", 0.0);
-  waypoint.y_m = yaml_value<double>(node, "y_m", 0.0);
-  waypoint.yaw_rad = yaml_value<double>(node, "yaw_rad", 0.0);
-  waypoint.pre_move_action = yaml_value<std::string>(node, "pre_move_action", "");
-  waypoint.timeout_s = yaml_value<double>(node, "timeout_s", 0.0);
+  if (waypoint.id.empty()) {
+    throw std::runtime_error("mission waypoint is missing required id");
+  }
+  waypoint.area = yaml_value<std::string>(node, "area", "");
+  waypoint.x_m = yaml_value_any<double>(node, {"x_m", "x"}, 0.0);
+  waypoint.y_m = yaml_value_any<double>(node, {"y_m", "y"}, 0.0);
+  waypoint.yaw_rad = yaml_value_any<double>(node, {"yaw_rad", "yaw"}, 0.0);
+  waypoint.pre_move_action = yaml_value<std::string>(node, "pre_move_action", "noop");
+  waypoint.timeout_s = std::max(yaml_value<double>(node, "timeout_s", 0.1), 0.1);
 
   const auto jobs = node["arrival_jobs"];
   if (jobs && jobs.IsSequence()) {
     for (const auto job_node : jobs) {
-      Job job;
-      if (job_node.IsScalar()) {
-        job.task_id = job_node.as<std::string>();
-      } else {
-        job.task_id = yaml_value<std::string>(job_node, "task_id", "");
-      }
-      waypoint.arrival_jobs.push_back(job);
+      waypoint.arrival_jobs.push_back(parse_job(job_node));
     }
   }
 
@@ -89,7 +116,8 @@ Runtime::Runtime(const rclcpp::NodeOptions & options)
     try {
       plan_ = load_plan(config_.route_yaml_path);
     } catch (const std::exception & error) {
-      RCLCPP_WARN(get_logger(), "failed to load route yaml: %s", error.what());
+      RCLCPP_ERROR(get_logger(), "failed to load route yaml: %s", error.what());
+      throw;
     }
   }
   configure_ros_interfaces();
@@ -97,12 +125,13 @@ Runtime::Runtime(const rclcpp::NodeOptions & options)
 
 Plan Runtime::load_plan(const std::string & path)
 {
-  const YAML::Node root = YAML::LoadFile(path);
-  Plan plan;
+  const YAML::Node root_file = YAML::LoadFile(path);
+  const YAML::Node root = root_file["mission"] ? root_file["mission"] : root_file;
   if (!root || root.IsNull()) {
-    return plan;
+    throw std::runtime_error("mission route yaml is empty");
   }
 
+  Plan plan;
   plan.navigation_backend = yaml_value<std::string>(root, "navigation_backend", "");
   plan.manipulation_backend = yaml_value<std::string>(root, "manipulation_backend", "");
   plan.return_home_enabled = yaml_value<bool>(root, "return_home_enabled", false);
@@ -113,11 +142,16 @@ Plan Runtime::load_plan(const std::string & path)
       plan.waypoints.push_back(parse_waypoint(waypoint));
     }
   }
+  if (plan.waypoints.empty()) {
+    throw std::runtime_error("mission route must contain at least one waypoint");
+  }
 
   const auto return_waypoints = root["return_waypoints"];
-  if (return_waypoints && return_waypoints.IsSequence()) {
+  if (plan.return_home_enabled && return_waypoints && return_waypoints.IsSequence()) {
     for (const auto waypoint : return_waypoints) {
-      plan.return_waypoints.push_back(parse_waypoint(waypoint));
+      auto parsed = parse_waypoint(waypoint);
+      plan.return_waypoints.push_back(parsed);
+      plan.waypoints.push_back(std::move(parsed));
     }
   }
 
@@ -594,7 +628,8 @@ ActionResult Runtime::run_job(const Waypoint & waypoint, const Job & job)
   auto request = std::make_shared<atlas_mission_interfaces::srv::StartManipulation::Request>();
   request->backend = plan_.manipulation_backend;
   request->waypoint_id = waypoint.id;
-  request->prepare_action = waypoint.pre_move_action;
+  request->prepare_action =
+    job.prepare_action.empty() ? waypoint.pre_move_action : job.prepare_action;
   request->arrival_task = job.task_id;
 
   auto future = manip_start_->async_send_request(request);

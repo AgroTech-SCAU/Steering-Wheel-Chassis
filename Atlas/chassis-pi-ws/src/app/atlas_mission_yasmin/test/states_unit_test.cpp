@@ -31,7 +31,9 @@ atlas_mission_yasmin::Plan make_plan()
   atlas_mission_yasmin::Waypoint first;
   first.id = "wp_1";
   first.pre_move_action = "noop";
-  first.arrival_jobs.push_back(atlas_mission_yasmin::Job{"inspect"});
+  atlas_mission_yasmin::Job inspect_job;
+  inspect_job.task_id = "inspect";
+  first.arrival_jobs.push_back(inspect_job);
 
   atlas_mission_yasmin::Waypoint second;
   second.id = "wp_2";

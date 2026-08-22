@@ -50,7 +50,7 @@ def generate_launch_description():
         name="atlas_mission_yasmin",
         output="screen",
         parameters=[
-            {"config_file": config_file},
+            config_file,
             {"route_yaml_path": route_file},
         ],
     )

@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -54,6 +55,13 @@ std::string write_route_file()
   return path;
 }
 
+std::string write_yaml_file(const std::string & path, const std::string & content)
+{
+  std::ofstream out(path);
+  out << content;
+  return path;
+}
+
 mcu_comm_bridge::msg::McuStatus make_status(const uint8_t app_state)
 {
   mcu_comm_bridge::msg::McuStatus status;
@@ -71,13 +79,116 @@ TEST(RuntimeUnitTest, LoadsRoutePlanFromYaml)
   ASSERT_EQ(plan.navigation_backend, "pseudo");
   ASSERT_EQ(plan.manipulation_backend, "vision");
   ASSERT_TRUE(plan.return_home_enabled);
-  ASSERT_EQ(plan.waypoints.size(), 1u);
+  ASSERT_EQ(plan.waypoints.size(), 2u);
   ASSERT_EQ(plan.return_waypoints.size(), 1u);
   EXPECT_EQ(plan.waypoints[0].id, "wp_1");
   EXPECT_DOUBLE_EQ(plan.waypoints[0].x_m, 1.0);
   EXPECT_EQ(plan.waypoints[0].pre_move_action, "align");
   ASSERT_EQ(plan.waypoints[0].arrival_jobs.size(), 2u);
   EXPECT_EQ(plan.waypoints[0].arrival_jobs[1].task_id, "inspect");
+  EXPECT_EQ(plan.waypoints[1].id, "home");
+}
+
+TEST(RuntimeUnitTest, LoadsMissionWrappedRouteWithDocumentedFieldNames)
+{
+  const auto plan = atlas_mission_yasmin::Runtime::load_plan(
+    write_yaml_file(
+      "/tmp/atlas_mission_yasmin_wrapped_route.yaml",
+      "mission:\n"
+      "  navigation_backend: pseudo\n"
+      "  manipulation_backend: vision\n"
+      "  return_home_enabled: false\n"
+      "  waypoints:\n"
+      "    - id: plant_1\n"
+      "      x: 2.8\n"
+      "      y: 0.3\n"
+      "      yaw: 1.57\n"
+      "      timeout_s: 0.01\n"
+      "      arrival_jobs:\n"
+      "        - id: plant_1_job_1\n"
+      "          prepare_action: detect_target\n"
+      "          task: pollination\n"
+      "  return_waypoints:\n"
+      "    - id: ignored_home\n"
+      "      x: 0.0\n"
+      "      y: 0.0\n"
+      "      yaw: 0.0\n"));
+
+  ASSERT_EQ(plan.waypoints.size(), 1u);
+  EXPECT_EQ(plan.return_waypoints.size(), 0u);
+  EXPECT_EQ(plan.waypoints[0].id, "plant_1");
+  EXPECT_DOUBLE_EQ(plan.waypoints[0].x_m, 2.8);
+  EXPECT_DOUBLE_EQ(plan.waypoints[0].y_m, 0.3);
+  EXPECT_DOUBLE_EQ(plan.waypoints[0].yaw_rad, 1.57);
+  EXPECT_GE(plan.waypoints[0].timeout_s, 0.1);
+  EXPECT_EQ(plan.waypoints[0].pre_move_action, "noop");
+  ASSERT_EQ(plan.waypoints[0].arrival_jobs.size(), 1u);
+  EXPECT_EQ(plan.waypoints[0].arrival_jobs[0].id, "plant_1_job_1");
+  EXPECT_EQ(plan.waypoints[0].arrival_jobs[0].prepare_action, "detect_target");
+  EXPECT_EQ(plan.waypoints[0].arrival_jobs[0].task_id, "pollination");
+}
+
+TEST(RuntimeUnitTest, RejectsEmptyRoute)
+{
+  EXPECT_THROW(
+    atlas_mission_yasmin::Runtime::load_plan(
+      write_yaml_file(
+        "/tmp/atlas_mission_yasmin_empty_route.yaml",
+        "mission:\n"
+        "  navigation_backend: pseudo\n"
+        "  manipulation_backend: vision\n"
+        "  waypoints: []\n")),
+    std::runtime_error);
+}
+
+TEST(RuntimeUnitTest, RejectsWaypointWithoutId)
+{
+  EXPECT_THROW(
+    atlas_mission_yasmin::Runtime::load_plan(
+      write_yaml_file(
+        "/tmp/atlas_mission_yasmin_missing_id_route.yaml",
+        "mission:\n"
+        "  navigation_backend: pseudo\n"
+        "  manipulation_backend: vision\n"
+        "  waypoints:\n"
+        "    - x: 1.0\n"
+        "      y: 2.0\n"
+        "      yaw: 0.0\n")),
+    std::runtime_error);
+}
+
+TEST(RuntimeUnitTest, MissingArrivalJobsDefaultsToEmptyList)
+{
+  const auto plan = atlas_mission_yasmin::Runtime::load_plan(
+    write_yaml_file(
+      "/tmp/atlas_mission_yasmin_missing_jobs_route.yaml",
+      "mission:\n"
+      "  navigation_backend: pseudo\n"
+      "  manipulation_backend: vision\n"
+      "  waypoints:\n"
+      "    - id: pass_by\n"
+      "      x: 1.0\n"
+      "      y: 2.0\n"
+      "      yaw: 0.0\n"));
+
+  ASSERT_EQ(plan.waypoints.size(), 1u);
+  EXPECT_TRUE(plan.waypoints[0].arrival_jobs.empty());
+  EXPECT_EQ(plan.waypoints[0].pre_move_action, "noop");
+}
+
+TEST(RuntimeUnitTest, LoadsPackageMissionRouteConfig)
+{
+  const auto plan = atlas_mission_yasmin::Runtime::load_plan(
+    std::string(ATLAS_MISSION_YASMIN_SOURCE_DIR) + "/config/mission_route.yaml");
+
+  EXPECT_EQ(plan.navigation_backend, "pseudo");
+  EXPECT_EQ(plan.manipulation_backend, "racom_vision");
+  EXPECT_FALSE(plan.return_home_enabled);
+  ASSERT_EQ(plan.waypoints.size(), 3u);
+  EXPECT_EQ(plan.waypoints[1].id, "plant_1");
+  ASSERT_EQ(plan.waypoints[1].arrival_jobs.size(), 1u);
+  EXPECT_EQ(plan.waypoints[1].arrival_jobs[0].task_id, "pollination");
+  EXPECT_EQ(plan.return_waypoints.size(), 0u);
 }
 
 TEST(RuntimeUnitTest, McuFreshRequiresRecentStatus)

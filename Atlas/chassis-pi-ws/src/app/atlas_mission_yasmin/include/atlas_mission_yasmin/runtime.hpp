@@ -72,11 +72,14 @@ enum class WaitResult
 struct Job
 {
   std::string task_id;
+  std::string id;
+  std::string prepare_action;
 };
 
 struct Waypoint
 {
   std::string id;
+  std::string area;
   double x_m{0.0};
   double y_m{0.0};
   double yaw_rad{0.0};

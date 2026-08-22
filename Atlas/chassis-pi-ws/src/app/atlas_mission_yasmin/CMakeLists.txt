@@ -96,6 +96,9 @@ if(BUILD_TESTING)
   ament_add_gtest(runtime_unit_test
     test/runtime_unit_test.cpp
   )
+  target_compile_definitions(runtime_unit_test PRIVATE
+    ATLAS_MISSION_YASMIN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  )
   target_link_libraries(runtime_unit_test
     atlas_mission_yasmin_runtime
   )
