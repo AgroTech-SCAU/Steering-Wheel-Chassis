@@ -26,16 +26,14 @@ namespace atlas_mission_yasmin
 
 namespace outcomes
 {
-
 inline constexpr char kOk[] = "ok";
+inline constexpr char kNext[] = "next";
 inline constexpr char kRetry[] = "retry";
 inline constexpr char kFailed[] = "failed";
 inline constexpr char kReset[] = "reset";
 inline constexpr char kRecovery[] = "recovery";
-inline constexpr char kNext[] = "next";
 inline constexpr char kRouteDone[] = "route_done";
 inline constexpr char kShutdown[] = "shutdown";
-
 }  // namespace outcomes
 
 class RuntimeState : public yasmin::State
@@ -61,10 +59,10 @@ public:
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
-class WaitStartState final : public RuntimeState
+class WaitAutoState final : public RuntimeState
 {
 public:
-  explicit WaitStartState(Runtime::SharedPtr runtime);
+  explicit WaitAutoState(Runtime::SharedPtr runtime);
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
@@ -79,6 +77,62 @@ class StartRunState final : public RuntimeState
 {
 public:
   explicit StartRunState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class InspectSortZoneState final : public RuntimeState
+{
+public:
+  explicit InspectSortZoneState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class NavPickupState final : public RuntimeState
+{
+public:
+  explicit NavPickupState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class ObservePickupState final : public RuntimeState
+{
+public:
+  explicit ObservePickupState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class PickState final : public RuntimeState
+{
+public:
+  explicit PickState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class NavParkState final : public RuntimeState
+{
+public:
+  explicit NavParkState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class ObserveParkState final : public RuntimeState
+{
+public:
+  explicit ObserveParkState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class PlaceState final : public RuntimeState
+{
+public:
+  explicit PlaceState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class CheckDoneState final : public RuntimeState
+{
+public:
+  explicit CheckDoneState(Runtime::SharedPtr runtime);
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
@@ -107,41 +161,6 @@ class WaitResetState final : public RuntimeState
 {
 public:
   explicit WaitResetState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
-class PrepareWaypointState final : public RuntimeState
-{
-public:
-  explicit PrepareWaypointState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
-class PreMoveState final : public RuntimeState
-{
-public:
-  explicit PreMoveState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
-class NavigateState final : public RuntimeState
-{
-public:
-  explicit NavigateState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
-class RunJobsState final : public RuntimeState
-{
-public:
-  explicit RunJobsState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
-class AdvanceState final : public RuntimeState
-{
-public:
-  explicit AdvanceState(Runtime::SharedPtr runtime);
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 

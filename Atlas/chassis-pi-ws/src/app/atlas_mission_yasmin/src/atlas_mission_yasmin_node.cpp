@@ -33,10 +33,7 @@ int main(int argc, char ** argv)
 
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4U);
   executor.add_node(runtime);
-
-  std::thread executor_thread([&executor]() {
-      executor.spin();
-    });
+  std::thread executor_thread([&executor]() {executor.spin();});
 
   int exit_code = 0;
   bool enable_viewer = false;
@@ -49,7 +46,6 @@ int main(int argc, char ** argv)
       viewer = std::make_unique<yasmin_viewer::YasminViewerPub>(
         runtime, machine, "ATLAS_MISSION_YASMIN");
     }
-
     (*machine)(blackboard);
     viewer.reset();
   } catch (const yasmin::StateMachineCancelException & error) {
@@ -68,22 +64,11 @@ int main(int argc, char ** argv)
   if (enable_viewer) {
     try {
       yasmin_ros::YasminNode::destroy_instance();
-    } catch (const std::exception & error) {
-      RCLCPP_WARN(
-        rclcpp::get_logger("atlas_mission_yasmin"),
-        "yasmin node destroy skipped after cleanup: %s",
-        error.what());
+    } catch (const std::exception &) {
     }
   }
   if (rclcpp::ok()) {
-    try {
-      rclcpp::shutdown();
-    } catch (const std::exception & error) {
-      RCLCPP_WARN(
-        rclcpp::get_logger("atlas_mission_yasmin"),
-        "rclcpp shutdown skipped after cleanup: %s",
-        error.what());
-    }
+    rclcpp::shutdown();
   }
   return exit_code;
 }

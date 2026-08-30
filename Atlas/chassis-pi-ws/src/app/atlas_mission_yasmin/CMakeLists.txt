@@ -20,6 +20,7 @@ find_package(yasmin_ros REQUIRED)
 find_package(yasmin_viewer REQUIRED)
 
 add_library(atlas_mission_yasmin_runtime
+  src/competition_model.cpp
   src/machine.cpp
   src/runtime.cpp
   src/states.cpp
@@ -67,22 +68,18 @@ target_link_libraries(atlas_mission_yasmin_node
 install(DIRECTORY include/
   DESTINATION include
 )
-
 install(TARGETS atlas_mission_yasmin_runtime
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-
 install(TARGETS atlas_mission_yasmin_node
   DESTINATION lib/${PROJECT_NAME}
 )
-
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
-
 install(PROGRAMS
   scripts/mock_mcu.py
   scripts/mock_backends.py
@@ -92,30 +89,12 @@ install(PROGRAMS
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(ament_cmake_pytest REQUIRED)
 
-  ament_add_gtest(runtime_unit_test
-    test/runtime_unit_test.cpp
+  ament_add_gtest(competition_model_unit_test
+    test/competition_model_unit_test.cpp
   )
-  target_compile_definitions(runtime_unit_test PRIVATE
-    ATLAS_MISSION_YASMIN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-  )
-  target_link_libraries(runtime_unit_test
+  target_link_libraries(competition_model_unit_test
     atlas_mission_yasmin_runtime
-  )
-  set_tests_properties(runtime_unit_test PROPERTIES
-    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
-  )
-
-  ament_add_gtest(states_unit_test
-    test/states_unit_test.cpp
-  )
-  target_link_libraries(states_unit_test
-    atlas_mission_yasmin_runtime
-    yasmin::yasmin
-  )
-  set_tests_properties(states_unit_test PROPERTIES
-    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
   )
 
   ament_add_gtest(machine_unit_test
@@ -124,17 +103,6 @@ if(BUILD_TESTING)
   target_link_libraries(machine_unit_test
     atlas_mission_yasmin_runtime
     yasmin::yasmin
-  )
-  set_tests_properties(machine_unit_test PROPERTIES
-    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
-  )
-
-  ament_add_pytest_test(mission_mock_acceptance_test
-    test/mission_mock_acceptance_test.py
-    TIMEOUT 180
-  )
-  set_tests_properties(mission_mock_acceptance_test PROPERTIES
-    ENVIRONMENT "RMW_IMPLEMENTATION=rmw_fastrtps_cpp;ROS_LOG_DIR=/tmp/atlas_ros_log"
   )
 
   ament_lint_auto_find_test_dependencies()

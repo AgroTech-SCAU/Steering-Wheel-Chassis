@@ -1,10 +1,19 @@
 string waypoint_id
 string task_id
+uint8 slot
+uint8 expected_layer
 uint8 max_targets
 string target_class
 ---
+# success 表示本次视觉请求正常完成
 bool success
 string message
+# pickup 时返回 gear / t_bolt；园区校验时可为空
+string cargo_class
+# 固定预识别位姿下，像素占比等观测是否与 expected_layer 一致
+bool layer_ok
+# 当前视野是否足够完整；false 时由 YASMIN 触发换视角恢复
+bool complete
 geometry_msgs/Point target_camera_m
 geometry_msgs/Point[] targets_camera_m
 uint8 target_count

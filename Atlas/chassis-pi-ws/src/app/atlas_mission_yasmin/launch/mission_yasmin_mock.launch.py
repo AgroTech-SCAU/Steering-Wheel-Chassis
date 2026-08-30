@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch the Atlas YASMIN mission runtime with mock skeleton nodes."""
+"""Launch competition YASMIN with deterministic mock MCU/navigation/vision/arm."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -22,87 +22,36 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    config_file = LaunchConfiguration("config_file")
-    route_file = LaunchConfiguration("route_file")
-    scenario = LaunchConfiguration("scenario")
-    mcu_status_timeout_s = LaunchConfiguration("mcu_status_timeout_s")
-    service_timeout_s = LaunchConfiguration("service_timeout_s")
-    manipulation_result_timeout_s = LaunchConfiguration("manipulation_result_timeout_s")
+    arena = LaunchConfiguration("arena")
+    config_file = PathJoinSubstitution(
+        [FindPackageShare("atlas_mission_yasmin"), "config", "mission_yasmin.yaml"])
+    route_file = PathJoinSubstitution(
+        [FindPackageShare("atlas_mission_yasmin"), "config", "mission_route.yaml"])
 
-    default_config_file = PathJoinSubstitution(
-        [FindPackageShare("atlas_mission_yasmin"), "config", "mission_yasmin.yaml"]
-    )
-    default_route_file = PathJoinSubstitution(
-        [FindPackageShare("atlas_mission_yasmin"), "config", "mission_route.yaml"]
-    )
-
-    mock_mcu = Node(
-        package="atlas_mission_yasmin",
-        executable="mock_mcu.py",
-        name="atlas_mock_mcu",
-        output="screen",
-        parameters=[
-            {"scenario": scenario},
-        ],
-    )
-    mock_backends = Node(
-        package="atlas_mission_yasmin",
-        executable="mock_backends.py",
-        name="atlas_mock_backends",
-        output="screen",
-        parameters=[
-            {"scenario": scenario},
-        ],
-    )
-    mission_node = Node(
-        package="atlas_mission_yasmin",
-        executable="atlas_mission_yasmin_node",
-        name="atlas_mission_yasmin",
-        output="screen",
-        parameters=[
-            config_file,
-            {"route_yaml_path": route_file},
-            {"mcu_status_timeout_s": mcu_status_timeout_s},
-            {"service_timeout_s": service_timeout_s},
-            {"manipulation_result_timeout_s": manipulation_result_timeout_s},
-            {"enable_viewer": False},
-        ],
-    )
-
-    return LaunchDescription(
-        [
-            DeclareLaunchArgument(
-                "config_file",
-                default_value=default_config_file,
-                description="Runtime topic, service and timeout configuration",
-            ),
-            DeclareLaunchArgument(
-                "route_file",
-                default_value=default_route_file,
-                description="Mission route configuration",
-            ),
-            DeclareLaunchArgument(
-                "scenario",
-                default_value="normal",
-                description="Mock scenario name",
-            ),
-            DeclareLaunchArgument(
-                "mcu_status_timeout_s",
-                default_value="1.0",
-                description="Runtime MCU status freshness timeout",
-            ),
-            DeclareLaunchArgument(
-                "service_timeout_s",
-                default_value="3.0",
-                description="Runtime service call timeout",
-            ),
-            DeclareLaunchArgument(
-                "manipulation_result_timeout_s",
-                default_value="30.0",
-                description="Runtime manipulation result timeout",
-            ),
-            mock_mcu,
-            mock_backends,
-            mission_node,
-        ]
-    )
+    return LaunchDescription([
+        DeclareLaunchArgument("arena", default_value="A"),
+        Node(
+            package="atlas_mission_yasmin",
+            executable="mock_mcu.py",
+            name="atlas_mock_mcu",
+            output="screen",
+        ),
+        Node(
+            package="atlas_mission_yasmin",
+            executable="mock_backends.py",
+            name="atlas_mock_backends",
+            output="screen",
+            parameters=[{"arena": arena}],
+        ),
+        Node(
+            package="atlas_mission_yasmin",
+            executable="atlas_mission_yasmin_node",
+            name="atlas_mission_yasmin",
+            output="screen",
+            parameters=[
+                config_file,
+                {"route_yaml_path": route_file},
+                {"enable_viewer": False},
+            ],
+        ),
+    ])

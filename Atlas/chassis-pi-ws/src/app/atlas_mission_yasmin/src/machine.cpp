@@ -21,9 +21,9 @@
 namespace atlas_mission_yasmin
 {
 
-yasmin::StateMachine::SharedPtr build_route_machine(const Runtime::SharedPtr & runtime)
+yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPtr & runtime)
 {
-  auto route = yasmin::StateMachine::make_shared(
+  auto machine = yasmin::StateMachine::make_shared(
     yasmin::Outcomes(
     {
       outcomes::kRouteDone,
@@ -34,110 +34,131 @@ yasmin::StateMachine::SharedPtr build_route_machine(const Runtime::SharedPtr & r
     }),
     false);
 
-  route->add_state(
-    "PREPARE_WAYPOINT",
-    std::make_shared<PrepareWaypointState>(runtime),
+  machine->add_state(
+    "INSPECT_SORT_ZONE", std::make_shared<InspectSortZoneState>(runtime),
     {
-      {outcomes::kOk, "PRE_MOVE"},
+      {outcomes::kOk, "NAV_PICKUP"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "NAV_PICKUP", std::make_shared<NavPickupState>(runtime),
+    {
+      {outcomes::kOk, "OBSERVE_PICKUP"},
+      {outcomes::kRouteDone, outcomes::kRouteDone},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "OBSERVE_PICKUP", std::make_shared<ObservePickupState>(runtime),
+    {
+      {outcomes::kOk, "PICK"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "PICK", std::make_shared<PickState>(runtime),
+    {
+      {outcomes::kOk, "NAV_PARK"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "NAV_PARK", std::make_shared<NavParkState>(runtime),
+    {
+      {outcomes::kOk, "OBSERVE_PARK"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "OBSERVE_PARK", std::make_shared<ObserveParkState>(runtime),
+    {
+      {outcomes::kOk, "PLACE"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "PLACE", std::make_shared<PlaceState>(runtime),
+    {
+      {outcomes::kOk, "CHECK_DONE"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
+
+  machine->add_state(
+    "CHECK_DONE", std::make_shared<CheckDoneState>(runtime),
+    {
+      {outcomes::kNext, "NAV_PICKUP"},
       {outcomes::kRouteDone, outcomes::kRouteDone},
     });
 
-  route->add_state(
-    "PRE_MOVE",
-    std::make_shared<PreMoveState>(runtime),
-    {
-      {outcomes::kOk, "NAVIGATE"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
-
-  route->add_state(
-    "NAVIGATE",
-    std::make_shared<NavigateState>(runtime),
-    {
-      {outcomes::kOk, "RUN_JOBS"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
-
-  route->add_state(
-    "RUN_JOBS",
-    std::make_shared<RunJobsState>(runtime),
-    {
-      {outcomes::kOk, "ADVANCE"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
-
-  route->add_state(
-    "ADVANCE",
-    std::make_shared<AdvanceState>(runtime),
-    {
-      {outcomes::kNext, "PREPARE_WAYPOINT"},
-      {outcomes::kRouteDone, outcomes::kRouteDone},
-    });
-
-  return route;
+  return machine;
 }
 
 yasmin::StateMachine::SharedPtr build_machine(const Runtime::SharedPtr & runtime)
 {
   auto machine = yasmin::StateMachine::make_shared(
-    yasmin::Outcomes({outcomes::kShutdown}),
-    true);
+    yasmin::Outcomes({outcomes::kShutdown}), true);
 
   machine->add_state(
-    "BOOTSTRAP",
-    std::make_shared<BootstrapState>(runtime),
+    "BOOTSTRAP", std::make_shared<BootstrapState>(runtime),
     {
       {outcomes::kOk, "WAIT_MCU"},
-      {outcomes::kRecovery, "RECOVERY"},
       {outcomes::kShutdown, outcomes::kShutdown},
     });
 
   machine->add_state(
-    "WAIT_MCU",
-    std::make_shared<WaitMcuState>(runtime),
+    "WAIT_MCU", std::make_shared<WaitMcuState>(runtime),
     {
-      {outcomes::kOk, "WAIT_START"},
+      {outcomes::kOk, "WAIT_AUTO"},
+      {outcomes::kReset, "WAIT_RESET"},
       {outcomes::kShutdown, outcomes::kShutdown},
     });
 
   machine->add_state(
-    "WAIT_START",
-    std::make_shared<WaitStartState>(runtime),
+    "WAIT_AUTO", std::make_shared<WaitAutoState>(runtime),
     {
       {outcomes::kOk, "PRECHECK"},
+      {outcomes::kReset, "WAIT_RESET"},
       {outcomes::kRecovery, "RECOVERY"},
       {outcomes::kShutdown, outcomes::kShutdown},
     });
 
   machine->add_state(
-    "PRECHECK",
-    std::make_shared<PrecheckState>(runtime),
+    "PRECHECK", std::make_shared<PrecheckState>(runtime),
     {
       {outcomes::kOk, "START_RUN"},
-      {outcomes::kRetry, "PRECHECK"},
+      {outcomes::kReset, "WAIT_RESET"},
       {outcomes::kRecovery, "RECOVERY"},
       {outcomes::kShutdown, outcomes::kShutdown},
     });
 
   machine->add_state(
-    "START_RUN",
-    std::make_shared<StartRunState>(runtime),
-    {
-      {outcomes::kOk, "EXECUTE_ROUTE"},
-    });
+    "START_RUN", std::make_shared<StartRunState>(runtime),
+    {{outcomes::kOk, "EXECUTE_AUTONOMOUS"}});
 
   machine->add_state(
-    "EXECUTE_ROUTE",
-    build_route_machine(runtime),
+    "EXECUTE_AUTONOMOUS", build_autonomous_machine(runtime),
     {
       {outcomes::kRouteDone, "REPORT_DONE"},
       {outcomes::kFailed, "REPORT_FAIL"},
@@ -147,31 +168,25 @@ yasmin::StateMachine::SharedPtr build_machine(const Runtime::SharedPtr & runtime
     });
 
   machine->add_state(
-    "REPORT_DONE",
-    std::make_shared<ReportDoneState>(runtime),
+    "REPORT_DONE", std::make_shared<ReportDoneState>(runtime),
     {
       {outcomes::kOk, "WAIT_RESET"},
       {outcomes::kRecovery, "RECOVERY"},
     });
 
   machine->add_state(
-    "REPORT_FAIL",
-    std::make_shared<ReportFailState>(runtime),
+    "REPORT_FAIL", std::make_shared<ReportFailState>(runtime),
     {
       {outcomes::kOk, "WAIT_RESET"},
       {outcomes::kRecovery, "RECOVERY"},
     });
 
   machine->add_state(
-    "RECOVERY",
-    std::make_shared<RecoveryState>(runtime),
-    {
-      {outcomes::kOk, "WAIT_RESET"},
-    });
+    "RECOVERY", std::make_shared<RecoveryState>(runtime),
+    {{outcomes::kOk, "WAIT_RESET"}});
 
   machine->add_state(
-    "WAIT_RESET",
-    std::make_shared<WaitResetState>(runtime),
+    "WAIT_RESET", std::make_shared<WaitResetState>(runtime),
     {
       {outcomes::kOk, "WAIT_MCU"},
       {outcomes::kShutdown, outcomes::kShutdown},

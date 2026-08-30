@@ -1,45 +1,15 @@
 mission:
-  navigation_backend: pseudo
-  manipulation_backend: racom_vision
-  return_home_enabled: false
+  navigation_backend: nav2_competition
+  manipulation_backend: vision_arm
 
+  # A/B 半图和实际坐标由导航后端维护；YASMIN 只使用语义点位
   waypoints:
-    - id: row_1_entry
-      area: PASS_BY
-      x: 1.20
-      y: 0.30
-      yaw: 0.0
-      timeout_s: 20.0
-      pre_move_action: noop
-      arrival_jobs: []
-
-    - id: plant_1
-      area: WORK
-      x: 2.80
-      y: 0.30
-      yaw: 0.0
-      timeout_s: 20.0
-      pre_move_action: prepare_arm
-      arrival_jobs:
-        - id: plant_1_job_1
-          prepare_action: detect_target
-          task: pollination
-
-    - id: row_1_exit
-      area: PASS_BY
-      x: 4.50
-      y: 0.30
-      yaw: 0.0
-      timeout_s: 20.0
-      pre_move_action: noop
-      arrival_jobs: []
-
-  return_waypoints:
-    - id: home
-      area: RETURN
-      x: 0.00
-      y: 0.00
-      yaw: 0.0
-      timeout_s: 20.0
-      pre_move_action: noop
-      arrival_jobs: []
+    pickup:
+      id: pickup
+      timeout_s: 30.0
+    park_1:
+      id: park_1
+      timeout_s: 30.0
+    park_2:
+      id: park_2
+      timeout_s: 30.0

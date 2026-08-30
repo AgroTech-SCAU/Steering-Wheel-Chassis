@@ -1,5 +1,9 @@
 string backend
+# A 或 B；比赛导航后端据此选择对应半图
+string arena
+# 语义点位：pickup / park_1 / park_2
 string waypoint_id
+# 保留坐标字段兼容原有后端；比赛后端可由 arena + waypoint_id 自行解析
 float64 x_m
 float64 y_m
 float64 yaw_rad

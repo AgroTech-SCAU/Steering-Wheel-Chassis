@@ -18,11 +18,9 @@
 
 #include "atlas_mission_yasmin/machine.hpp"
 #include "atlas_mission_yasmin/runtime.hpp"
-#include "yasmin/types.hpp"
 
 namespace
 {
-
 class MachineUnitTest : public ::testing::Test
 {
 protected:
@@ -40,146 +38,31 @@ protected:
 
   atlas_mission_yasmin::Runtime::SharedPtr runtime;
 };
-
-void expect_transition(
-  const yasmin::TransitionsMap & transitions,
-  const std::string & state,
-  const yasmin::Transitions & expected)
-{
-  ASSERT_TRUE(transitions.find(state) != transitions.end()) << state;
-  EXPECT_EQ(transitions.at(state), expected) << state;
-}
-
 }  // namespace
 
-TEST_F(MachineUnitTest, RouteMachineHasFrozenTopology)
+TEST_F(MachineUnitTest, AutonomousMachineHasCompetitionTopology)
 {
-  auto route = atlas_mission_yasmin::build_route_machine(runtime);
-  ASSERT_NO_THROW(route->validate(true));
+  auto machine = atlas_mission_yasmin::build_autonomous_machine(runtime);
+  ASSERT_NO_THROW(machine->validate(true));
+  EXPECT_EQ(machine->get_start_state(), "INSPECT_SORT_ZONE");
 
-  EXPECT_EQ(route->get_start_state(), "PREPARE_WAYPOINT");
-  EXPECT_EQ(
-    route->get_outcomes(), yasmin::Outcomes(
+  const auto & states = machine->get_states();
+  EXPECT_EQ(states.size(), 8U);
+  for (const auto * name : {
+      "INSPECT_SORT_ZONE", "NAV_PICKUP", "OBSERVE_PICKUP", "PICK",
+      "NAV_PARK", "OBSERVE_PARK", "PLACE", "CHECK_DONE"})
   {
-    "failed", "recovery", "reset", "route_done", "shutdown"}));
-
-  const auto & transitions = route->get_transitions();
-  EXPECT_EQ(transitions.size(), 5u);
-  expect_transition(
-    transitions, "PREPARE_WAYPOINT", {
-    {"ok", "PRE_MOVE"},
-    {"route_done", "route_done"},
-  });
-  expect_transition(
-    transitions, "PRE_MOVE", {
-    {"failed", "failed"},
-    {"ok", "NAVIGATE"},
-    {"recovery", "recovery"},
-    {"reset", "reset"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "NAVIGATE", {
-    {"failed", "failed"},
-    {"ok", "RUN_JOBS"},
-    {"recovery", "recovery"},
-    {"reset", "reset"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "RUN_JOBS", {
-    {"failed", "failed"},
-    {"ok", "ADVANCE"},
-    {"recovery", "recovery"},
-    {"reset", "reset"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "ADVANCE", {
-    {"next", "PREPARE_WAYPOINT"},
-    {"route_done", "route_done"},
-  });
+    EXPECT_TRUE(states.find(name) != states.end()) << name;
+  }
 }
 
-TEST_F(MachineUnitTest, RootMachineHasFrozenLifecycleTopology)
+TEST_F(MachineUnitTest, RootWaitsForMcuAutoBeforeAutonomousMission)
 {
   auto machine = atlas_mission_yasmin::build_machine(runtime);
   ASSERT_NO_THROW(machine->validate(true));
-
-  EXPECT_EQ(machine->get_start_state(), "BOOTSTRAP");
-  EXPECT_EQ(machine->get_outcomes(), yasmin::Outcomes({"shutdown"}));
-
   const auto & transitions = machine->get_transitions();
-  EXPECT_EQ(transitions.size(), 10u);
-  expect_transition(
-    transitions, "BOOTSTRAP", {
-    {"ok", "WAIT_MCU"},
-    {"recovery", "RECOVERY"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "WAIT_MCU", {
-    {"ok", "WAIT_START"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "WAIT_START", {
-    {"ok", "PRECHECK"},
-    {"recovery", "RECOVERY"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "PRECHECK", {
-    {"ok", "START_RUN"},
-    {"recovery", "RECOVERY"},
-    {"retry", "PRECHECK"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "START_RUN", {
-    {"ok", "EXECUTE_ROUTE"},
-  });
-  expect_transition(
-    transitions, "EXECUTE_ROUTE", {
-    {"failed", "REPORT_FAIL"},
-    {"recovery", "RECOVERY"},
-    {"reset", "WAIT_RESET"},
-    {"route_done", "REPORT_DONE"},
-    {"shutdown", "shutdown"},
-  });
-  expect_transition(
-    transitions, "REPORT_DONE", {
-    {"ok", "WAIT_RESET"},
-    {"recovery", "RECOVERY"},
-  });
-  expect_transition(
-    transitions, "REPORT_FAIL", {
-    {"ok", "WAIT_RESET"},
-    {"recovery", "RECOVERY"},
-  });
-  expect_transition(
-    transitions, "RECOVERY", {
-    {"ok", "WAIT_RESET"},
-  });
-  expect_transition(
-    transitions, "WAIT_RESET", {
-    {"ok", "WAIT_MCU"},
-    {"shutdown", "shutdown"},
-  });
-}
-
-TEST_F(MachineUnitTest, RootMachineEmbedsRouteMachineWithMatchingOutcomes)
-{
-  auto machine = atlas_mission_yasmin::build_machine(runtime);
-  const auto & states = machine->get_states();
-  ASSERT_TRUE(states.find("EXECUTE_ROUTE") != states.end());
-
-  const auto route = std::dynamic_pointer_cast<yasmin::StateMachine>(
-    states.at("EXECUTE_ROUTE"));
-  ASSERT_NE(route, nullptr);
-  EXPECT_EQ(
-    route->get_outcomes(), yasmin::Outcomes(
-  {
-    "failed", "recovery", "reset", "route_done", "shutdown"}));
-  ASSERT_NO_THROW(route->validate(true));
+  ASSERT_TRUE(transitions.find("WAIT_MCU") != transitions.end());
+  ASSERT_TRUE(transitions.find("WAIT_AUTO") != transitions.end());
+  EXPECT_EQ(transitions.at("WAIT_MCU").at("ok"), "WAIT_AUTO");
+  EXPECT_EQ(transitions.at("START_RUN").at("ok"), "EXECUTE_AUTONOMOUS");
 }

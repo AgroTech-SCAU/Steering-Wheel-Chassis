@@ -10,6 +10,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MissionStatus.msg"
   "msg/NavigationStatus.msg"
   "msg/ManipulationStatus.msg"
+  "srv/ClassifySortingRule.srv"
   "srv/DetectCameraTarget.srv"
   "srv/StartNavigation.srv"
   "srv/CancelNavigation.srv"

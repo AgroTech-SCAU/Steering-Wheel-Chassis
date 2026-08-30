@@ -1,7 +1,13 @@
 string backend
+# sorting / pickup / park_1 / park_2
 string waypoint_id
+# pre_recognition / view_scan / pick / place
 string prepare_action
 string arrival_task
+uint8 slot
+# pickup: 当前顶层层数；place: 当前已有层数
+uint8 layer
+string cargo_class
 ---
 bool success
 string message

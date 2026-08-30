@@ -26,35 +26,34 @@ namespace atlas_mission_yasmin
 
 namespace
 {
-
 using MissionStatus = atlas_mission_interfaces::msg::MissionStatus;
 
-std::string action_result_to_outcome(const ActionResult result)
+std::string action_outcome(const ActionResult result)
 {
   switch (result) {
     case ActionResult::kSucceeded:
       return outcomes::kOk;
-    case ActionResult::kFailed:
-    case ActionResult::kRejected:
-    case ActionResult::kTimeout:
-      return outcomes::kFailed;
     case ActionResult::kReset:
       return outcomes::kReset;
     case ActionResult::kRecovery:
       return outcomes::kRecovery;
     case ActionResult::kShutdown:
       return outcomes::kShutdown;
+    case ActionResult::kFailed:
+    case ActionResult::kRejected:
+    case ActionResult::kTimeout:
+      return outcomes::kFailed;
   }
-  return outcomes::kShutdown;
+  return outcomes::kFailed;
 }
 
-std::string guard_result_to_precheck_outcome(const GuardResult result)
+std::string guard_outcome(const GuardResult result)
 {
   switch (result) {
     case GuardResult::kOk:
       return outcomes::kOk;
     case GuardResult::kReset:
-      return outcomes::kRetry;
+      return outcomes::kReset;
     case GuardResult::kRecovery:
       return outcomes::kRecovery;
     case GuardResult::kShutdown:
@@ -63,38 +62,20 @@ std::string guard_result_to_precheck_outcome(const GuardResult result)
   return outcomes::kShutdown;
 }
 
-std::size_t waypoint_index(yasmin::Blackboard::SharedPtr blackboard)
+std::size_t get_slot(
+  const yasmin::Blackboard::SharedPtr & blackboard,
+  const std::string & key)
 {
-  if (!blackboard->contains("waypoint_index")) {
-    return 0;
+  if (!blackboard->contains(key)) {
+    return CompetitionModel::kSlotCount;
   }
-  return blackboard->get<std::size_t>("waypoint_index");
-}
-
-bool reset_origin(yasmin::Blackboard::SharedPtr blackboard)
-{
-  if (!blackboard->contains("reset_origin")) {
-    return true;
-  }
-  return blackboard->get<bool>("reset_origin");
-}
-
-const Waypoint * current_waypoint(
-  const Plan & plan,
-  yasmin::Blackboard::SharedPtr blackboard)
-{
-  const auto index = waypoint_index(blackboard);
-  if (index >= plan.waypoints.size()) {
-    return nullptr;
-  }
-  return &plan.waypoints[index];
+  return blackboard->get<std::size_t>(key);
 }
 
 }  // namespace
 
 RuntimeState::RuntimeState(Runtime::SharedPtr runtime, yasmin::Outcomes state_outcomes)
-: yasmin::State(std::move(state_outcomes)),
-  runtime_(std::move(runtime))
+: yasmin::State(std::move(state_outcomes)), runtime_(std::move(runtime))
 {
   if (!runtime_) {
     throw std::invalid_argument("RuntimeState requires a runtime");
@@ -102,7 +83,7 @@ RuntimeState::RuntimeState(Runtime::SharedPtr runtime, yasmin::Outcomes state_ou
 }
 
 BootstrapState::BootstrapState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kRecovery, outcomes::kShutdown})
+: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kShutdown})
 {
 }
 
@@ -114,7 +95,7 @@ std::string BootstrapState::execute(yasmin::Blackboard::SharedPtr blackboard)
 }
 
 WaitMcuState::WaitMcuState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kShutdown})
+: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kReset, outcomes::kShutdown})
 {
 }
 
@@ -127,6 +108,9 @@ std::string WaitMcuState::execute(yasmin::Blackboard::SharedPtr blackboard)
     if (result == WaitResult::kSuccess) {
       return outcomes::kOk;
     }
+    if (result == WaitResult::kReset) {
+      return outcomes::kReset;
+    }
     if (result == WaitResult::kShutdown) {
       return outcomes::kShutdown;
     }
@@ -134,23 +118,26 @@ std::string WaitMcuState::execute(yasmin::Blackboard::SharedPtr blackboard)
   return outcomes::kShutdown;
 }
 
-WaitStartState::WaitStartState(Runtime::SharedPtr runtime)
+WaitAutoState::WaitAutoState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),
-    {outcomes::kOk, outcomes::kRecovery, outcomes::kShutdown})
+    {outcomes::kOk, outcomes::kReset, outcomes::kRecovery, outcomes::kShutdown})
 {
 }
 
-std::string WaitStartState::execute(yasmin::Blackboard::SharedPtr blackboard)
+std::string WaitAutoState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
-  runtime_->set_state(MissionStatus::STATE_WAIT_START, "WAIT_START", "");
+  runtime_->set_state(MissionStatus::STATE_WAIT_START, "WAIT_AUTO", "waiting MCU AUTO event");
   while (rclcpp::ok() && !is_canceled()) {
-    const auto result = runtime_->wait_start();
+    const auto result = runtime_->wait_auto();
     if (result == WaitResult::kSuccess) {
       return outcomes::kOk;
     }
-    if (result == WaitResult::kRecovery || result == WaitResult::kReset) {
+    if (result == WaitResult::kReset) {
+      return outcomes::kReset;
+    }
+    if (result == WaitResult::kRecovery) {
       return outcomes::kRecovery;
     }
     if (result == WaitResult::kShutdown) {
@@ -163,7 +150,7 @@ std::string WaitStartState::execute(yasmin::Blackboard::SharedPtr blackboard)
 PrecheckState::PrecheckState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),
-    {outcomes::kOk, outcomes::kRetry, outcomes::kRecovery, outcomes::kShutdown})
+    {outcomes::kOk, outcomes::kReset, outcomes::kRecovery, outcomes::kShutdown})
 {
 }
 
@@ -171,7 +158,7 @@ std::string PrecheckState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_PRECHECK, "PRECHECK", "");
-  return guard_result_to_precheck_outcome(runtime_->guard());
+  return guard_outcome(runtime_->guard());
 }
 
 StartRunState::StartRunState(Runtime::SharedPtr runtime)
@@ -182,9 +169,189 @@ StartRunState::StartRunState(Runtime::SharedPtr runtime)
 std::string StartRunState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   runtime_->begin_run();
-  blackboard->set<std::size_t>("waypoint_index", 0U);
-  blackboard->set<bool>("reset_origin", true);
+  blackboard->set<std::string>("cargo", "");
+  blackboard->set<std::string>("destination", "");
   return outcomes::kOk;
+}
+
+InspectSortZoneState::InspectSortZoneState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string InspectSortZoneState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "INSPECT_SORT_ZONE", "");
+  const auto result = runtime_->inspect_sorting_zone();
+  if (result.result == ActionResult::kSucceeded) {
+    blackboard->set<std::string>("arena", result.arena);
+    return outcomes::kOk;
+  }
+  return action_outcome(result.result);
+}
+
+NavPickupState::NavPickupState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kRouteDone, outcomes::kFailed, outcomes::kReset,
+      outcomes::kRecovery, outcomes::kShutdown})
+{
+}
+
+std::string NavPickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PICKUP", "");
+  if (runtime_->model().done()) {
+    return outcomes::kRouteDone;
+  }
+  const auto slot = runtime_->model().next_pickup_slot();
+  if (slot >= CompetitionModel::kSlotCount) {
+    return outcomes::kFailed;
+  }
+  blackboard->set<std::size_t>("pickup_slot", slot);
+  return action_outcome(runtime_->navigate("pickup"));
+}
+
+ObservePickupState::ObservePickupState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ObservePickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "OBSERVE_PICKUP", "");
+  const auto slot = get_slot(blackboard, "pickup_slot");
+  if (slot >= CompetitionModel::kSlotCount) {
+    return outcomes::kFailed;
+  }
+  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto observation = runtime_->observe_with_recovery("pickup", slot, layer);
+  if (observation.result != ActionResult::kSucceeded) {
+    return action_outcome(observation.result);
+  }
+  const auto & destination = runtime_->model().destination_for(observation.cargo_class);
+  if (destination.empty()) {
+    return outcomes::kFailed;
+  }
+  const auto park_slot = runtime_->model().next_park_slot(destination);
+  if (park_slot >= CompetitionModel::kSlotCount) {
+    return outcomes::kFailed;
+  }
+  blackboard->set<std::string>("cargo", observation.cargo_class);
+  blackboard->set<std::string>("destination", destination);
+  blackboard->set<std::size_t>("park_slot", park_slot);
+  return outcomes::kOk;
+}
+
+PickState::PickState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string PickState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "PICK", "");
+  const auto slot = get_slot(blackboard, "pickup_slot");
+  if (slot >= CompetitionModel::kSlotCount || !blackboard->contains("cargo")) {
+    return outcomes::kFailed;
+  }
+  const auto cargo = blackboard->get<std::string>("cargo");
+  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto result = runtime_->manipulate("pickup", "pick", slot, layer, cargo);
+  if (result != ActionResult::kSucceeded) {
+    return action_outcome(result);
+  }
+  return runtime_->model().confirm_pick(slot, cargo) ? outcomes::kOk : outcomes::kFailed;
+}
+
+NavParkState::NavParkState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string NavParkState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PARK", "");
+  if (!blackboard->contains("destination")) {
+    return outcomes::kFailed;
+  }
+  return action_outcome(runtime_->navigate(blackboard->get<std::string>("destination")));
+}
+
+ObserveParkState::ObserveParkState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ObserveParkState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "OBSERVE_PARK", "");
+  if (!blackboard->contains("destination")) {
+    return outcomes::kFailed;
+  }
+  const auto park = blackboard->get<std::string>("destination");
+  const auto slot = get_slot(blackboard, "park_slot");
+  if (slot >= CompetitionModel::kSlotCount) {
+    return outcomes::kFailed;
+  }
+  const auto layer = runtime_->model().park_layer(park, slot);
+  const auto observation = runtime_->observe_with_recovery(park, slot, layer);
+  return action_outcome(observation.result);
+}
+
+PlaceState::PlaceState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string PlaceState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "PLACE", "");
+  if (!blackboard->contains("destination") || !blackboard->contains("cargo")) {
+    return outcomes::kFailed;
+  }
+  const auto park = blackboard->get<std::string>("destination");
+  const auto cargo = blackboard->get<std::string>("cargo");
+  const auto slot = get_slot(blackboard, "park_slot");
+  if (slot >= CompetitionModel::kSlotCount) {
+    return outcomes::kFailed;
+  }
+  const auto layer = runtime_->model().park_layer(park, slot);
+  const auto result = runtime_->manipulate(park, "place", slot, layer, cargo);
+  if (result != ActionResult::kSucceeded) {
+    return action_outcome(result);
+  }
+  return runtime_->model().confirm_place(park, slot) ? outcomes::kOk : outcomes::kFailed;
+}
+
+CheckDoneState::CheckDoneState(Runtime::SharedPtr runtime)
+: RuntimeState(std::move(runtime), {outcomes::kNext, outcomes::kRouteDone})
+{
+}
+
+std::string CheckDoneState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  (void)blackboard;
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "CHECK_DONE", "");
+  return runtime_->model().done() ? outcomes::kRouteDone : outcomes::kNext;
 }
 
 ReportDoneState::ReportDoneState(Runtime::SharedPtr runtime)
@@ -196,7 +363,7 @@ std::string ReportDoneState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_REPORTING_DONE, "REPORT_DONE", "");
-  runtime_->safe_stop("report done");
+  runtime_->safe_stop("mission done");
   return runtime_->report_done() ? outcomes::kOk : outcomes::kRecovery;
 }
 
@@ -208,10 +375,9 @@ ReportFailState::ReportFailState(Runtime::SharedPtr runtime)
 std::string ReportFailState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   runtime_->set_state(MissionStatus::STATE_REPORTING_FAIL, "REPORT_FAIL", "");
-  runtime_->safe_stop("report fail");
+  runtime_->safe_stop("mission failed");
   const auto code = blackboard->contains("error_code") ?
-    static_cast<int16_t>(blackboard->get<int32_t>("error_code")) :
-    static_cast<int16_t>(1);
+    static_cast<int16_t>(blackboard->get<int32_t>("error_code")) : static_cast<int16_t>(1);
   return runtime_->report_fail(code) ? outcomes::kOk : outcomes::kRecovery;
 }
 
@@ -238,103 +404,16 @@ std::string WaitResetState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_WAIT_RESET, "WAIT_RESET", "");
-  if (is_canceled()) {
-    return outcomes::kShutdown;
-  }
-  const auto result = runtime_->wait_reset();
-  return result == WaitResult::kShutdown ? outcomes::kShutdown : outcomes::kOk;
-}
-
-PrepareWaypointState::PrepareWaypointState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kOk, outcomes::kRouteDone})
-{
-}
-
-std::string PrepareWaypointState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  return current_waypoint(runtime_->plan(), blackboard) == nullptr ?
-         outcomes::kRouteDone :
-         outcomes::kOk;
-}
-
-PreMoveState::PreMoveState(Runtime::SharedPtr runtime)
-: RuntimeState(
-    std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
-      outcomes::kShutdown})
-{
-}
-
-std::string PreMoveState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  const auto * waypoint = current_waypoint(runtime_->plan(), blackboard);
-  if (waypoint == nullptr) {
-    return outcomes::kFailed;
-  }
-  if (waypoint->pre_move_action.empty() || waypoint->pre_move_action == "noop") {
-    return outcomes::kOk;
-  }
-  return action_result_to_outcome(runtime_->run_pre_move(*waypoint));
-}
-
-NavigateState::NavigateState(Runtime::SharedPtr runtime)
-: RuntimeState(
-    std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
-      outcomes::kShutdown})
-{
-}
-
-std::string NavigateState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  const auto * waypoint = current_waypoint(runtime_->plan(), blackboard);
-  if (waypoint == nullptr) {
-    return outcomes::kFailed;
-  }
-
-  const auto result = runtime_->run_navigation(*waypoint, reset_origin(blackboard));
-  if (result == ActionResult::kSucceeded) {
-    blackboard->set<bool>("reset_origin", false);
-  }
-  return action_result_to_outcome(result);
-}
-
-RunJobsState::RunJobsState(Runtime::SharedPtr runtime)
-: RuntimeState(
-    std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
-      outcomes::kShutdown})
-{
-}
-
-std::string RunJobsState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  const auto * waypoint = current_waypoint(runtime_->plan(), blackboard);
-  if (waypoint == nullptr) {
-    return outcomes::kFailed;
-  }
-
-  for (const auto & job : waypoint->arrival_jobs) {
-    const auto result = runtime_->run_job(*waypoint, job);
-    if (result != ActionResult::kSucceeded) {
-      return action_result_to_outcome(result);
+  while (rclcpp::ok() && !is_canceled()) {
+    const auto result = runtime_->wait_reset();
+    if (result == WaitResult::kSuccess) {
+      return outcomes::kOk;
+    }
+    if (result == WaitResult::kShutdown) {
+      return outcomes::kShutdown;
     }
   }
-  return outcomes::kOk;
-}
-
-AdvanceState::AdvanceState(Runtime::SharedPtr runtime)
-: RuntimeState(std::move(runtime), {outcomes::kNext, outcomes::kRouteDone})
-{
-}
-
-std::string AdvanceState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  const auto next_index = waypoint_index(blackboard) + 1U;
-  blackboard->set<std::size_t>("waypoint_index", next_index);
-  return next_index >= runtime_->plan().waypoints.size() ?
-         outcomes::kRouteDone :
-         outcomes::kNext;
+  return outcomes::kShutdown;
 }
 
 }  // namespace atlas_mission_yasmin

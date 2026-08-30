@@ -21,8 +21,7 @@
 namespace atlas_mission_yasmin
 {
 
-yasmin::StateMachine::SharedPtr build_route_machine(const Runtime::SharedPtr & runtime);
-
+yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPtr & runtime);
 yasmin::StateMachine::SharedPtr build_machine(const Runtime::SharedPtr & runtime);
 
 }  // namespace atlas_mission_yasmin

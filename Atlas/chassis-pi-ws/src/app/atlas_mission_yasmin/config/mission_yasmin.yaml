@@ -3,9 +3,10 @@ atlas_mission_yasmin:
     route_yaml_path: ""
     mcu_status_timeout_s: 1.0
     service_timeout_s: 3.0
-    backend_grace_s: 0.2
-    result_confirm_timeout_s: 30.0
     required_ready_mask: 0
+    navigation_result_timeout_s: 60.0
+    manipulation_result_timeout_s: 30.0
+
     topics:
       mcu_status: "/mcu/status"
       mcu_auto_task_event: "/mcu/auto_task_event"
@@ -14,12 +15,14 @@ atlas_mission_yasmin:
       manipulation_status: "/atlas/manipulation/status"
       mission_status: "/atlas/mission/status"
       motor_cmd_vel: "/motor_cmd_vel"
+
     services:
       report_mission_result: "/mcu/report_mission_result"
       set_brake: "/mcu/set_brake"
       navigation_start: "/atlas/navigation/start"
       navigation_cancel: "/atlas/navigation/cancel"
+      navigation_view_scan: "/atlas/navigation/view_scan"
       manipulation_start: "/atlas/manipulation/start"
       manipulation_cancel: "/atlas/manipulation/cancel"
-    navigation_result_timeout_s: 60.0
-    manipulation_result_timeout_s: 30.0
+      classify_sorting: "/atlas/vision/classify_sorting_rule"
+      detect_target: "/atlas/vision/detect_target"
