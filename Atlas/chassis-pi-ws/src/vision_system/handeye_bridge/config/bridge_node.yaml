@@ -1,0 +1,126 @@
+# handeye_bridge 配置
+# 相机像素检测 → 手眼坐标转换 → 机械臂控制
+# 深度: 射线-平面求交法
+
+handeye_bridge:
+  ros__parameters:
+    # ── 标定文件路径 ──
+    # 相对路径: 相对于 install/share/handeye_bridge/config/
+    # 绝对路径: 直接使用，不做解析
+    # 相机内参 (camera_calib.py 的输出)
+    intrinsics_file: "camera_intrinsics.yaml"
+    # 手眼标定结果 (solve.py 的输出: samples_result.yaml)
+    handeye_result_file: "samples_result.yaml"
+
+    # ── 话题/服务 ──
+    # 检测输入话题 (DetectionCenterArray: 逆时针排序后的中心点 + 角标签)
+    detection_centers_topic: "/detection_centers"
+    # 角+层选择话题 (PickTarget: corner_index + layer)
+    pick_target_topic: "/pick_target"
+    # 末端位姿话题 (MCU 的 FK，与标定一致)
+    pose_topic: "/arm/pose"
+    # MCU 位姿控制服务
+    arm_pose_service: "/mcu/set_arm_pose"
+    # 回初始观察位服务及到位状态（vision_detect启动门禁）
+    initial_pose_service: "/move_to_initial_pose"
+    initial_pose_ready_topic: "/initial_pose_ready"
+
+    # ── 检测初始位置（必须实测后填写） ──
+    # true: bridge启动2秒后自动发送一次；之后可调用 /move_to_initial_pose 重发
+    auto_move_to_initial_on_start: true
+    initial_move_delay_s: 2.0
+    # 未确认下列位置安全前必须保持false；false时自动和手动调用都不会发送运动命令
+    initial_pose_configured: true
+    initial_x_m: 0.2820          # 已实测: ros2 topic echo /arm/pose 读取FK位置
+    initial_y_m: -0.0110           # 已实测
+    initial_z_m: 0.3570           # 已实测
+    initial_pitch_rad: -3.063   # FK四元数反算: R=Rz(yaw)*Ry(pitch)
+    initial_yaw_rad: -3.112     # FK四元数反算
+    initial_speed_rad_s: 1.0
+    # MCU接受命令后，/arm/pose连续满足这些条件才发布ready=true
+    initial_position_tolerance_m: 0.020
+    initial_stable_samples: 5
+    initial_move_timeout_s: 15.0
+
+    # ── Workspace 安全校验 ──
+    # 机械臂基座坐标系下的最大作业半径 (XY平面) 和 Z 高度范围，单位米。
+    # 射线求交结果超出此范围时拒绝发送，防止边缘误检或标定异常导致危险运动。
+    # 请根据实际机械臂参数实测后填入。
+    workspace_max_xy_m: 0.50     # XY平面最大距离 (√(x²+y²))
+    workspace_z_min_m: -0.20     # Z 下界 (低于此值拒绝)
+    workspace_z_max_m: 0.50      # Z 上界 (高于此值拒绝)
+
+    # 机械臂偏离初始观察位超过此距离时自动关闭视觉检测门禁
+    # (设得比 initial_position_tolerance_m 大，允许微小的FK漂移)
+    initial_pose_departure_tolerance_m: 0.05
+
+    # ── 工作平面 (必填, base 坐标系下的 Z 坐标, 单位米) ──
+    # 三层高度，选择哪层直接使用该层 Z 值
+    # 测量方法: 机械臂末端碰平面 → ros2 topic echo /arm/pose --once → 读 z 值
+    plane1_z_m: -0.039      # 第一层高度 ← 改! 实测后填入
+    plane2_z_m: 0.015      # 第二层高度 ← 改! 实测后填入
+    plane3_z_m: 0.066      # 第三层高度 ← 改! 实测后填入
+    # 三层高度实测并复核后才改为 true；false 时即使 auto_send=true 也拒绝发送
+    plane_heights_configured: true
+    # /pick_target 层号无效时回退到此层
+    default_plane: 1
+
+    # ── 深度模式 ──
+    # "manual": 使用 planeX_z_m 固定高度 (默认, 兼容旧配置)
+    #            射线-平面求交: 像素反投影射线 ∩ Z=plane_z 平面 → (x,y)
+    # "pnp":    用 4 个检测角点 + 已知物理间距做 PnP 求解实际深度
+    #            自动算出目标在相机坐标系下的真实 3D 位置
+    #            ⚠️ 需要 pnp_target_width_m / pnp_target_height_m 与实际螺丝间距一致
+    depth_mode: "manual"
+    # PnP 模式参数 (仅 depth_mode="pnp" 时生效)
+    # 4 个螺丝/角点围成矩形的物理尺寸 (单位米)
+    #    TL(0) ──── TR(1)
+    #     │           │
+    #    BL(3) ──── BR(2)
+    # 测量方法: 卡尺量 TL→TR 的水平中心距 = width, TL→BL 的垂直中心距 = height
+    pnp_target_width_m: 0.05      # ← 改! 实测螺丝间距 (都是5cm)
+    pnp_target_height_m: 0.05     # ← 改! 实测螺丝间距 (都是5cm)
+    # PnP 质量门禁
+    pnp_max_reprojection_px: 2.0  # 重投影误差超过此值拒绝
+    pnp_min_depth_m: 0.05         # 最小合理深度 (太近可能误检)
+    pnp_max_depth_m: 0.80         # 最大合理深度 (太远 PnP 不可靠)
+
+    # ── 相机到每层工作平面的距离 (可选，方便换算和校验) ──
+    # 相机光心沿光轴到工作平面的垂直距离，单位米。用于像素→毫米换算：
+    #   mm_per_pixel ≈ 距离_m * 1000 / fx_px
+    # 测量方法: 机械臂到初始观察位 → 尺子量相机镜头到平面
+    camera_to_plane1_distance_m: 0.375 #← 改! 实测后填入
+    camera_to_plane2_distance_m: 0.33  # ← 改! 实测后填入
+    camera_to_plane3_distance_m: 0.28  # ← 改! 实测后填入
+
+    # ── 运动参数 ──
+    # 机械臂移动速度 (rad/s)
+    default_speed_rad_s: 0.8
+    # 末端在目标上方偏移 (避免碰撞)
+    target_z_offset_m: 0.05
+
+    # ── 同步与标定安全门禁 ──
+    expected_image_width: 640
+    expected_image_height: 480
+    max_detection_age_s: 0.5
+    # 停止检测后重发的最佳帧，在接收后多少秒内允许选择
+    final_best_valid_s: 60.0
+    max_pose_sync_dt_ms: 80.0
+    pose_history_size: 200
+    # 保存实时检测帧与其原始机械臂位姿，供停止后的最佳帧复用
+    detection_pose_cache_size: 2000
+    min_handeye_inliers: 6
+    max_handeye_translation_m: 0.50
+    # true: 手眼结果必须包含采集时内参，且与运行时内参逐项一致
+    require_intrinsics_binding: true
+
+    # ── 手动偏置 (补偿系统误差，标定后微调用) ──
+    # 正值=基座坐标系正方向；通常只调 X/Y，不动 Z
+    manual_offset_x_m: -0.04
+    manual_offset_y_m: 0.003
+    manual_offset_z_m: 0.000
+
+    # ── 行为 ──
+    # 收到 /pick_target 后是否自动发送目标给机械臂 (false 则仅打印日志)
+    # 默认仅计算和打印。完成新标定、平面实测和空载验证后再手动改为 true
+    auto_send: true

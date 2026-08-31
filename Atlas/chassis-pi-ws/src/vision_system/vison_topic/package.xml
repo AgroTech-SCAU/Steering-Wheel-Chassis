@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vison_topic</name>
+  <version>0.0.0</version>
+  <description>视觉检测 ROS2 服务包 — ONNX 推理 + 机械臂运动学</description>
+  <maintainer email="yuuy@todo.todo">yuuy</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>ament_index_python</depend>
+  <depend>std_msgs</depend>
+  <depend>vison_topic_interfaces</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-numpy</depend>
+  <depend>python3-pyyaml</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
