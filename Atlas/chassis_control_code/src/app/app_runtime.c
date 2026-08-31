@@ -45,6 +45,7 @@ static ms_t s_auto_start_fault_log_timer = 0u;
 static ms_t s_auto_start_estop_log_timer = 0u;
 static ms_t s_remote_reset_log_timer = 0u;
 static bool s_auto_start_latched = false;
+static bool s_auto_request_pending = false;
 static bool s_voice_gate_armed = false;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
@@ -83,6 +84,7 @@ void app_runtime_init(void) {
     s_auto_start_estop_log_timer = 0u;
     s_remote_reset_log_timer = 0u;
     s_auto_start_latched = false;
+    s_auto_request_pending = false;
     s_voice_gate_armed = false;
     asr_comms_clear_pending_auto_start_event();
 
@@ -173,23 +175,50 @@ static void app_runtime_update_mode(void) {
         return;
     }
 
+    if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && !s_remote_state.manual_request) {
+        if(app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
+            app_runtime_leave_manual_chassis_pc_arm();
+        }
+        (void)app_fsm_post(APP_FSM_EVENT_STOP);
+        return;
+    }
+
+    if(!remote_is_auto_mode_selected()) {
+        if(s_auto_request_pending || s_voice_gate_armed) {
+            log_info("AUTO voice gate cancelled: SWD left AUTO");
+        }
+        app_runtime_clear_voice_gate();
+    }
+
     if(asr_comms_take_auto_start_event()) {
-        if(!s_voice_gate_armed) {
+        if(!s_auto_request_pending || !s_voice_gate_armed) {
             log_info("AUTO voice event ignored: gate not armed");
             return;
         }
 
+        if(!remote_is_auto_mode_selected()) {
+            app_runtime_clear_voice_gate();
+            log_info("AUTO voice event ignored: SWD not in AUTO");
+            return;
+        }
+
         s_voice_gate_armed = false;
+        s_auto_request_pending = false;
         (void)app_runtime_try_accept_auto_start_event();
         return;
     }
 
     if(remote_take_auto_start_event()) {
-        s_voice_gate_armed = false;
-        asr_comms_clear_pending_auto_start_event();
+        app_runtime_clear_voice_gate();
+
+        if(!remote_is_auto_mode_selected()) {
+            log_info("AUTO voice gate ignored: SWD not in AUTO");
+            return;
+        }
 
         if(app_runtime_can_accept_auto_start()) {
             if(asr_comms_speak(ASR_COMMS_PHRASE_VOICE_GATE)) {
+                s_auto_request_pending = true;
                 s_voice_gate_armed = true;
                 log_info("AUTO voice gate armed");
             }
@@ -201,13 +230,6 @@ static void app_runtime_update_mode(void) {
             log_info("AUTO voice gate rejected: system not ready");
         }
         return;
-    }
-
-    if(app_fsm_get_state() == APP_FSM_STATE_MANUAL && !s_remote_state.manual_request) {
-        if(app_fsm_get_manual_mode() == APP_MANUAL_MODE_CHASSIS_PC_ARM) {
-            app_runtime_leave_manual_chassis_pc_arm();
-        }
-        (void)app_fsm_post(APP_FSM_EVENT_STOP);
     }
 }
 
@@ -458,6 +480,7 @@ static bool app_runtime_can_accept_auto_start(void) {
     const AppFsmStateId state = app_fsm_get_state();
 
     return !s_auto_start_latched &&
+           remote_is_auto_mode_selected() &&
            state == APP_FSM_STATE_IDLE &&
            !app_fsm_has_fault() &&
            state != APP_FSM_STATE_ESTOP &&
@@ -471,7 +494,9 @@ static void app_runtime_set_auto_start_latched(bool latched) {
 }
 
 static void app_runtime_clear_voice_gate(void) {
+    s_auto_request_pending = false;
     s_voice_gate_armed = false;
+    remote_clear_pending_auto_start_event();
     asr_comms_clear_pending_auto_start_event();
 }
 

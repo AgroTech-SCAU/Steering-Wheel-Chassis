@@ -10,6 +10,7 @@
 #include <string.h>
 
 #define REMOTE_TIMEOUT_MS 100u
+#define REMOTE_AUTO_GESTURE_HOLD_MS 300u
 
 static RemoteState s_remote_state = { 0 };
 static bool s_auto_start_event_pending = false;
@@ -18,6 +19,7 @@ static bool s_auto_start_edge_armed = false;
 static bool s_clear_reset_edge_armed = false;
 static bool s_auto_condition_active = false;
 static bool s_clear_condition_active = false;
+static ms_t s_auto_condition_since_ms = 0u;
 
 void remote_init(void) {
     memset(&s_remote_state, 0, sizeof(s_remote_state));
@@ -27,12 +29,14 @@ void remote_init(void) {
     s_clear_reset_edge_armed = false;
     s_auto_condition_active = false;
     s_clear_condition_active = false;
+    s_auto_condition_since_ms = 0u;
 }
 
 void remote_process(void) {
     FsIa10bData rc_data;
     bool auto_condition;
     bool clear_condition;
+    const ms_t now_ms = delay_now_ms();
 
     ibus_maintain();
 
@@ -47,12 +51,13 @@ void remote_process(void) {
         s_clear_reset_edge_armed = false;
         s_auto_condition_active = false;
         s_clear_condition_active = false;
+        s_auto_condition_since_ms = 0u;
         return;
     }
 
     s_remote_state.online = true;
     s_remote_state.rc_data = rc_data;
-    s_remote_state.stamp_ms = delay_now_ms();
+    s_remote_state.stamp_ms = now_ms;
     s_remote_state.manual_request = (rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_LOW);
     s_remote_state.auto_request = (rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_HIGH &&
                                    rc_data.channel[REMOTE_CH_VRA] >= REMOTE_AUTO_THRESHOLD &&
@@ -65,12 +70,17 @@ void remote_process(void) {
     if(!auto_condition) {
         s_auto_condition_active = false;
         s_auto_start_edge_armed = true;
+        s_auto_condition_since_ms = 0u;
     }
-    else {
-        if(s_auto_start_edge_armed && !s_auto_condition_active) {
-            s_auto_start_event_pending = true;
+    else if(s_auto_start_edge_armed) {
+        if(!s_auto_condition_active) {
+            s_auto_condition_active = true;
+            s_auto_condition_since_ms = now_ms;
         }
-        s_auto_condition_active = true;
+        else if((ms_t)(now_ms - s_auto_condition_since_ms) >= REMOTE_AUTO_GESTURE_HOLD_MS) {
+            s_auto_start_event_pending = true;
+            s_auto_start_edge_armed = false;
+        }
     }
 
     if(!clear_condition) {
@@ -118,6 +128,10 @@ bool remote_is_manual_requested(void) {
 
 bool remote_is_auto_requested(void) {
     return s_remote_state.online && s_remote_state.auto_request;
+}
+
+bool remote_is_auto_mode_selected(void) {
+    return s_remote_state.online && s_remote_state.rc_data.channel[REMOTE_CH_SWD] == REMOTE_SW_HIGH;
 }
 
 bool remote_take_auto_start_event(void) {

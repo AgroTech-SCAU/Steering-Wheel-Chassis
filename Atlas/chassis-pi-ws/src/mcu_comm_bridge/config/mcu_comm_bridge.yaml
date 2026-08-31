@@ -79,8 +79,8 @@ mcu_comm_bridge_node:
     publish_tf: true
 
     # 最终底盘速度输入话题
-    # 该话题由 atlas_mission_manager 发布
-    cmd_vel_topic: "/cmd_vel"
+    # 由 atlas_mission_yasmin 的安全门控输出
+    cmd_vel_topic: "/motor_cmd_vel"
 
     # 刹车服务名
     brake_service: "/mcu/set_brake"
