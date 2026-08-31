@@ -27,14 +27,9 @@ extern "C"{ void * __dso_handle = 0 ;}
 
 uint32_t snid;
 
-// 固定语音资源
-//{speak:小蝶-清新女声,vol:14,speed:10,platform:haohaodada}
-//{playid:10500,voice:遥操作区任务已完成}
-//{playid:10501,voice:请说阿特拉斯启动}
-//{playid:10502,voice:开始执行全自主运输任务}
-//{playid:10503,voice:货物派送完成}
-//{playid:10504,voice:全自主运输任务结束}
-//{playid:10505,voice:当前阶段已跳过}
+// “阿特拉斯启动”作为唤醒词，而不是普通命令词。
+// 这样设备处于待机状态时也能直接识别，不依赖 enter_wakeup()。
+// 语音模型声明统一放到 setup() 中，按 ASRPro 官方示例组织。
 
 typedef enum {
   ATLAS_STATE_WAIT_TRANSITION = 0,
@@ -50,6 +45,10 @@ static bool g_rx_discard_until_newline = false;
 static volatile AtlasRuntimeState g_runtime_state =
   ATLAS_STATE_WAIT_TRANSITION;
 
+// 第二句提示音完成回调正常情况下会进入 WAIT_START_VOICE。
+// 同时保留 5 秒兜底，避免播放器回调异常导致状态永久卡死。
+static volatile uint16_t g_voice_gate_fallback_ticks = 0U;
+
 static void atlas_serial_task(void *parameter);
 static void atlas_handle_line(char *line);
 static bool atlas_parse_phrase_id(
@@ -57,7 +56,6 @@ static bool atlas_parse_phrase_id(
   uint16_t *phrase_id
 );
 static void atlas_begin_voice_gate(void);
-static void atlas_on_transition_done(cmd_handle_t cmd_handle);
 static void atlas_on_voice_prompt_done(cmd_handle_t cmd_handle);
 
 static bool atlas_parse_phrase_id(
@@ -82,24 +80,6 @@ static bool atlas_parse_phrase_id(
   return true;
 }
 
-static void atlas_on_transition_done(cmd_handle_t cmd_handle)
-{
-  (void)cmd_handle;
-
-  if(g_runtime_state != ATLAS_STATE_PLAYING_TRANSITION){
-    return;
-  }
-
-  g_runtime_state = ATLAS_STATE_PLAYING_VOICE_PROMPT;
-  if(!prompt_play_by_cmd_id(
-      ATLAS_PLAY_VOICE_PROMPT,
-      -1,
-      atlas_on_voice_prompt_done,
-      false)){
-    g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
-  }
-}
-
 static void atlas_on_voice_prompt_done(cmd_handle_t cmd_handle)
 {
   (void)cmd_handle;
@@ -108,25 +88,43 @@ static void atlas_on_voice_prompt_done(cmd_handle_t cmd_handle)
     return;
   }
 
+  // “阿特拉斯启动”本身就是唤醒词，因此这里不再调用 enter_wakeup()。
+  // 提示音结束后只打开应用层门控，随后用户直接说“阿特拉斯启动”即可。
   g_runtime_state = ATLAS_STATE_WAIT_START_VOICE;
+  g_voice_gate_fallback_ticks = 0U;
+  Serial.print("EVT,VOICE_READY\n");
 }
 
 static void atlas_begin_voice_gate(void)
 {
-  // SDK 文档未定义被抢占请求是否仍会回调；过渡句播放中重复 SPK,1 幂等，
-  // 避免旧 callback 推进一个刚刚重启的新周期
-  if(g_runtime_state == ATLAS_STATE_PLAYING_TRANSITION){
+  // 两句正在播报时重复 SPK,1 直接忽略，避免重复排队。
+  if(g_runtime_state == ATLAS_STATE_PLAYING_TRANSITION ||
+     g_runtime_state == ATLAS_STATE_PLAYING_VOICE_PROMPT){
     return;
   }
 
-  // 其余状态收到 SPK,1 时抢占旧播报并重新开始一个门控周期
+  // playid 定义的是“音频文件 ID”，应使用 prompt_play_by_voice_id，
+  // 不能使用 prompt_play_by_cmd_id（后者参数是命令词 ID）。
   g_runtime_state = ATLAS_STATE_PLAYING_TRANSITION;
 
-  if(!prompt_play_by_cmd_id(
+  // 第一句立即抢占当前播报。
+  if(prompt_play_by_voice_id(
       ATLAS_PLAY_TRANSITION_COMPLETE,
-      -1,
-      atlas_on_transition_done,
-      true)){
+      NULL,
+      true) != 0U){
+    g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
+    return;
+  }
+
+  // 第二句立即加入播放器队列，不再依赖第一句结束回调去“启动”第二句。
+  // 这样第一句播完后播放器会自然继续播放第二句。
+  g_runtime_state = ATLAS_STATE_PLAYING_VOICE_PROMPT;
+  g_voice_gate_fallback_ticks = 2500U;
+  if(prompt_play_by_voice_id(
+      ATLAS_PLAY_VOICE_PROMPT,
+      atlas_on_voice_prompt_done,
+      false) != 0U){
+    g_voice_gate_fallback_ticks = 0U;
     g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
   }
 }
@@ -149,9 +147,8 @@ static void atlas_handle_line(char *line)
 
     case 2:
       if(g_runtime_state == ATLAS_STATE_READY){
-        (void)prompt_play_by_cmd_id(
+        (void)prompt_play_by_voice_id(
           ATLAS_PLAY_AUTONOMOUS_START,
-          -1,
           NULL,
           false
         );
@@ -160,9 +157,8 @@ static void atlas_handle_line(char *line)
 
     case 4:
       if(g_runtime_state == ATLAS_STATE_READY){
-        (void)prompt_play_by_cmd_id(
+        (void)prompt_play_by_voice_id(
           ATLAS_PLAY_DELIVERY_COMPLETE,
-          -1,
           NULL,
           false
         );
@@ -171,9 +167,8 @@ static void atlas_handle_line(char *line)
 
     case 5:
       if(g_runtime_state == ATLAS_STATE_READY){
-        (void)prompt_play_by_cmd_id(
+        (void)prompt_play_by_voice_id(
           ATLAS_PLAY_TASK_COMPLETE,
-          -1,
           NULL,
           false
         );
@@ -182,9 +177,8 @@ static void atlas_handle_line(char *line)
 
     case 6:
       if(g_runtime_state == ATLAS_STATE_READY){
-        (void)prompt_play_by_cmd_id(
+        (void)prompt_play_by_voice_id(
           ATLAS_PLAY_TASK_SKIPPED,
-          -1,
           NULL,
           false
         );
@@ -242,6 +236,17 @@ static void atlas_serial_task(void *parameter)
       }
     }
 
+    // 防止某些固件版本播放器完成回调未触发而永久卡在提示音状态。
+    // 串口任务每轮约 2 ms，2500 次约等于 5 秒。
+    if(g_runtime_state == ATLAS_STATE_PLAYING_VOICE_PROMPT &&
+       g_voice_gate_fallback_ticks > 0U){
+      g_voice_gate_fallback_ticks--;
+      if(g_voice_gate_fallback_ticks == 0U){
+        g_runtime_state = ATLAS_STATE_WAIT_START_VOICE;
+        Serial.print("EVT,VOICE_READY\n");
+      }
+    }
+
     delay(2);
   }
 
@@ -250,22 +255,38 @@ static void atlas_serial_task(void *parameter)
 
 void ASR_CODE()
 {
-  if(g_runtime_state != ATLAS_STATE_WAIT_START_VOICE){
-    return;
-  }
-
+  // “阿特拉斯启动”现在是唤醒词，待机状态下即可被识别。
+  // 只有收到过 SPK,1 并完成提示阶段后，应用层才接受这次启动请求。
   if(snid != ATLAS_START_INTENT_SNID){
     return;
   }
 
-  // 先离开门控状态，保证本周期只产生一次用户输入事件；
-  // 只有 MCU 接受 AutoPi 后，才会通过 SPK,2 宣布任务开始
+  if(g_runtime_state != ATLAS_STATE_WAIT_START_VOICE){
+    return;
+  }
+
+  // 识别“阿特拉斯启动”后，覆盖 ASRPro 默认约 15 秒的唤醒保持时间。
+  // 只延长当前工作态，不改变唤醒词、SPK 流程或现有状态机。
+  set_state_enter_wakeup(86400000UL);  // 24 小时
+
   g_runtime_state = ATLAS_STATE_READY;
+  g_voice_gate_fallback_ticks = 0U;
   Serial.print("EVT,AUTO_START\n");
 }
 
 void setup()
 {
+  // ASRPro 语音模型定义。修改这些内容后必须重新“生成模型”再编译烧录。
+  // “阿特拉斯启动”定义为唤醒词：设备待机时也能直接识别。
+  //{speak:小蝶-清新女声,vol:14,speed:10,platform:haohaodada}
+  //{ID:1,keyword:"唤醒词",ASR:"阿特拉斯启动",ASRTO:""}
+  //{playid:10500,voice:遥操作区任务已完成}
+  //{playid:10501,voice:请说阿特拉斯启动}
+  //{playid:10502,voice:开始执行全自主运输任务}
+  //{playid:10503,voice:货物派送完成}
+  //{playid:10504,voice:全自主运输任务结束}
+  //{playid:10505,voice:当前阶段已跳过}
+
   Serial.begin(115200);
   Serial.setTimeout(5);
   g_runtime_state = ATLAS_STATE_WAIT_TRANSITION;
@@ -280,5 +301,7 @@ void setup()
   );
 }
 
+
+/** edittype="asr_procode" */
 
 /** edittype="asr_procode" */
