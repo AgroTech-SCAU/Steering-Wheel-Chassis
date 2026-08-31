@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>atlas_competition_manipulation_backend</name>
+  <version>0.1.0</version>
+  <description>Atlas 智械争锋机械臂任务编排后端</description>
+  <maintainer email="1219921425@qq.com">AgroTech-SCAU</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>atlas_mission_interfaces</exec_depend>
+  <exec_depend>mcu_comm_bridge</exec_depend>
+  <exec_depend>vison_topic_interfaces</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

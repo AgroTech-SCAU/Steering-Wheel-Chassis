@@ -1,0 +1,58 @@
+atlas_competition_manipulation_backend:
+  ros__parameters:
+    backend_name: "vision_arm"
+
+    start_service: "/atlas/manipulation/start"
+    cancel_service: "/atlas/manipulation/cancel"
+    status_topic: "/atlas/manipulation/status"
+
+    initial_pose_service: "/move_to_initial_pose"
+    initial_pose_ready_topic: "/initial_pose_ready"
+    pick_target_topic: "/pick_target"
+    arm_pose_topic: "/arm/pose"
+    arm_position_service: "/mcu/set_arm_position"
+    suction_service: "/mcu/set_suction"
+
+    service_timeout_s: 2.0
+    motion_timeout_s: 12.0
+    initial_pose_timeout_s: 15.0
+    position_tolerance_m: 0.015
+    stable_delta_m: 0.004
+    stable_samples: 5
+
+    # /pick_target 会由 handeye_bridge 先把末端送到目标上方
+    # 这里再相对当前稳定位置向下抓取并抬起
+    # 首次实车必须低速空载确认，必要时按真实 target_z_offset 调整
+    min_pick_target_motion_m: 0.005
+    pick_target_settle_s: 0.25
+    pick_descent_m: 0.050
+    pick_lift_m: 0.055
+    suction_settle_s: 0.45
+    default_speed_rad_s: 0.8
+
+    # 视觉恢复的机械臂换视角；默认关闭，不允许未标定就自动偏移
+    # false 时 view_scan 只重新回固定观察位，属于安全退化模式
+    view_scan:
+      enabled: false
+      dx_m: 0.0
+      dy_m: 0.025
+      dz_m: 0.0
+
+    # 园区自动放置必须现场实测后才能开启
+    # x/y/z 均为“底盘已经导航到园区语义点后”的 arm_base 坐标系目标
+    # first_layer_z_m 表示第一层货物释放位置；YASMIN 传入 layer=当前已有层数，
+    # 后端按 first_layer_z + layer * layer_step 计算下一层释放高度
+    placement:
+      enabled: false
+      approach_m: 0.060
+      layer_step_m: 0.050
+      park_1:
+        x_m: 0.0
+        y_m: 0.0
+        first_layer_z_m: 0.0
+      park_2:
+        x_m: 0.0
+        y_m: 0.0
+        first_layer_z_m: 0.0
+      # 四个园区槽位相对 park base 的 xy 偏移: [x0,y0,x1,y1,x2,y2,x3,y3]
+      slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]
