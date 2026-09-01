@@ -7,9 +7,4 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  scripts/competition_preflight.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 ament_package()
