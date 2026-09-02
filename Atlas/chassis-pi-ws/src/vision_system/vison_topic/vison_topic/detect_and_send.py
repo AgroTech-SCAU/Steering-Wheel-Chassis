@@ -61,7 +61,7 @@ CONFIG = {
     "service": {
         "name": "vision_detect",                     # 启停检测的服务名
         "topic_name": "vision_detections",           # 实时检测结果话题
-        "centers_topic": "detection_centers",        # 像素坐标排序+角标签的检测中心点话题
+        "centers_topic": "detection_centers",        # 逆时针排序+角标签的检测中心点话题
         "rate_hz": 15,                               # 检测定时器频率 (Hz)
     },
 
@@ -123,27 +123,33 @@ def _is_finite_detection(d: Detection) -> bool:
 
 
 # ============================================================
-# 像素坐标排序 + 角标签
+# 逆时针排序 + 角标签
 # ============================================================
 
 _log = logging.getLogger(__name__)
 
 
-def sort_by_pixel_and_label(
-    detections: List[Detection],
-) -> List[Tuple[Detection, int]]:
+def sort_ccw_and_label(detections: List[Detection]) -> List[Tuple[Detection, int]]:
     """
-    直接按检测中心的像素坐标分配角标签。
+    按中心点逆时针排序，按坐标位置分配角标签。
 
     返回: [(detection, corner_index), ...]
       corner_index: 0=左上  1=右上  2=右下  3=左下
 
-    四个目标: 按 v 分成上、下两行，再按 u 区分左、右。
-    三个目标: 按 v 排序，较小的相邻纵向间隔对应同一行的两个目标，
-    再按 u 判断另一行的单独目标靠左还是靠右。
-    两个目标: 只按 u 从左到右编号 0、1。一个目标编号 0。
-    不计算点集质心，也不使用象限或最近概念角。
+    通用策略: 取置信度 top 4 → 对每个目标，找到离它最近的"概念角位置"
+    (min_u/min_v/max_u/max_v 两两组合) → 分配对应标签 → 按标签排序返回。
+    多个目标同时最近同一个角时，按距离优先分配，远的顺延到空缺角。
     """
+
+    # 四个角的概念位置定义 (相对质心, 用象限)
+    CORNER_QUADS = [
+        (0, lambda du, dv: du < 0 and dv < 0),   # 0=TL: u小 v小
+        (1, lambda du, dv: du >= 0 and dv < 0),  # 1=TR: u大 v小
+        (2, lambda du, dv: du >= 0 and dv >= 0), # 2=BR: u大 v大
+        (3, lambda du, dv: du < 0 and dv >= 0),  # 3=BL: u小 v大
+    ]
+
+    CORNER_NAMES = {0: "TL", 1: "TR", 2: "BR", 3: "BL"}
 
     if not detections:
         return []
@@ -160,66 +166,93 @@ def sort_by_pixel_and_label(
     if n == 1:
         return [(top4[0], 0)]
 
-    if n == 2:
-        by_u = sorted(top4, key=lambda d: (d.u, d.v))
-        return [(by_u[0], 0), (by_u[1], 1)]
+    # 质心
+    cx = sum(d.u for d in top4) / n
+    cy = sum(d.v for d in top4) / n
 
-    if n == 3:
-        by_v = sorted(top4, key=lambda d: (d.v, d.u))
-        upper_gap = by_v[1].v - by_v[0].v
-        lower_gap = by_v[2].v - by_v[1].v
+    # 四个概念角位置：用所有点的 min_u/max_u/min_v/max_v 构造
+    us = [d.u for d in top4]
+    vs = [d.v for d in top4]
+    min_u, max_u = min(us), max(us)
+    min_v, max_v = min(vs), max(vs)
 
-        if upper_gap <= lower_gap:
-            # 前两个点的 y 更接近：它们属于上面一行。
-            top_left, top_right = sorted(
-                by_v[:2], key=lambda d: (d.u, d.v),
-            )
-            bottom = by_v[2]
-            bottom_label = (
-                3 if abs(bottom.u - top_left.u)
-                <= abs(bottom.u - top_right.u) else 2
-            )
-            resolved = [
-                (top_left, 0),
-                (top_right, 1),
-                (bottom, bottom_label),
-            ]
+    # 概念角坐标 (需要至少 2 个不同 u 和 v 才能区分; 重叠时扩大)
+    if abs(max_u - min_u) < 1.0:
+        max_u = min_u + 1.0
+    if abs(max_v - min_v) < 1.0:
+        max_v = min_v + 1.0
+
+    corner_positions = {
+        0: (min_u, min_v),  # TL
+        1: (max_u, min_v),  # TR
+        2: (max_u, max_v),  # BR
+        3: (min_u, max_v),  # BL
+    }
+
+    # 对每个目标，找最近的概念角
+    assignments = []  # [(det, corner_index, distance)]
+
+    # 先按象限初次分配，有冲突再按距离解决
+    used_corners = set()
+
+    for d in top4:
+        du = d.u - cx
+        dv = d.v - cy
+
+        # 找到该点落入的象限
+        matched = None
+        for cidx, check in CORNER_QUADS:
+            if check(du, dv):
+                matched = cidx
+                break
+
+        if matched is not None and matched not in used_corners:
+            assignments.append((d, matched))
+            used_corners.add(matched)
         else:
-            # 后两个点的 y 更接近：它们属于下面一行。
-            bottom_left, bottom_right = sorted(
-                by_v[1:], key=lambda d: (d.u, d.v),
-            )
-            top = by_v[0]
-            top_label = (
-                0 if abs(top.u - bottom_left.u)
-                <= abs(top.u - bottom_right.u) else 1
-            )
-            resolved = [
-                (top, top_label),
-                (bottom_right, 2),
-                (bottom_left, 3),
-            ]
+            # 象限冲突或不在任何象限 → 找最近的剩余概念角
+            best_corner = None
+            best_dist = float("inf")
+            for cidx in range(4):
+                cu, cv = corner_positions[cidx]
+                dist = (d.u - cu) ** 2 + (d.v - cv) ** 2
+                if dist < best_dist:
+                    best_dist = dist
+                    best_corner = cidx
+            assignments.append((d, best_corner))
 
-        resolved.sort(key=lambda item: item[1])
-        return resolved
+    # 解决冲突: 同一角多个目标 → 最近的拿, 远的找剩余空角
+    corner_to_dets = {}  # {cidx: [(det, dist), ...]}
+    for det, cidx in assignments:
+        cu, cv = corner_positions[cidx]
+        dist = (det.u - cu) ** 2 + (det.v - cv) ** 2
+        corner_to_dets.setdefault(cidx, []).append((det, dist))
 
-    # 图像坐标系中 v 越小越靠上，u 越小越靠左。
-    # 完整四角时，上下各两个点。
-    by_v = sorted(top4, key=lambda d: (d.v, d.u))
-    top_row = sorted(by_v[:2], key=lambda d: (d.u, d.v))
-    bottom_row = sorted(by_v[2:], key=lambda d: (d.u, d.v))
+    resolved = []  # [(det, corner_index)]
+    occupied = set()
+    unassigned = []
 
-    resolved: List[Tuple[Detection, int]] = []
-    if top_row:
-        resolved.append((top_row[0], 0))       # 左上
-    if len(top_row) > 1:
-        resolved.append((top_row[-1], 1))      # 右上
-    if len(bottom_row) > 1:
-        resolved.append((bottom_row[-1], 2))   # 右下
-    if bottom_row:
-        resolved.append((bottom_row[0], 3))    # 左下
+    # 每个角只保留最近的那个
+    for cidx in range(4):
+        if cidx in corner_to_dets:
+            best = min(corner_to_dets[cidx], key=lambda x: x[1])
+            resolved.append((best[0], cidx))
+            occupied.add(cidx)
+            # 该角多余的目标进入未分配池
+            for det, dist in corner_to_dets[cidx]:
+                if det is not best[0]:
+                    unassigned.append(det)
 
-    resolved.sort(key=lambda item: item[1])
+    # 未分配的依次填到空角
+    empty = [c for c in range(4) if c not in occupied]
+    for det in unassigned:
+        if empty:
+            cidx = empty.pop(0)
+            resolved.append((det, cidx))
+            occupied.add(cidx)
+
+    # 按角标签排序返回
+    resolved.sort(key=lambda x: x[1])
     return resolved
 
 
@@ -534,7 +567,7 @@ class VisionDetectServer:
         self._pub = self._node.create_publisher(Float32MultiArray, topic_name, 10)
         self._pub_msg = Float32MultiArray()
 
-        # /detection_centers: 像素坐标排序后的检测中心点 + 角标签 → handeye_bridge
+        # /detection_centers: 逆时针排序后的检测中心点 + 角标签 → handeye_bridge
         centers_topic = CONFIG["service"]["centers_topic"]
         self._centers_pub = self._node.create_publisher(
             DetectionCenterArray, centers_topic, 10)
@@ -781,7 +814,7 @@ class VisionDetectServer:
         """发布检测中心；最终最佳帧保留原始采集时间戳。"""
         if frame_stamp is None:
             return
-        labeled = sort_by_pixel_and_label(detections)
+        labeled = sort_ccw_and_label(detections)
         centers_msg = DetectionCenterArray()
         centers_msg.header.stamp = frame_stamp
         centers_msg.header.frame_id = str(CONFIG["camera"]["frame_id"])
@@ -851,9 +884,7 @@ class VisionDetectServer:
         safe_u = []
         safe_v = []
         safe_names = []
-        # 服务数组与 /detection_centers 使用同一套像素坐标顺序。
-        sorted_best = [d for d, _ in sort_by_pixel_and_label(best)]
-        for d in sorted_best:
+        for d in best:
             try:
                 u = float(d.u)
                 v = float(d.v)

@@ -57,9 +57,9 @@ handeye_bridge:
     # ── 工作平面 (必填, base 坐标系下的 Z 坐标, 单位米) ──
     # 三层高度，选择哪层直接使用该层 Z 值
     # 测量方法: 机械臂末端碰平面 → ros2 topic echo /arm/pose --once → 读 z 值
-    plane1_z_m: -0.039      # 第一层高度 ← 改! 实测后填入
-    plane2_z_m: 0.015      # 第二层高度 ← 改! 实测后填入
-    plane3_z_m: 0.066      # 第三层高度 ← 改! 实测后填入
+    plane1_z_m: 0.031      # 第一层高度 ← 改! 实测后填入
+    plane2_z_m: 0.07      # 第二层高度 ← 改! 实测后填入
+    plane3_z_m: 0.109      # 第三层高度 ← 改! 实测后填入
     # 三层高度实测并复核后才改为 true；false 时即使 auto_send=true 也拒绝发送
     plane_heights_configured: true
     # /pick_target 层号无效时回退到此层
@@ -89,15 +89,15 @@ handeye_bridge:
     # 相机光心沿光轴到工作平面的垂直距离，单位米。用于像素→毫米换算：
     #   mm_per_pixel ≈ 距离_m * 1000 / fx_px
     # 测量方法: 机械臂到初始观察位 → 尺子量相机镜头到平面
-    camera_to_plane1_distance_m: 0.375 #← 改! 实测后填入
-    camera_to_plane2_distance_m: 0.33  # ← 改! 实测后填入
-    camera_to_plane3_distance_m: 0.28  # ← 改! 实测后填入
+    camera_to_plane1_distance_m: 0.36 #← 改! 实测后填入
+    camera_to_plane2_distance_m: 0.305  # ← 改! 实测后填入
+    camera_to_plane3_distance_m: 0.255  # ← 改! 实测后填入
 
     # ── 运动参数 ──
     # 机械臂移动速度 (rad/s)
     default_speed_rad_s: 0.8
     # 末端在目标上方偏移 (避免碰撞)
-    target_z_offset_m: 0.05
+    target_z_offset_m: 0.003
 
     # ── 同步与标定安全门禁 ──
     expected_image_width: 640
@@ -116,8 +116,8 @@ handeye_bridge:
 
     # ── 手动偏置 (补偿系统误差，标定后微调用) ──
     # 正值=基座坐标系正方向；通常只调 X/Y，不动 Z
-    manual_offset_x_m: -0.04
-    manual_offset_y_m: 0.003
+    manual_offset_x_m: -0.055
+    manual_offset_y_m: 0.000
     manual_offset_z_m: 0.000
 
     # ── 行为 ──

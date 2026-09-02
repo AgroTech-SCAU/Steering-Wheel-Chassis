@@ -7,7 +7,7 @@ handeye_bridge — 相机像素 → 手眼转换 → 机械臂控制
 深度:  射线-平面相交法。像素反投影为空间射线，
        与已知高度平面求交点得 (x,y)，Z 取配置高度值。
 
-输入:  /detection_centers (DetectionCenterArray) — 按像素坐标排序的检测中心点+角标签
+输入:  /detection_centers (DetectionCenterArray) — 逆时针排序的检测中心点+角标签
         /pick_target (PickTarget)                 — 选择角(0=TL/1=TR/2=BR/3=BL)+层(1/2/3)
         /arm/pose (PoseStamped)                   — 末端位姿 (MCU 的 FK，与标定一致)
 
