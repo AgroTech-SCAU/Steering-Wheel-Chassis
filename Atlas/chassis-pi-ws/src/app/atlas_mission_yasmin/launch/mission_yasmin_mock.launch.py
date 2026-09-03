@@ -23,6 +23,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     arena = LaunchConfiguration("arena")
+    scenario = LaunchConfiguration("scenario")
     config_file = PathJoinSubstitution(
         [FindPackageShare("atlas_mission_yasmin"), "config", "mission_yasmin.yaml"])
     route_file = PathJoinSubstitution(
@@ -30,18 +31,20 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("arena", default_value="A"),
+        DeclareLaunchArgument("scenario", default_value="normal"),
         Node(
             package="atlas_mission_yasmin",
             executable="mock_mcu.py",
             name="atlas_mock_mcu",
             output="screen",
+            parameters=[{"scenario": scenario}],
         ),
         Node(
             package="atlas_mission_yasmin",
             executable="mock_backends.py",
             name="atlas_mock_backends",
             output="screen",
-            parameters=[{"arena": arena}],
+            parameters=[{"arena": arena, "scenario": scenario}],
         ),
         Node(
             package="atlas_mission_yasmin",
@@ -51,6 +54,7 @@ def generate_launch_description():
             parameters=[
                 config_file,
                 {"route_yaml_path": route_file},
+                {"mcu_status_timeout_s": 0.3},
                 {"enable_viewer": False},
             ],
         ),

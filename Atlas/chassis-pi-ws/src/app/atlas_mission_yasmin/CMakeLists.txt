@@ -89,6 +89,7 @@ install(PROGRAMS
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   ament_add_gtest(competition_model_unit_test
     test/competition_model_unit_test.cpp
@@ -103,6 +104,11 @@ if(BUILD_TESTING)
   target_link_libraries(machine_unit_test
     atlas_mission_yasmin_runtime
     yasmin::yasmin
+  )
+
+  ament_add_pytest_test(mission_mock_acceptance_test
+    test/mission_mock_acceptance_test.py
+    TIMEOUT 180
   )
 
   ament_lint_auto_find_test_dependencies()

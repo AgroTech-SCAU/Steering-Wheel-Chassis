@@ -49,8 +49,8 @@ TEST_F(MachineUnitTest, AutonomousMachineHasCompetitionTopology)
   const auto & states = machine->get_states();
   EXPECT_EQ(states.size(), 8U);
   for (const auto * name : {
-      "INSPECT_SORT_ZONE", "NAV_PICKUP", "OBSERVE_PICKUP", "PICK",
-      "NAV_PARK", "OBSERVE_PARK", "PLACE", "CHECK_DONE"})
+    "INSPECT_SORT_ZONE", "NAV_PICKUP", "OBSERVE_PICKUP", "PICK",
+    "NAV_PARK", "OBSERVE_PARK", "PLACE", "CHECK_DONE"})
   {
     EXPECT_TRUE(states.find(name) != states.end()) << name;
   }

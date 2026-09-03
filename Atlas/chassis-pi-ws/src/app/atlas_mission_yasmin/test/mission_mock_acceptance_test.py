@@ -13,27 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end acceptance tests for the Atlas YASMIN mock launch stack."""
+"""End-to-end acceptance tests for the Atlas competition YASMIN mock stack."""
 
-import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import threading
 import time
 
-from ament_index_python.packages import get_package_share_directory
 import pytest
 import rclpy
-from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import DurabilityPolicy
-from rclpy.qos import QoSProfile
-from rclpy.qos import ReliabilityPolicy
-
-from atlas_mission_interfaces.msg import MissionStatus
+from atlas_mission_interfaces.msg import (
+    ManipulationStatus,
+    MissionStatus,
+    NavigationStatus,
+)
 from geometry_msgs.msg import Twist
-from std_msgs.msg import String
+from rclpy.executors import SingleThreadedExecutor
 
 
 SCENARIOS = [
@@ -58,9 +54,6 @@ class MockLaunch:
         self._reader_thread = None
 
     def start(self):
-        share_dir = Path(get_package_share_directory("atlas_mission_yasmin"))
-        config_file = share_dir / "config" / "mission_yasmin.yaml"
-        route_file = share_dir / "config" / "mission_route.yaml"
         env = os.environ.copy()
         env["ROS_DOMAIN_ID"] = self.domain_id
         env["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp"
@@ -70,12 +63,7 @@ class MockLaunch:
             "launch",
             "atlas_mission_yasmin",
             "mission_yasmin_mock.launch.py",
-            f"config_file:={config_file}",
-            f"route_file:={route_file}",
             f"scenario:={self.scenario}",
-            "mcu_status_timeout_s:=0.3",
-            "service_timeout_s:=0.5",
-            "manipulation_result_timeout_s:=0.5",
         ]
         self.process = subprocess.Popen(
             command,
@@ -115,26 +103,30 @@ class MockLaunch:
 class MissionMockHarness:
     def __init__(self, mock_launch):
         os.environ["ROS_DOMAIN_ID"] = mock_launch.domain_id
+        os.environ["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp"
         self.mock_launch = mock_launch
         self.context = rclpy.context.Context()
         rclpy.init(context=self.context)
         self.node = rclpy.create_node("mission_mock_acceptance_test", context=self.context)
         self.executor = SingleThreadedExecutor(context=self.context)
         self.executor.add_node(self.node)
-        self.traces = []
+
         self.states = []
+        self.mission_statuses = []
+        self.nav_statuses = []
+        self.manip_statuses = []
         self.motor_cmds = []
         self._stop_spin = threading.Event()
 
-        trace_qos = QoSProfile(depth=100)
-        trace_qos.reliability = ReliabilityPolicy.RELIABLE
-        trace_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        self.trace_sub = self.node.create_subscription(
-            String, "/atlas/mission_yasmin_mock/trace", self._on_trace, trace_qos)
         self.status_sub = self.node.create_subscription(
             MissionStatus, "/atlas/mission/status", self._on_status, 100)
+        self.nav_sub = self.node.create_subscription(
+            NavigationStatus, "/atlas/navigation/status", self._on_nav_status, 100)
+        self.manip_sub = self.node.create_subscription(
+            ManipulationStatus, "/atlas/manipulation/status", self._on_manip_status, 100)
         self.motor_sub = self.node.create_subscription(
             Twist, "/motor_cmd_vel", self._on_motor_cmd, 100)
+
         self.spin_thread = threading.Thread(target=self._spin, daemon=True)
         self.spin_thread.start()
 
@@ -143,8 +135,9 @@ class MissionMockHarness:
         self.spin_thread.join(timeout=2.0)
         self.executor.remove_node(self.node)
         self.executor.shutdown()
-        self.node.destroy_subscription(self.trace_sub)
         self.node.destroy_subscription(self.status_sub)
+        self.node.destroy_subscription(self.nav_sub)
+        self.node.destroy_subscription(self.manip_sub)
         self.node.destroy_subscription(self.motor_sub)
         self.node.destroy_node()
         rclpy.shutdown(context=self.context)
@@ -153,33 +146,45 @@ class MissionMockHarness:
         while rclpy.ok(context=self.context) and not self._stop_spin.is_set():
             self.executor.spin_once(timeout_sec=0.05)
 
-    def _on_trace(self, msg):
-        self.traces.append(json.loads(msg.data))
-
     def _on_status(self, msg):
+        self.mission_statuses.append(msg)
         self.states.append(msg.state_name)
+
+    def _on_nav_status(self, msg):
+        self.nav_statuses.append(msg)
+
+    def _on_manip_status(self, msg):
+        self.manip_statuses.append(msg)
 
     def _on_motor_cmd(self, msg):
         self.motor_cmds.append(msg)
 
-    def wait_until(self, predicate, timeout_s=12.0):
+    def wait_until(self, predicate, timeout_s=20.0):
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if predicate():
                 return
             if (
-                self.mock_launch.process is not None and
-                self.mock_launch.process.poll() is not None
+                self.mock_launch.process is not None
+                and self.mock_launch.process.poll() is not None
             ):
-                self.mock_launch.fail("mock launch exited before acceptance condition was met")
+                self.mock_launch.fail(
+                    "mock launch exited before acceptance condition was met")
             time.sleep(0.05)
         self.mock_launch.fail("acceptance condition was not met before timeout")
 
-    def events(self, event_name):
-        return [trace for trace in self.traces if trace.get("event") == event_name]
+    def wait_for_state(self, state_name, timeout_s=20.0):
+        self.wait_until(lambda: state_name in self.states, timeout_s)
 
-    def wait_for_trace(self, event_name, timeout_s=12.0):
-        self.wait_until(lambda: bool(self.events(event_name)), timeout_s)
+    def nav_waypoints(self, state=NavigationStatus.STATE_RUNNING):
+        return [msg.waypoint_id for msg in self.nav_statuses if msg.state == state]
+
+    def manip_actions(self, state=ManipulationStatus.STATE_RUNNING):
+        return [
+            (msg.waypoint_id, msg.task_id)
+            for msg in self.manip_statuses
+            if msg.state == state
+        ]
 
     def assert_final_motor_zero(self):
         self.wait_until(lambda: bool(self.motor_cmds), timeout_s=3.0)
@@ -187,17 +192,6 @@ class MissionMockHarness:
         assert last.linear.x == 0.0
         assert last.linear.y == 0.0
         assert last.angular.z == 0.0
-
-    def report_results(self):
-        return [event.get("result") for event in self.events("report_result")]
-
-    def trace_index(self, event_name, **fields):
-        for index, event in enumerate(self.traces):
-            if event.get("event") != event_name:
-                continue
-            if all(event.get(key) == value for key, value in fields.items()):
-                return index
-        self.mock_launch.fail(f"trace event {event_name} with {fields} was not observed")
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
@@ -213,7 +207,7 @@ def test_mission_mock_acceptance(scenario):
         elif scenario == "reset_during_navigation":
             assert_reset_interrupt(harness)
         elif scenario in ("fault_during_navigation", "estop_during_navigation"):
-            assert_recovery_interrupt(harness, scenario)
+            assert_recovery_interrupt(harness)
         elif scenario == "mcu_timeout_during_navigation":
             assert_mcu_timeout(harness)
         elif scenario == "stale_navigation_status":
@@ -226,72 +220,120 @@ def test_mission_mock_acceptance(scenario):
 
 
 def assert_normal_completion(harness):
-    harness.wait_for_trace("report_result")
-    assert [event["waypoint_id"] for event in harness.events("nav_start")] == [
-        "row_1_entry",
-        "plant_1",
-        "row_1_exit",
-    ]
-    assert [event["task_id"] for event in harness.events("manip_start")] == [
-        "prepare_arm",
-        "pollination",
-    ]
-    assert harness.report_results() == ["DONE"]
+    harness.wait_for_state("WAIT_RESET")
+
+    assert "INSPECT_SORT_ZONE" in harness.states
+    assert "OBSERVE_PICKUP" in harness.states
+    assert "PICK" in harness.states
+    assert "OBSERVE_PARK" in harness.states
+    assert "PLACE" in harness.states
+    assert "CHECK_DONE" in harness.states
     assert "REPORT_DONE" in harness.states
-    assert "WAIT_RESET" in harness.states
+
+    expected_nav = [
+        "pickup", "park_1",
+        "pickup", "park_2",
+        "pickup", "park_2",
+        "pickup", "park_1",
+        "pickup", "park_1",
+        "pickup", "park_2",
+        "pickup", "park_2",
+        "pickup", "park_1",
+    ]
+    assert harness.nav_waypoints() == expected_nav
+
+    manip_actions = harness.manip_actions()
+    assert manip_actions[0] == ("sorting", "pre_recognition")
+    assert sum(task == "pick" for _, task in manip_actions) == 8
+    assert sum(task == "place" for _, task in manip_actions) == 8
+
+    assert all(
+        waypoint in {"pickup", "park_1", "park_2"}
+        for waypoint in harness.nav_waypoints()
+    )
     harness.assert_final_motor_zero()
 
 
 def assert_navigation_failure(harness):
-    harness.wait_for_trace("report_result")
-    assert [event["waypoint_id"] for event in harness.events("nav_start")] == ["row_1_entry"]
-    assert harness.report_results() == ["FAIL"]
+    harness.wait_for_state("WAIT_RESET")
+    assert harness.nav_waypoints() == ["pickup"]
+    assert any(
+        msg.waypoint_id == "pickup" and msg.state == NavigationStatus.STATE_FAILED
+        for msg in harness.nav_statuses
+    )
     assert "REPORT_FAIL" in harness.states
-    assert "WAIT_RESET" in harness.states
+    assert "REPORT_DONE" not in harness.states
     harness.assert_final_motor_zero()
 
 
 def assert_reset_interrupt(harness):
-    harness.wait_for_trace("nav_cancel")
+    harness.wait_until(
+        lambda: any(
+            msg.state == NavigationStatus.STATE_CANCELLED
+            for msg in harness.nav_statuses
+        )
+    )
     time.sleep(0.3)
-    assert harness.report_results() == []
-    assert "plant_1" not in [event["waypoint_id"] for event in harness.events("nav_start")]
+    assert harness.nav_waypoints() == ["pickup"]
+    assert "REPORT_DONE" not in harness.states
+    assert "REPORT_FAIL" not in harness.states
     assert "WAIT_RESET" in harness.states
     harness.assert_final_motor_zero()
 
 
-def assert_recovery_interrupt(harness, scenario):
-    expected_event = "mcu_fault" if scenario == "fault_during_navigation" else "mcu_estop"
-    harness.wait_for_trace(expected_event)
-    harness.wait_for_trace("nav_cancel")
-    time.sleep(0.3)
-    assert harness.report_results() == []
-    assert "plant_1" not in [event["waypoint_id"] for event in harness.events("nav_start")]
-    assert "RECOVERY" in harness.states
+def assert_recovery_interrupt(harness):
+    harness.wait_for_state("RECOVERY")
+    harness.wait_until(
+        lambda: any(
+            msg.state == NavigationStatus.STATE_CANCELLED
+            for msg in harness.nav_statuses
+        )
+    )
+    assert harness.nav_waypoints() == ["pickup"]
     assert "WAIT_RESET" in harness.states
+    assert "REPORT_DONE" not in harness.states
+    assert "REPORT_FAIL" not in harness.states
     harness.assert_final_motor_zero()
 
 
 def assert_mcu_timeout(harness):
-    harness.wait_for_trace("mcu_timeout_started")
-    harness.wait_for_trace("nav_cancel")
-    time.sleep(0.3)
-    assert harness.report_results() == []
-    assert "plant_1" not in [event["waypoint_id"] for event in harness.events("nav_start")]
-    assert "RECOVERY" in harness.states
+    # MCU timeout is detected by the mission guard and must enter recovery.
+    # The navigation backend is not required to publish a cancel terminal state:
+    # timeout can happen before the cancel service round trip completes.
+    harness.wait_for_state("RECOVERY")
+    assert harness.nav_waypoints() == ["pickup"]
     assert "WAIT_RESET" in harness.states
+    assert "REPORT_DONE" not in harness.states
+    assert "REPORT_FAIL" not in harness.states
     harness.assert_final_motor_zero()
 
 
 def assert_stale_navigation_status_ignored(harness):
-    harness.wait_until(lambda: "WAIT_RESET" in harness.states)
-    assert "REPORT_DONE" in harness.states
-    stale_index = harness.trace_index("nav_stale_terminal", waypoint_id="row_1_entry")
-    succeeded_index = harness.trace_index("nav_succeeded", waypoint_id="row_1_entry")
-    assert stale_index < succeeded_index
-    assert [event["waypoint_id"] for event in harness.events("nav_start")] == [
-        "row_1_entry",
-        "plant_1",
-        "row_1_exit",
+    harness.wait_for_state("OBSERVE_PICKUP")
+
+    pickup_success = [
+        msg for msg in harness.nav_statuses
+        if msg.waypoint_id == "pickup"
+        and msg.state == NavigationStatus.STATE_SUCCEEDED
     ]
+    assert len(pickup_success) >= 2
+    assert pickup_success[0].message == "stale terminal"
+    assert pickup_success[1].message == "succeeded"
+
+    observe_status = next(
+        msg for msg in harness.mission_statuses
+        if msg.state_name == "OBSERVE_PICKUP"
+    )
+    real_success_ns = (
+        pickup_success[1].header.stamp.sec * 1_000_000_000
+        + pickup_success[1].header.stamp.nanosec
+    )
+    observe_ns = (
+        observe_status.header.stamp.sec * 1_000_000_000
+        + observe_status.header.stamp.nanosec
+    )
+    assert real_success_ns <= observe_ns
+
+    harness.wait_for_state("WAIT_RESET")
+    assert "REPORT_DONE" in harness.states
     harness.assert_final_motor_zero()

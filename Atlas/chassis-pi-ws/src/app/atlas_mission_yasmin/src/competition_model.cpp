@@ -23,7 +23,7 @@ namespace atlas_mission_yasmin
 namespace
 {
 constexpr std::size_t kInvalidSlot = std::numeric_limits<std::size_t>::max();
-const std::string kEmptyDestination;
+constexpr char kEmptyDestination[] = "";
 }
 
 CompetitionModel::CompetitionModel()

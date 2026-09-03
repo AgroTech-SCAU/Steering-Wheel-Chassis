@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Minimal mock navigation, vision and arm backends for the competition YASMIN flow."""
+"""Deterministic mock navigation, vision and arm backends for competition tests."""
 
 import rclpy
 from atlas_mission_interfaces.msg import ManipulationStatus, NavigationStatus
@@ -26,23 +26,37 @@ from atlas_mission_interfaces.srv import (
     StartNavigation,
 )
 from geometry_msgs.msg import Twist
+from rclpy.duration import Duration
 from rclpy.node import Node
 from std_srvs.srv import SetBool
+
+
+INTERRUPT_SCENARIOS = {
+    "reset_during_navigation",
+    "fault_during_navigation",
+    "estop_during_navigation",
+    "mcu_timeout_during_navigation",
+}
 
 
 class MockBackends(Node):
     def __init__(self):
         super().__init__("atlas_mock_backends")
         self.declare_parameter("arena", "A")
+        self.declare_parameter("scenario", "normal")
         self.declare_parameter("navigation_delay_s", 0.10)
+        self.declare_parameter("interrupt_navigation_delay_s", 2.0)
+        self.declare_parameter("stale_navigation_delay_s", 0.80)
         self.declare_parameter("manipulation_delay_s", 0.08)
 
         self.active_navigation = None
         self.active_manipulation = None
+        self.navigation_count = 0
 
         self.nav_status_pub = self.create_publisher(
             NavigationStatus, "/atlas/navigation/status", 10)
-        self.nav_cmd_pub = self.create_publisher(Twist, "/atlas/navigation/cmd_vel", 10)
+        self.nav_cmd_pub = self.create_publisher(
+            Twist, "/atlas/navigation/cmd_vel", 10)
         self.manip_status_pub = self.create_publisher(
             ManipulationStatus, "/atlas/manipulation/status", 10)
 
@@ -50,13 +64,15 @@ class MockBackends(Node):
         self.create_service(CancelNavigation, "/atlas/navigation/cancel", self._nav_cancel)
         self.create_service(SetBool, "/atlas/navigation/view_scan", self._view_scan)
         self.create_service(StartManipulation, "/atlas/manipulation/start", self._manip_start)
-        self.create_service(CancelManipulation, "/atlas/manipulation/cancel", self._manip_cancel)
+        self.create_service(
+            CancelManipulation, "/atlas/manipulation/cancel", self._manip_cancel)
         self.create_service(
             ClassifySortingRule,
             "/atlas/vision/classify_sorting_rule",
             self._classify_sorting,
         )
-        self.create_service(DetectCameraTarget, "/atlas/vision/detect_target", self._detect)
+        self.create_service(
+            DetectCameraTarget, "/atlas/vision/detect_target", self._detect)
 
         self.create_timer(0.05, self._publish_cmd_vel)
 
@@ -69,9 +85,10 @@ class MockBackends(Node):
 
         timer = self.create_timer(delay_s, wrapped)
 
-    def _nav_status(self, request, state, message):
+    def _nav_status(self, request, state, message, stamp=None):
         msg = NavigationStatus()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = (
+            self.get_clock().now().to_msg() if stamp is None else stamp.to_msg())
         msg.state = state
         msg.backend = request.backend
         msg.waypoint_id = request.waypoint_id
@@ -94,19 +111,44 @@ class MockBackends(Node):
             response.success = False
             response.message = "arena must be A or B"
             return response
+
+        self.navigation_count += 1
         response.success = True
         response.message = "accepted"
         self.active_navigation = request
         self._nav_status(request, NavigationStatus.STATE_RUNNING, "running")
-        self._once(self.get_parameter("navigation_delay_s").value,
-                   lambda: self._finish_nav(request))
+
+        scenario = self.get_parameter("scenario").value
+        delay_s = self.get_parameter("navigation_delay_s").value
+        terminal_state = NavigationStatus.STATE_SUCCEEDED
+
+        if self.navigation_count == 1:
+            if scenario == "navigation_failed":
+                terminal_state = NavigationStatus.STATE_FAILED
+            elif scenario in INTERRUPT_SCENARIOS:
+                delay_s = self.get_parameter("interrupt_navigation_delay_s").value
+            elif scenario == "stale_navigation_status":
+                stale_stamp = self.get_clock().now() - Duration(seconds=5.0)
+                self._nav_status(
+                    request,
+                    NavigationStatus.STATE_SUCCEEDED,
+                    "stale terminal",
+                    stamp=stale_stamp,
+                )
+                delay_s = self.get_parameter("stale_navigation_delay_s").value
+
+        self._once(
+            delay_s,
+            lambda: self._finish_nav(request, terminal_state),
+        )
         return response
 
-    def _finish_nav(self, request):
+    def _finish_nav(self, request, state):
         if self.active_navigation is not request:
             return
         self.active_navigation = None
-        self._nav_status(request, NavigationStatus.STATE_SUCCEEDED, "succeeded")
+        message = "succeeded" if state == NavigationStatus.STATE_SUCCEEDED else "failed"
+        self._nav_status(request, state, message)
 
     def _nav_cancel(self, request, response):
         response.success = True
@@ -127,8 +169,10 @@ class MockBackends(Node):
         response.message = "accepted"
         self.active_manipulation = request
         self._manip_status(request, ManipulationStatus.STATE_RUNNING, "running")
-        self._once(self.get_parameter("manipulation_delay_s").value,
-                   lambda: self._finish_manip(request))
+        self._once(
+            self.get_parameter("manipulation_delay_s").value,
+            lambda: self._finish_manip(request),
+        )
         return response
 
     def _finish_manip(self, request):
@@ -162,7 +206,8 @@ class MockBackends(Node):
         response.message = "verified"
         if request.waypoint_id == "pickup":
             response.cargo_class = (
-                "gear" if (int(request.slot) + int(request.expected_layer)) % 2 == 0
+                "gear"
+                if (int(request.slot) + int(request.expected_layer)) % 2 == 0
                 else "t_bolt"
             )
             response.target_count = 1

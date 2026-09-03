@@ -205,7 +205,8 @@ void Runtime::configure_ros_interfaces()
     declare_parameter<std::string>("services.manipulation_cancel", "/atlas/manipulation/cancel");
   const auto classify_sorting_service =
     declare_parameter<std::string>(
-      "services.classify_sorting", "/atlas/vision/classify_sorting_rule");
+    "services.classify_sorting",
+    "/atlas/vision/classify_sorting_rule");
   const auto detect_target_service =
     declare_parameter<std::string>("services.detect_target", "/atlas/vision/detect_target");
 
