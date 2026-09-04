@@ -23,7 +23,10 @@ handeye_bridge:
     arm_pose_service: "/mcu/set_arm_pose"
     # 回初始观察位服务及到位状态（vision_detect启动门禁）
     initial_pose_service: "/move_to_initial_pose"
+    sorting_scan_a_service: "/move_to_sorting_scan_a"
+    sorting_scan_b_service: "/move_to_sorting_scan_b"
     initial_pose_ready_topic: "/initial_pose_ready"
+    vision_pose_ready_topic: "/vision_pose_ready"
 
     # ── 检测初始位置（必须实测后填写） ──
     # true: bridge启动2秒后自动发送一次；之后可调用 /move_to_initial_pose 重发
@@ -37,6 +40,22 @@ handeye_bridge:
     initial_pitch_rad: -3.063   # FK四元数反算: R=Rz(yaw)*Ry(pitch)
     initial_yaw_rad: -3.112     # FK四元数反算
     initial_speed_rad_s: 1.0
+    sorting_scan_a:
+      configured: false
+      x_m: 0.0
+      y_m: 0.0
+      z_m: 0.0
+      pitch_rad: 0.0
+      yaw_rad: 0.0
+      speed_rad_s: 0.5
+    sorting_scan_b:
+      configured: false
+      x_m: 0.0
+      y_m: 0.0
+      z_m: 0.0
+      pitch_rad: 0.0
+      yaw_rad: 0.0
+      speed_rad_s: 0.5
     # MCU接受命令后，/arm/pose连续满足这些条件才发布ready=true
     initial_position_tolerance_m: 0.020
     initial_stable_samples: 5

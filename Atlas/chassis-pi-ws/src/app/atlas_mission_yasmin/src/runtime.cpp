@@ -508,11 +508,6 @@ bool Runtime::report_fail(const int16_t code)
 
 SortingResult Runtime::inspect_sorting_zone()
 {
-  const auto arm_result = manipulate("sorting", "pre_recognition", 0, 0);
-  if (arm_result != ActionResult::kSucceeded) {
-    return SortingResult{arm_result, "", "", "", "pre-recognition failed"};
-  }
-
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (next_sorting_result_for_test_) {

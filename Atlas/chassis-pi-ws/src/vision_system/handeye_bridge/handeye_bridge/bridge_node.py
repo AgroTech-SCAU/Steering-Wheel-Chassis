@@ -33,6 +33,11 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 from vison_topic_interfaces.msg import DetectionCenterArray, PickTarget
 
+try:
+    from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
+except ImportError:  # 兼容直接运行源码文件
+    from vision_pose_gate import VisionPoseTarget, vision_pose_for_position
+
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
 _SetArmPose = None
 
@@ -103,7 +108,10 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("pose_topic", "/arm/pose")
         self.declare_parameter("arm_pose_service", "/mcu/set_arm_pose")
         self.declare_parameter("initial_pose_service", "/move_to_initial_pose")
+        self.declare_parameter("sorting_scan_a_service", "/move_to_sorting_scan_a")
+        self.declare_parameter("sorting_scan_b_service", "/move_to_sorting_scan_b")
         self.declare_parameter("initial_pose_ready_topic", "/initial_pose_ready")
+        self.declare_parameter("vision_pose_ready_topic", "/vision_pose_ready")
         self.declare_parameter("plane1_z_m", 0.05)
         self.declare_parameter("plane2_z_m", 0.12)
         self.declare_parameter("plane3_z_m", 0.19)
@@ -136,6 +144,20 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("initial_pitch_rad", 0.0)
         self.declare_parameter("initial_yaw_rad", 0.0)
         self.declare_parameter("initial_speed_rad_s", 0.3)
+        self.declare_parameter("sorting_scan_a.configured", False)
+        self.declare_parameter("sorting_scan_a.x_m", 0.0)
+        self.declare_parameter("sorting_scan_a.y_m", 0.0)
+        self.declare_parameter("sorting_scan_a.z_m", 0.0)
+        self.declare_parameter("sorting_scan_a.pitch_rad", 0.0)
+        self.declare_parameter("sorting_scan_a.yaw_rad", 0.0)
+        self.declare_parameter("sorting_scan_a.speed_rad_s", 0.5)
+        self.declare_parameter("sorting_scan_b.configured", False)
+        self.declare_parameter("sorting_scan_b.x_m", 0.0)
+        self.declare_parameter("sorting_scan_b.y_m", 0.0)
+        self.declare_parameter("sorting_scan_b.z_m", 0.0)
+        self.declare_parameter("sorting_scan_b.pitch_rad", 0.0)
+        self.declare_parameter("sorting_scan_b.yaw_rad", 0.0)
+        self.declare_parameter("sorting_scan_b.speed_rad_s", 0.5)
         self.declare_parameter("initial_position_tolerance_m", 0.005)
         self.declare_parameter("initial_stable_samples", 5)
         self.declare_parameter("initial_move_timeout_s", 15.0)
@@ -202,12 +224,23 @@ class HandEyeBridgeNode(Node):
         self._initial_move_pending = False
         self._initial_command_accepted = False
         self._initial_pose_ready = False
+        self._vision_pose_ready = False
+        self._current_vision_pose_name = ""
         self._initial_stable_count = 0
         self._initial_target_xyz: Optional[np.ndarray] = None
         self._initial_deadline_ns = 0
         self._initial_pose_received_count = 0     # 诊断: 初始移动期间收到的pose数
         self._initial_last_distance_m = float("inf")  # 诊断: 最近一次距离
         self._initial_last_diag_ns = 0            # 诊断: 上次打印距离日志的时间
+        self._vision_move_pending = False
+        self._vision_command_accepted = False
+        self._vision_stable_count = 0
+        self._vision_target_xyz: Optional[np.ndarray] = None
+        self._vision_target_name = ""
+        self._vision_deadline_ns = 0
+        self._vision_pose_received_count = 0
+        self._vision_last_distance_m = float("inf")
+        self._vision_last_diag_ns = 0
         self._pending_pose_futures: list = []  # 防止 future GC 导致回调丢失
         self._calibration_ready = self._intrinsics_valid and self._handeye_valid
         if not self._calibration_ready:
@@ -241,13 +274,24 @@ class HandEyeBridgeNode(Node):
         ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         ready_topic = str(self.get_parameter("initial_pose_ready_topic").value)
         self.initial_ready_pub = self.create_publisher(Bool, ready_topic, ready_qos)
+        vision_ready_topic = str(self.get_parameter("vision_pose_ready_topic").value)
+        self.vision_ready_pub = self.create_publisher(Bool, vision_ready_topic, ready_qos)
         initial_srv = str(self.get_parameter("initial_pose_service").value)
         self.initial_pose_srv = self.create_service(
             Trigger, initial_srv, self._on_move_to_initial_pose)
+        scan_a_srv = str(self.get_parameter("sorting_scan_a_service").value)
+        scan_b_srv = str(self.get_parameter("sorting_scan_b_service").value)
+        self.sorting_scan_a_srv = self.create_service(
+            Trigger, scan_a_srv, self._on_move_to_sorting_scan_a)
+        self.sorting_scan_b_srv = self.create_service(
+            Trigger, scan_b_srv, self._on_move_to_sorting_scan_b)
         self._publish_initial_ready(False)
+        self._publish_vision_ready(False)
 
         self._initial_watchdog_timer = self.create_timer(
             0.1, self._check_initial_move_timeout)
+        self._vision_watchdog_timer = self.create_timer(
+            0.1, self._check_vision_move_timeout)
         self._initial_auto_timer = None
         if bool(self.get_parameter("auto_move_to_initial_on_start").value):
             delay_s = max(0.1, float(
@@ -258,6 +302,8 @@ class HandEyeBridgeNode(Node):
         self.get_logger().info("HandEye Bridge 就绪  (射线-平面求交, 使用 /arm/pose FK)")
         self.get_logger().info(
             f"初始位置服务: {initial_srv}，就绪状态: {ready_topic}")
+        self.get_logger().info(
+            f"视觉观察位服务: {scan_a_srv}, {scan_b_srv}，就绪状态: {vision_ready_topic}")
 
     # ── 路径解析 ──
 
@@ -389,6 +435,13 @@ class HandEyeBridgeNode(Node):
         msg.data = self._initial_pose_ready
         self.initial_ready_pub.publish(msg)
 
+    def _publish_vision_ready(self, ready: bool, pose_name: str = "") -> None:
+        self._vision_pose_ready = bool(ready)
+        self._current_vision_pose_name = pose_name if ready else ""
+        msg = Bool()
+        msg.data = self._vision_pose_ready
+        self.vision_ready_pub.publish(msg)
+
     def _initial_pose_command(self) -> Tuple[float, float, float, float, float, float]:
         values = (
             float(self.get_parameter("initial_x_m").value),
@@ -402,6 +455,26 @@ class HandEyeBridgeNode(Node):
             raise ValueError("初始位置参数包含 NaN/inf")
         if values[5] <= 0.0:
             raise ValueError("initial_speed_rad_s 必须大于 0")
+        tolerance = float(
+            self.get_parameter("initial_position_tolerance_m").value)
+        if not np.isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("initial_position_tolerance_m 必须大于 0")
+        return values
+
+    def _sorting_scan_command(
+        self, key: str) -> Tuple[float, float, float, float, float, float]:
+        values = (
+            float(self.get_parameter(f"{key}.x_m").value),
+            float(self.get_parameter(f"{key}.y_m").value),
+            float(self.get_parameter(f"{key}.z_m").value),
+            float(self.get_parameter(f"{key}.pitch_rad").value),
+            float(self.get_parameter(f"{key}.yaw_rad").value),
+            float(self.get_parameter(f"{key}.speed_rad_s").value),
+        )
+        if not np.isfinite(values).all():
+            raise ValueError(f"{key} 位置参数包含 NaN/inf")
+        if values[5] <= 0.0:
+            raise ValueError(f"{key}.speed_rad_s 必须大于 0")
         tolerance = float(
             self.get_parameter("initial_position_tolerance_m").value)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
@@ -438,6 +511,7 @@ class HandEyeBridgeNode(Node):
         self._initial_deadline_ns = (
             int(self.get_clock().now().nanoseconds) + int(timeout_s * 1e9))
         self._publish_initial_ready(False)
+        self._publish_vision_ready(False)
 
         sent = self._send_pose(
             x, y, z, speed,
@@ -462,6 +536,69 @@ class HandEyeBridgeNode(Node):
         response.success, response.message = self._request_initial_pose("服务")
         return response
 
+    def _request_sorting_scan_pose(self, key: str, display_name: str) -> Tuple[bool, str]:
+        if not bool(self.get_parameter(f"{key}.configured").value):
+            message = (
+                f"{display_name} 尚未配置：请实车填写 bridge_node.yaml 的 "
+                f"{key}.x/y/z_m、pitch/yaw 参数，并把 {key}.configured 改为 true")
+            self.get_logger().error(message)
+            self._publish_initial_ready(False)
+            self._publish_vision_ready(False)
+            return False, message
+        if self._initial_move_pending or self._vision_move_pending:
+            return False, "视觉观察位运动正在进行中，请勿重复发送"
+
+        try:
+            x, y, z, pitch, yaw, speed = self._sorting_scan_command(key)
+        except ValueError as exc:
+            self.get_logger().error(str(exc))
+            self._publish_vision_ready(False)
+            return False, str(exc)
+
+        self._vision_move_pending = True
+        self._vision_command_accepted = False
+        self._vision_stable_count = 0
+        self._vision_pose_received_count = 0
+        self._vision_last_distance_m = float("inf")
+        self._vision_last_diag_ns = 0
+        self._vision_target_xyz = np.array([x, y, z], dtype=np.float64)
+        self._vision_target_name = key
+        timeout_s = max(1.0, float(
+            self.get_parameter("initial_move_timeout_s").value))
+        self._vision_deadline_ns = (
+            int(self.get_clock().now().nanoseconds) + int(timeout_s * 1e9))
+        self._publish_initial_ready(False)
+        self._publish_vision_ready(False)
+
+        sent = self._send_pose(
+            x, y, z, speed,
+            pitch=pitch,
+            yaw=yaw,
+            label=display_name,
+            on_complete=self._on_vision_command_result,
+        )
+        if not sent:
+            self._vision_move_pending = False
+            self._vision_target_xyz = None
+            self._vision_target_name = ""
+            return False, f"MCU位姿服务不可用，{display_name} 命令未发送"
+
+        message = (
+            f"已发送 {display_name} 命令: "
+            f"x={x:.4f} y={y:.4f} z={z:.4f} m；等待 /arm/pose 到位")
+        self.get_logger().info(message)
+        return True, message
+
+    def _on_move_to_sorting_scan_a(self, _request, response):
+        response.success, response.message = self._request_sorting_scan_pose(
+            "sorting_scan_a", "sorting_scan_A")
+        return response
+
+    def _on_move_to_sorting_scan_b(self, _request, response):
+        response.success, response.message = self._request_sorting_scan_pose(
+            "sorting_scan_b", "sorting_scan_B")
+        return response
+
     def _auto_move_to_initial_once(self) -> None:
         if self._initial_auto_timer is not None:
             self._initial_auto_timer.cancel()
@@ -476,7 +613,20 @@ class HandEyeBridgeNode(Node):
             self._initial_move_pending = False
             self._initial_target_xyz = None
             self._publish_initial_ready(False)
+            self._publish_vision_ready(False)
             self.get_logger().error("MCU拒绝初始位置命令，视觉检测保持禁用")
+
+    def _on_vision_command_result(self, success: bool) -> None:
+        if not self._vision_move_pending:
+            return
+        self._vision_command_accepted = bool(success)
+        if not success:
+            target_name = self._vision_target_name
+            self._vision_move_pending = False
+            self._vision_target_xyz = None
+            self._vision_target_name = ""
+            self._publish_vision_ready(False)
+            self.get_logger().error(f"MCU拒绝 {target_name} 命令，视觉检测保持禁用")
 
     def _check_initial_move_timeout(self) -> None:
         if not self._initial_move_pending:
@@ -498,8 +648,31 @@ class HandEyeBridgeNode(Node):
         self._initial_stable_count = 0
         self._initial_pose_received_count = 0
         self._publish_initial_ready(False)
+        self._publish_vision_ready(False)
         self.get_logger().error(
             f"机械臂回初始位置超时，视觉检测保持禁用。{hint}")
+
+    def _check_vision_move_timeout(self) -> None:
+        if not self._vision_move_pending:
+            return
+        if int(self.get_clock().now().nanoseconds) <= self._vision_deadline_ns:
+            return
+        if self._vision_pose_received_count == 0:
+            hint = "未收到任何 /arm/pose 消息"
+        else:
+            hint = (
+                f"共收到 {self._vision_pose_received_count} 帧 /arm/pose，"
+                f"最近距离 {self._vision_last_distance_m * 1000.0:.1f} mm")
+        target_name = self._vision_target_name
+        self._vision_move_pending = False
+        self._vision_command_accepted = False
+        self._vision_target_xyz = None
+        self._vision_target_name = ""
+        self._vision_stable_count = 0
+        self._vision_pose_received_count = 0
+        self._publish_vision_ready(False)
+        self.get_logger().error(
+            f"机械臂移动到 {target_name} 超时，视觉检测保持禁用。{hint}")
 
     def _update_initial_pose_state(self, position: np.ndarray) -> None:
         # ── 初始移动到位检测 ──
@@ -536,6 +709,7 @@ class HandEyeBridgeNode(Node):
                 self._initial_move_pending = False
                 self._initial_target_xyz = None
                 self._publish_initial_ready(True)
+                self._publish_vision_ready(True, "initial")
                 self.get_logger().info(
                     f"机械臂已到达初始位置并稳定 {required} 帧 "
                     f"(位置误差 {distance_m * 1000.0:.1f} mm)，允许启动视觉检测")
@@ -562,6 +736,77 @@ class HandEyeBridgeNode(Node):
                     f"视觉检测门禁已关闭")
                 self._publish_initial_ready(False)
 
+    def _vision_pose_targets(self) -> list[VisionPoseTarget]:
+        targets = []
+        if self._initial_pose_configured():
+            try:
+                init_x, init_y, init_z, _pitch, _yaw, _speed = self._initial_pose_command()
+                targets.append(VisionPoseTarget(
+                    "initial", True, np.array([init_x, init_y, init_z], dtype=np.float64)))
+            except ValueError:
+                pass
+        for key in ("sorting_scan_a", "sorting_scan_b"):
+            configured = bool(self.get_parameter(f"{key}.configured").value)
+            try:
+                x, y, z, _pitch, _yaw, _speed = self._sorting_scan_command(key)
+                targets.append(VisionPoseTarget(
+                    key, configured, np.array([x, y, z], dtype=np.float64)))
+            except ValueError:
+                targets.append(VisionPoseTarget(
+                    key, False, np.array([0.0, 0.0, 0.0], dtype=np.float64)))
+        return targets
+
+    def _refresh_vision_pose_ready(self, position: np.ndarray) -> None:
+        tolerance_m = float(
+            self.get_parameter("initial_pose_departure_tolerance_m").value)
+        pose_name = vision_pose_for_position(
+            position, self._vision_pose_targets(), tolerance_m)
+        if pose_name is None:
+            if self._vision_pose_ready:
+                self.get_logger().warn(
+                    "机械臂离开所有合法视觉观察位，视觉检测门禁已关闭")
+            self._publish_vision_ready(False)
+            return
+        self._publish_vision_ready(True, pose_name)
+
+    def _update_sorting_scan_pose_state(self, position: np.ndarray) -> None:
+        if not self._vision_move_pending:
+            return
+        if not self._vision_command_accepted or self._vision_target_xyz is None:
+            return
+        distance_m = float(np.linalg.norm(position - self._vision_target_xyz))
+        self._vision_pose_received_count += 1
+        self._vision_last_distance_m = distance_m
+        tolerance_m = float(
+            self.get_parameter("initial_position_tolerance_m").value)
+        if distance_m <= tolerance_m:
+            self._vision_stable_count += 1
+        else:
+            self._vision_stable_count = 0
+
+        now_ns = int(self.get_clock().now().nanoseconds)
+        if now_ns - self._vision_last_diag_ns >= 1_000_000_000:
+            self._vision_last_diag_ns = now_ns
+            required = max(1, int(
+                self.get_parameter("initial_stable_samples").value))
+            self.get_logger().info(
+                f"[视觉观察位诊断] {self._vision_target_name} 距目标 "
+                f"{distance_m * 1000.0:.1f} mm  "
+                f"已稳定 {self._vision_stable_count}/{required} 帧",
+                throttle_duration_sec=1.0)
+
+        required = max(1, int(
+            self.get_parameter("initial_stable_samples").value))
+        if self._vision_stable_count >= required:
+            target_name = self._vision_target_name
+            self._vision_move_pending = False
+            self._vision_target_xyz = None
+            self._vision_target_name = ""
+            self._publish_initial_ready(False)
+            self._publish_vision_ready(True, target_name)
+            self.get_logger().info(
+                f"机械臂已到达 {target_name} 并稳定 {required} 帧，允许启动视觉检测")
+
     def _initial_pose_configured(self) -> bool:
         """初始位置参数是否已配置且有效."""
         return bool(self.get_parameter("initial_pose_configured").value)
@@ -582,6 +827,9 @@ class HandEyeBridgeNode(Node):
         if np.isfinite(T).all():
             self._pose_history.append((stamp_ns, T))
             self._update_initial_pose_state(T[:3, 3])
+            self._update_sorting_scan_pose_state(T[:3, 3])
+            if not self._initial_move_pending and not self._vision_move_pending:
+                self._refresh_vision_pose_ready(T[:3, 3])
 
     def _on_detections(self, msg: DetectionCenterArray) -> None:
         """缓存检测结果，并保存该帧在基座系计算所需的原始机械臂位姿。"""

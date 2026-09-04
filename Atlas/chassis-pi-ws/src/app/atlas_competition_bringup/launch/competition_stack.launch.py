@@ -85,6 +85,19 @@ def generate_launch_description():
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(
                         _launch_file(
+                            'atlas_competition_vision_backend',
+                            'launch/vision_backend.launch.py')),
+                    condition=IfCondition(enable_vision),
+                )
+            ],
+        ),
+
+        TimerAction(
+            period=2.0,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        _launch_file(
                             'atlas_competition_manipulation_backend',
                             'launch/manipulation_backend.launch.py')),
                     condition=IfCondition(enable_manipulation),

@@ -1,0 +1,27 @@
+atlas_competition_vision_backend:
+  ros__parameters:
+    service_timeout_s: 3.0
+    vision_pose_ready_timeout_s: 8.0
+    detection_window_s: 1.0
+    final_centers_wait_s: 0.2
+
+    topics:
+      vision_pose_ready: "/vision_pose_ready"
+      detection_centers: "/detection_centers"
+
+    services:
+      classify_sorting: "/atlas/vision/classify_sorting_rule"
+      detect_target: "/atlas/vision/detect_target"
+      vision_detect: "/vision_detect"
+      move_to_sorting_scan_a: "/move_to_sorting_scan_a"
+      move_to_sorting_scan_b: "/move_to_sorting_scan_b"
+
+    class_aliases:
+      chilun: gear
+      luosi: t_bolt
+
+    sorting_rule:
+      enabled: false
+      # ROI format: [x_min, y_min, x_max, y_max] in source image pixels.
+      park_1_roi: [0, 0, 0, 0]
+      park_2_roi: [0, 0, 0, 0]

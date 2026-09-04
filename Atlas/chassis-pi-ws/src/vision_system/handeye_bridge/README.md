@@ -65,7 +65,10 @@ ros2 launch handeye_bridge screw_pick.launch.py
 | `/pick_target` | `PickTarget` | 订阅 | 选择角编号和工作层 |
 | `/arm/pose` | `PoseStamped` | 订阅 | MCU FK 末端位姿 |
 | `/move_to_initial_pose` | `Trigger` | 服务端 | 返回初始观察位 |
-| `/initial_pose_ready` | `Bool` | 发布 | 连续稳定到位后为 true |
+| `/move_to_sorting_scan_a` | `Trigger` | 服务端 | 移动到 A 半场分类标识观察位 |
+| `/move_to_sorting_scan_b` | `Trigger` | 服务端 | 移动到 B 半场分类标识观察位 |
+| `/initial_pose_ready` | `Bool` | 发布 | 初始观察位连续稳定到位后为 true |
+| `/vision_pose_ready` | `Bool` | 发布 | initial / sorting_scan_A / sorting_scan_B 任一合法视觉位到位后为 true |
 | `/mcu/set_arm_pose` | `SetArmPose` | 服务客户端 | 发送计算后的目标位姿 |
 
 ## 5. 配置顺序
@@ -116,6 +119,29 @@ ros2 topic echo /initial_pose_ready --once
 ```
 
 服务响应成功只表示命令已提交；必须等 `/arm/pose` 连续进入容差后，`/initial_pose_ready` 才会变为 `true`。
+
+比赛分类识别位必须由实车 FK 记录后填写。未确认前保持 `configured: false`：
+
+```yaml
+sorting_scan_a:
+  configured: false
+  x_m: 0.0
+  y_m: 0.0
+  z_m: 0.0
+  pitch_rad: 0.0
+  yaw_rad: 0.0
+  speed_rad_s: 0.5
+sorting_scan_b:
+  configured: false
+  x_m: 0.0
+  y_m: 0.0
+  z_m: 0.0
+  pitch_rad: 0.0
+  yaw_rad: 0.0
+  speed_rad_s: 0.5
+```
+
+`/vision_pose_ready` 覆盖初始观察位和两个 sorting scan 位；`/initial_pose_ready` 仍只表示 default pickup 观察位。
 
 ## 6. 深度模式
 
@@ -317,4 +343,3 @@ plane_heights_configured: true
 ### 找不到标定文件
 
 确认文件已复制到 `handeye_bridge/config/`，重新 `colcon build` 并 `source install/setup.bash`。不要只修改源码目录而继续使用旧安装空间。
-

@@ -14,6 +14,7 @@
   <exec_depend>at_nav2</exec_depend>
   <exec_depend>atlas_nav_full_backend</exec_depend>
   <exec_depend>handeye_bridge</exec_depend>
+  <exec_depend>atlas_competition_vision_backend</exec_depend>
   <exec_depend>atlas_competition_manipulation_backend</exec_depend>
   <exec_depend>atlas_mission_yasmin</exec_depend>
   <exec_depend>atlas_mission_interfaces</exec_depend>

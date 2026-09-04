@@ -77,7 +77,7 @@ YOLO 的 `640×640` 是 letterbox 后的模型输入；发布的 `u/v` 坐标始
 | `/vision_detect` | `VisionDetect` | 服务 | 开始或停止检测 |
 | `/vision_detections` | `Float32MultiArray` | 发布 | 兼容用的原始检测数组 |
 | `/detection_centers` | `DetectionCenterArray` | 发布 | 带时间戳和角编号的检测中心 |
-| `/initial_pose_ready` | `Bool` | 订阅 | 机械臂初始观察位门禁 |
+| `/vision_pose_ready` | `Bool` | 订阅 | 机械臂合法视觉观察位门禁 |
 
 查看接口：
 
@@ -101,10 +101,10 @@ ros2 interface show vison_topic_interfaces/msg/DetectionCenter
 
 ## 6. 开始与停止检测
 
-完整应用先确认机械臂已经到初始观察位：
+完整应用先确认机械臂已经到合法视觉观察位：
 
 ```bash
-ros2 topic echo /initial_pose_ready --once
+ros2 topic echo /vision_pose_ready --once
 ```
 
 输出 `data: true` 后开始检测：
@@ -204,4 +204,3 @@ ros2 topic echo /detection_centers
 ### SSH 下无法显示预览
 
 使用 `no_preview:=true`，或参照项目主 README 的 X11 转发说明。
-

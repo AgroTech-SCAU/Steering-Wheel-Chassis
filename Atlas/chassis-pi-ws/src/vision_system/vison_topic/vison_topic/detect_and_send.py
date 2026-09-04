@@ -30,8 +30,10 @@ import numpy as np
 
 try:
     from .camera_utils import DEFAULT_CAMERA_SETTINGS, open_project_camera
+    from .vision_pose_gate import detection_gate_rejection, detection_gate_ready_topic
 except ImportError:  # 兼容直接运行源码文件
     from camera_utils import DEFAULT_CAMERA_SETTINGS, open_project_camera
+    from vision_pose_gate import detection_gate_rejection, detection_gate_ready_topic
 
 from vison_topic_interfaces.srv import VisionDetect
 from vison_topic_interfaces.msg import DetectionCenter, DetectionCenterArray
@@ -54,7 +56,8 @@ CONFIG = {
     "yolo": {
         "conf_threshold": 0.55,                     # 置信度阈值，低于此值丢弃
         "class_names": ["luosi", "chilun"],          # 类别名，与 ONNX 模型输出顺序一致
-        "plane_area_threshold": 1500.0,              # 平面分类: 框面积 > 此值 → 平面1 (z=1.0 近), 否则 → 平面2 (z=2.0 远)
+        # 平面分类: 框面积大于阈值视为近层。
+        "plane_area_threshold": 1500.0,
     },
 
     # ── ROS2 服务/话题 ──
@@ -65,11 +68,10 @@ CONFIG = {
         "rate_hz": 15,                               # 检测定时器频率 (Hz)
     },
 
-    # ── 机械臂初始观察位门禁 ──
-    "initial_pose_gate": {
+    # ── 机械臂合法视觉观察位门禁 ──
+    "vision_pose_gate": {
         "required": True,
-        "ready_topic": "/initial_pose_ready",
-        "move_service": "/move_to_initial_pose",
+        "ready_topic": "/vision_pose_ready",
     },
 
     # ── 性能优化 ──
@@ -145,11 +147,9 @@ def sort_ccw_and_label(detections: List[Detection]) -> List[Tuple[Detection, int
     CORNER_QUADS = [
         (0, lambda du, dv: du < 0 and dv < 0),   # 0=TL: u小 v小
         (1, lambda du, dv: du >= 0 and dv < 0),  # 1=TR: u大 v小
-        (2, lambda du, dv: du >= 0 and dv >= 0), # 2=BR: u大 v大
+        (2, lambda du, dv: du >= 0 and dv >= 0),  # 2=BR: u大 v大
         (3, lambda du, dv: du < 0 and dv >= 0),  # 3=BL: u小 v大
     ]
-
-    CORNER_NAMES = {0: "TL", 1: "TR", 2: "BR", 3: "BL"}
 
     if not detections:
         return []
@@ -393,7 +393,7 @@ def parse_output(
 
     inv_scale = 1.0 / scale if scale > 0 else 1.0
     cx = (boxes[:, 0] - pad_left) * inv_scale
-    cy = (boxes[:, 1] - pad_top)  * inv_scale
+    cy = (boxes[:, 1] - pad_top) * inv_scale
     bw = boxes[:, 2] * inv_scale
     bh = boxes[:, 3] * inv_scale
 
@@ -402,8 +402,9 @@ def parse_output(
     x2 = np.clip(cx + bw / 2, 0, frame_w)
     y2 = np.clip(cy + bh / 2, 0, frame_h)
 
-    result = np.stack([x1, y1, x2, y2, total_conf,
-                        cls_ids.astype(np.float32)], axis=1)
+    result = np.stack(
+        [x1, y1, x2, y2, total_conf, cls_ids.astype(np.float32)],
+        axis=1)
     # 防御 NaN/inf：ARM ONNX Runtime 可能输出非法浮点数
     valid = np.isfinite(result).all(axis=1)
     return result[valid]
@@ -554,9 +555,9 @@ class VisionDetectServer:
         self._frame_count: int = 0
         self._skip_counter: int = 0
         self._camera_fail_count: int = 0
-        self._require_initial_pose = bool(
-            CONFIG["initial_pose_gate"]["required"])
-        self._initial_pose_ready = not self._require_initial_pose
+        self._require_vision_pose = bool(
+            CONFIG["vision_pose_gate"]["required"])
+        self._vision_pose_ready = not self._require_vision_pose
 
         # ── ROS2 ──
         if not rclpy.ok():
@@ -576,9 +577,9 @@ class VisionDetectServer:
         ready_qos = QoSProfile(depth=1)
         ready_qos.reliability = ReliabilityPolicy.RELIABLE
         ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        ready_topic = str(CONFIG["initial_pose_gate"]["ready_topic"])
-        self._initial_ready_sub = self._node.create_subscription(
-            Bool, ready_topic, self._on_initial_pose_ready, ready_qos)
+        ready_topic = detection_gate_ready_topic(CONFIG)
+        self._vision_ready_sub = self._node.create_subscription(
+            Bool, ready_topic, self._on_vision_pose_ready, ready_qos)
 
         service_name = CONFIG["service"]["name"]
         self._srv = self._node.create_service(
@@ -587,9 +588,9 @@ class VisionDetectServer:
 
         self._node.get_logger().info(f"服务就绪: /{service_name}")
         self._node.get_logger().info(f"话题就绪: /{topic_name}")
-        if self._require_initial_pose:
+        if self._require_vision_pose:
             self._node.get_logger().info(
-                f"初始位置门禁已启用: 等待 {ready_topic}=true")
+                f"视觉观察位门禁已启用: 等待 {ready_topic}=true")
         self._node.get_logger().info("等待指令 (start=true 开始, start=false 停止)...")
 
     # ── 摄像头 ──────────────────────────────────────────────
@@ -609,18 +610,18 @@ class VisionDetectServer:
 
     # ── 定时器控制 ──────────────────────────────────────────
 
-    def _on_initial_pose_ready(self, msg) -> None:
+    def _on_vision_pose_ready(self, msg) -> None:
         ready = bool(msg.data)
         with self._lock:
-            was_ready = self._initial_pose_ready
-            self._initial_pose_ready = ready
+            was_ready = self._vision_pose_ready
+            self._vision_pose_ready = ready
             running = self._running
         if ready and not was_ready:
-            self._node.get_logger().info("机械臂初始位置已就绪，允许启动检测")
+            self._node.get_logger().info("机械臂合法视觉观察位已就绪，允许启动检测")
         elif not ready and was_ready:
-            self._node.get_logger().warn("机械臂离开初始位置，视觉检测门禁已关闭")
-        if self._require_initial_pose and not ready and running:
-            self._node.get_logger().error("检测期间初始位置失效，自动停止检测")
+            self._node.get_logger().warn("机械臂离开合法视觉观察位，视觉检测门禁已关闭")
+        if self._require_vision_pose and not ready and running:
+            self._node.get_logger().error("检测期间合法视觉观察位失效，自动停止检测")
             self._stop_detection()
 
     def _start_detection(self) -> None:
@@ -714,8 +715,10 @@ class VisionDetectServer:
             for det in detections_uv:
                 cls_id = int(det[5])
                 # 显式 float() 转换：numpy 标量 → Python 原生 float，避免 ROS2 类型校验失败
-                x1 = float(det[0]); y1 = float(det[1])
-                x2 = float(det[2]); y2 = float(det[3])
+                x1 = float(det[0])
+                y1 = float(det[1])
+                x2 = float(det[2])
+                y2 = float(det[3])
                 conf = float(det[4])
                 if not (math.isfinite(x1) and math.isfinite(y1)
                         and math.isfinite(x2) and math.isfinite(y2)
@@ -789,8 +792,9 @@ class VisionDetectServer:
         # 8. 预览
         if self._show_preview:
             try:
-                out = draw_results(frame, detections_uv, detections,
-                                     self._class_names, infer_ms, self._fps)
+                out = draw_results(
+                    frame, detections_uv, detections,
+                    self._class_names, infer_ms, self._fps)
                 cv2.imshow("Vision Detection", out)
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     self._node.get_logger().info("预览窗口关闭 → 停止检测")
@@ -801,8 +805,6 @@ class VisionDetectServer:
         # 9. 状态日志
         if now - self._last_status_time >= 5.0:
             self._last_status_time = now
-            with self._lock:
-                td = self._total_detections  # 已在 _detection_tick #5 缓存区累加 (line ~686)
             self._node.get_logger().info(
                 f"[运行中] FPS:{self._fps:.0f}  总帧:{self._total_frames}  "
                 f"当前:{len(detections)}个  推理:{infer_ms:.0f}ms  "
@@ -837,14 +839,15 @@ class VisionDetectServer:
         if request.start:
             with self._lock:
                 was_running = self._running
-                initial_ready = self._initial_pose_ready
-            if self._require_initial_pose and not initial_ready:
-                move_service = str(
-                    CONFIG["initial_pose_gate"]["move_service"])
+                vision_ready = self._vision_pose_ready
+            allowed, message = detection_gate_rejection(
+                require_vision_pose=self._require_vision_pose,
+                vision_pose_ready=vision_ready,
+                ready_topic=detection_gate_ready_topic(CONFIG),
+            )
+            if not allowed:
                 response.success = False
-                response.message = (
-                    "机械臂尚未到达初始观察位，拒绝启动检测；请先调用 "
-                    f"{move_service} 并等待 /initial_pose_ready=true")
+                response.message = message
                 response.count = 0
                 return response
             self._start_detection()
@@ -1011,7 +1014,9 @@ def main() -> None:
     parser.add_argument("--process-every-n", type=int, default=None, help="每 N 帧推理一次，树莓派上可调大降低负载")
     parser.add_argument("--rate-hz", type=float, default=None, help="检测定时器频率，覆盖默认配置")
     parser.add_argument("--service-name", type=str, default=None, help="检测服务名，默认 vision_detect")
-    parser.add_argument("--topic-name", type=str, default=None, help="检测结果话题名，默认 vision_detections")
+    parser.add_argument(
+        "--topic-name", type=str, default=None,
+        help="检测结果话题名，默认 vision_detections")
     parser.add_argument(
         "--allow-unprepared", action="store_true",
         help="仅相机/算法调试：允许机械臂未到初始位置时检测，完整应用禁止使用")
@@ -1031,7 +1036,7 @@ def main() -> None:
     if args.topic_name:
         CONFIG["service"]["topic_name"] = args.topic_name
     if args.allow_unprepared:
-        CONFIG["initial_pose_gate"]["required"] = False
+        CONFIG["vision_pose_gate"]["required"] = False
 
     server = VisionDetectServer(camera_id=args.camera)
     server.spin()

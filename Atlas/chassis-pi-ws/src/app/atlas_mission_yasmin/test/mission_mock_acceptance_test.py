@@ -243,7 +243,7 @@ def assert_normal_completion(harness):
     assert harness.nav_waypoints() == expected_nav
 
     manip_actions = harness.manip_actions()
-    assert manip_actions[0] == ("sorting", "pre_recognition")
+    assert ("sorting", "pre_recognition") not in manip_actions
     assert sum(task == "pick" for _, task in manip_actions) == 8
     assert sum(task == "place" for _, task in manip_actions) == 8
 
