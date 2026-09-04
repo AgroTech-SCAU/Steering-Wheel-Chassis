@@ -1,768 +1,359 @@
-# chassis-pi-ws
+# Atlas Pi Workspace
 
-本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，完整导航，RAICOM 视觉识别，手眼变换，机械臂动作序列和 PI 端吸盘控制连接成一条可配置的自动任务链路
+`chassis-pi-ws` 是 Atlas 机器人 Pi 端比赛工作区；当前主线是“智械争锋全自主区”：MCU 触发自动任务，Pi 端运行 YASMIN 任务状态机，完成 A/B 场地识别、语义导航、视觉抓取、园区放置和结果上报
 
-当前默认任务链路为
-
-```text
-遥控器触发自动任务
-  ↓
-MCU 进入 AutoPi 并通过 /mcu/status 通知 Pi
-  ↓
-atlas_mission_manager 接收 START
-  ↓
-读取 mission_route.yaml
-  ↓
-atlas_nav_full_backend 调用 Nav2 NavigateToPose 移动到点位
-  ↓
-Nav2 输出 /atlas/navigation/cmd_vel，由 mission_manager 门控到 /motor_cmd_vel
-  ↓
-RAICOM_vision 检测目标，atlas_RAICOM_vision_backend 适配为 /vision/detect_camera_target
-  ↓
-atlas_vision_pollination_backend 执行动作序列、手眼变换、机械臂服务和必要的 PI 端吸盘控制
-  ↓
-全部点位完成后上报 DONE
-```
-
-当前已实现
+系统的正式配置入口是一份顶层 YAML：
 
 ```text
-总任务状态机
-完整导航后端 Nav2 NavigateToPose 适配器
-伪导航后端
-RAICOM 视觉适配器
-视觉作业动作后端
-手眼变换
-PI 端末端吸盘条件控制
-可配置地图点位
-可配置预识别动作
-可配置工具点偏移
-可配置动作序列
+src/app/atlas_competition_bringup/config/competition.yaml
 ```
 
-仍需继续实车标定和完善
+实车准备完成后，正常情况下只需要改这份 YAML，就能把 A/B 半场地图、导航点、视觉扫描位姿、分拣 ROI 和放置位姿接入整场任务
 
-```text
-RAICOM 像素点到相机真实三维点的标定或深度接入
-完整地图 map/pbstream 与点位坐标复核
-动态避障和复杂失败恢复策略
-```
+## Quick Start
 
----
-
-## 一，功能包总览
-
-```text
-src/
-├── mcu_comm_bridge
-├── app/
-│   ├── atlas_mission_interfaces
-│   └── atlas_mission_manager
-├── nav_system/
-│   ├── at_nav2
-│   ├── atlas_nav_full_backend
-│   ├── atlas_nav_pseudo_backend
-│   └── robot_startup
-└── vision_system/
-    ├── RAICOM_vision/atlas_RAICOM_vision_backend
-    ├── raicom_vsion/vison_topic
-    ├── atlas_vision_pollination_backend
-    └── handeye_calibration_tool
-```
-
-| 功能包 | 作用 |
-|---|---|
-| `mcu_comm_bridge` | 串口协议桥接，发布 MCU 状态，里程计，机械臂状态，提供机械臂和任务结果服务 |
-| `atlas_mission_interfaces` | 定义任务层消息和 service |
-| `atlas_mission_manager` | 总任务状态机，后端选择，安全门控，DONE 和 FAIL 上报 |
-| `atlas_nav_full_backend` | 完整导航后端，把任务点转换为 Nav2 `NavigateToPose` action |
-| `atlas_nav_pseudo_backend` | 伪导航后端，使用 `/odom` 做任务相对点位移动 |
-| `atlas_RAICOM_vision_backend` | RAICOM 视觉适配器，把 `/vision_detect` 转换为 `/vision/detect_camera_target` |
-| `vison_topic` | RAICOM/RAICOM ONNX 检测服务，包名沿用历史拼写 |
-| `atlas_vision_pollination_backend` | 视觉作业动作后端，手眼变换，机械臂动作序列和吸盘动作 |
-| `handeye_calibration_tool` | 手眼标定辅助工具，生成视觉授粉所需的手眼参数 |
-
----
-
-## 二，总任务流程
-
-### 1，启动条件
-
-Pi 不主动请求 MCU 进入 AutoPi
-
-自动任务启动由 MCU 根据遥控器输入，Pi 在线状态，底盘 ready，odom ready 等条件决定
-
-Pi 端只监听
-
-```text
-/mcu/status
-/mcu/auto_task_event
-```
-
-当看到
-
-```text
-app_state = AutoPi
-auto_start_latched = true
-```
-
-并且 START 尚未消费时，`atlas_mission_manager` 才启动一轮任务
-
-### 2，任务执行
-
-每个点位执行顺序为
-
-```text
-读取当前 waypoint
-  ↓
-调用导航后端移动到 waypoint
-  ↓
-导航后端到点并稳定
-  ↓
-如果 arrival_task = noop，进入下一个点
-  ↓
-如果 arrival_task = visual_pollination，调用视觉授粉后端
-  ↓
-视觉授粉后端执行完整授粉序列
-  ↓
-进入下一个点
-```
-
-### 3，任务结束
-
-全部点位完成后，`atlas_mission_manager` 调用
-
-```text
-/mcu/report_mission_result
-```
-
-上报
-
-```text
-DONE
-```
-
-如果导航，视觉，机械臂任一阶段失败，则上报
-
-```text
-FAIL
-```
-
-### 4，任务复位
-
-下一轮任务必须等 MCU 清除 `auto_start_latched`
-
-Pi 收到 RESET 后会清理本地任务上下文，取消导航和视觉授粉后端，停止底盘速度输出
-
----
-
-## 三，编译与启动
-
-安装依赖
-
-```bash
-sudo apt update
-sudo apt install -y python3-yaml python3-opencv python3-numpy libyaml-cpp-dev
-```
-
-编译
+### 1. 进入工作区并加载 ROS
 
 ```bash
 cd ~/chassis-pi-ws
 source /opt/ros/humble/setup.bash
+```
 
+### 2. 配置顶层比赛 YAML
+
+正式比赛优先只改：
+
+```text
+src/app/atlas_competition_bringup/config/competition.yaml
+```
+
+需要填入的实测内容：
+
+| 配置段 | 必填内容 |
+|---|---|
+| `competition.navigation.arenas.A` | A 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
+| `competition.navigation.arenas.B` | B 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
+| `competition.vision.sorting_scan_a/b` | 机械臂用于判断 A/B 的两个视觉扫描位姿 |
+| `competition.vision.sorting_rule` | `park_1_roi`、`park_2_roi` 分拣标识 ROI |
+| `competition.manipulation.placement` | `park_1 / park_2` 放置基准位姿、层高、slot 偏移 |
+
+所有未实测字段保持：
+
+```yaml
+configured: false
+enabled: false
+```
+
+地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
+
+### 3. 编译
+
+```bash
 colcon build --symlink-install
-
 source install/setup.bash
 ```
 
-启动 PI 端整车任务系统
+### 4. 启动整场比赛栈
+
+使用包内默认顶层配置：
 
 ```bash
-ros2 launch robot_startup robot_start.launch.py
+ros2 launch atlas_competition_bringup competition_stack.launch.py
 ```
 
-只启动任务总栈
+使用外部配置文件：
 
 ```bash
-ros2 launch atlas_mission_manager mission_stack.launch.py
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  competition_config:=/path/to/competition.yaml
 ```
 
-安全联调时切回伪导航
+### 5. 常用联调方式
+
+查看启动参数：
 
 ```bash
-ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=pseudo
+ros2 launch atlas_competition_bringup competition_stack.launch.py --show-args
 ```
 
-查看状态
+关闭 OpenCV 预览：
 
 ```bash
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  no_preview:=true
+```
+
+按模块关闭：
+
+```bash
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  enable_navigation:=false \
+  enable_vision:=false \
+  enable_manipulation:=false \
+  enable_mission:=false
+```
+
+只联调导航 backend：
+
+```bash
+ros2 launch atlas_nav_full_backend full_nav_backend.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+只联调视觉和手眼：
+
+```bash
+ros2 launch handeye_bridge screw_pick.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+### 6. 查看运行状态
+
+```bash
+ros2 topic echo /mcu/status
 ros2 topic echo /atlas/mission/status
 ros2 topic echo /atlas/navigation/status
 ros2 topic echo /atlas/manipulation/status
 ```
 
----
+关键服务：
 
-## 四，核心配置文件
+```bash
+ros2 service list | grep atlas
+ros2 service list | grep move_to_sorting
+```
 
-| 文件 | 内容 |
-|---|---|
-| `src/app/atlas_mission_manager/config/mission_manager.yaml` | 总状态机参数，后端服务名，安全停止参数 |
-| `src/app/atlas_mission_manager/config/mission_route.yaml` | 地图点位，点位顺序，预识别动作名称，到点任务名称 |
-| `src/nav_system/atlas_nav_full_backend/config/full_nav.yaml` | 完整导航后端参数，Nav2 action 名称和坐标模式 |
-| `src/nav_system/atlas_nav_pseudo_backend/config/pseudo_nav.yaml` | 伪导航控制参数，速度限制，到点阈值，超时 |
-| `src/vision_system/atlas_vision_pollination_backend/config/pollination_actions.yaml` | 预识别关节位姿，工具点偏移，授粉序列 |
-| `src/vision_system/atlas_vision_pollination_backend/config/pollination.yaml` | 视觉授粉后端参数，手眼参数，等待阈值 |
-| `src/vision_system/RAICOM_vision/atlas_RAICOM_vision_backend/config/RAICOM_camera_target.yaml` | RAICOM 视觉适配参数，像素到相机坐标近似转换 |
-| `src/vision_system/atlas_vision_pollination_backend/config/camera_target.yaml` | 旧视觉模型回退配置 |
-| `src/mcu_comm_bridge/config/mcu_comm_bridge.yaml` | 串口和 ROS 话题参数 |
-
----
-
-## 五，如何配置地图点位
-
-地图点位写在
+## 比赛执行流程
 
 ```text
-src/app/atlas_mission_manager/config/mission_route.yaml
+遥控器/MCU 触发 AutoPi
+  ↓
+atlas_mission_yasmin 启动任务
+  ↓
+视觉 backend 调用 handeye 扫描 sorting_scan_A / sorting_scan_B
+  ↓
+识别 arena=A/B 和 park_1/park_2 对应货物类型
+  ↓
+导航 backend 锁定 A/B，并启动对应半场 map/pbstream 的 Nav2 栈
+  ↓
+YASMIN 只发送 pickup / park_1 / park_2 语义点
+  ↓
+到 pickup 后观察、抓取
+  ↓
+按分拣规则到 park_1 或 park_2
+  ↓
+机械臂按 placement 配置放置
+  ↓
+循环直到 8 件货物完成
+  ↓
+通过 MCU 上报 DONE；异常时上报 FAIL
 ```
 
-每个点位格式如下
+YASMIN 不保存物理坐标，不直接管理 YOLO、像素、Cartographer 或 Nav2 进程；物理坐标和地图资源属于 navigation backend；视觉扫描和 ROI 属于 vision/handeye；放置坐标属于 manipulation backend
+
+## 顶层配置说明
+
+### 导航配置
+
+导航使用两套独立半场地图资源：
 
 ```yaml
-- id: "area_a_02_down"
-  x: 0.71
-  y: -0.08
-  yaw: 0.00
-  area: "AREA_A"
-  timeout_s: 20.0
-  prepare_action: "pre_detect_nav_02"
-  arrival_task: "visual_pollination"
+competition:
+  navigation:
+    coordinate_mode: absolute_map
+    arenas:
+      A:
+        map: "/path/to/arena_A.yaml"
+        pbstream: "/path/to/arena_A.pbstream"
+        waypoints:
+          pickup: {x: 1.0, y: 0.0, yaw: 0.0, configured: true}
+          park_1: {x: 2.0, y: 0.4, yaw: 1.57, configured: true}
+          park_2: {x: 2.0, y: -0.4, yaw: -1.57, configured: true}
+      B:
+        map: "/path/to/arena_B.yaml"
+        pbstream: "/path/to/arena_B.pbstream"
+        waypoints:
+          pickup: {x: 1.0, y: 0.0, yaw: 0.0, configured: true}
+          park_1: {x: 2.0, y: 0.4, yaw: 1.57, configured: true}
+          park_2: {x: 2.0, y: -0.4, yaw: -1.57, configured: true}
 ```
 
-字段说明
+路径可以写绝对路径；如果写相对路径，会按 `competition.yaml` 所在目录解析
 
-| 字段 | 说明 |
+首次有效导航请求会锁定本场 arena；锁定后如果又收到另一个 arena 的请求，导航 backend 会拒绝，防止比赛中途切错地图
+
+### 视觉配置
+
+`sorting_scan_a` 和 `sorting_scan_b` 是两套实测机械臂观察位姿，用于判断当前半场：
+
+```yaml
+competition:
+  vision:
+    sorting_scan_a:
+      configured: true
+      x_m: 0.30
+      y_m: 0.10
+      z_m: 0.35
+      pitch_rad: -3.06
+      yaw_rad: -3.11
+      speed_rad_s: 0.5
+    sorting_scan_b:
+      configured: true
+      x_m: 0.30
+      y_m: -0.10
+      z_m: 0.35
+      pitch_rad: -3.06
+      yaw_rad: -3.11
+      speed_rad_s: 0.5
+    sorting_rule:
+      enabled: true
+      park_1_roi: [10, 20, 110, 120]
+      park_2_roi: [130, 20, 230, 120]
+```
+
+检测流程先尝试 `sorting_scan_a`，能稳定识别分拣标识则认为 arena=A；否则尝试 `sorting_scan_b`，成功则 arena=B
+
+### 机械臂放置配置
+
+放置位姿是“底盘已经导航到对应 park 语义点后”的机械臂基座坐标：
+
+```yaml
+competition:
+  manipulation:
+    placement:
+      enabled: true
+      approach_m: 0.060
+      layer_step_m: 0.050
+      park_1:
+        x_m: 0.31
+        y_m: 0.11
+        first_layer_z_m: 0.06
+      park_2:
+        x_m: 0.42
+        y_m: -0.12
+        first_layer_z_m: 0.07
+      slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]
+```
+
+`layer_step_m` 用于按当前已有层数计算下一层释放高度；`slot_offsets_xy_m` 是四个槽位相对 park 基准点的 xy 偏移，格式为 `[x0,y0,x1,y1,x2,y2,x3,y3]`
+
+## 功能包总览
+
+| 功能包 | 作用 |
 |---|---|
-| `id` | 点位名称，需要全局唯一 |
-| `x` | 任务相对 x 坐标，单位 m |
-| `y` | 任务相对 y 坐标，单位 m |
-| `yaw` | 任务相对航向，单位 rad |
-| `area` | 区域标签，只用于日志和调试 |
-| `timeout_s` | 该点伪导航最大允许时间 |
-| `prepare_action` | 到点任务开始前使用的预识别动作名称 |
-| `arrival_task` | 到点后任务名称，`noop` 或 `visual_pollination` |
+| `mcu_comm_bridge` | 串口协议桥接，发布 MCU 状态、里程计和机械臂状态，提供机械臂控制和任务结果上报服务 |
+| `atlas_mission_interfaces` | 定义任务层消息和服务 |
+| `atlas_mission_yasmin` | 智械争锋比赛任务状态机，负责 8 件货物循环、分类规则应用和任务编排 |
+| `atlas_competition_bringup` | 正式比赛统一启动入口，安装顶层 `competition.yaml` |
+| `atlas_competition_config` | 共享顶层 YAML 解析、A/B arena 锁定和 semantic waypoint 解析 |
+| `atlas_nav_full_backend` | Nav2 完整导航后端，按 `arena + waypoint_id` 解析真实 map 坐标并启动对应半场地图 |
+| `atlas_nav_pseudo_backend` | 伪导航后端，用于无完整导航栈时的安全联调 |
+| `at_nav2` | Cartographer 纯定位、map_server 和 Nav2 bringup |
+| `vison_topic` | ONNX 视觉检测服务，包名保持现有拼写 |
+| `handeye_bridge` | 检测像素、手眼变换、抓取目标和视觉扫描位姿控制 |
+| `atlas_competition_vision_backend` | 比赛视觉 backend，识别 A/B 和分拣规则，提供目标检测服务 |
+| `atlas_competition_manipulation_backend` | 比赛机械臂 backend，执行观察、抓取和放置动作 |
 
-坐标模式默认为
+## 主要话题和服务
 
-```yaml
-coordinate_mode: "task_relative"
-```
-
-含义是，任务开始后，伪导航后端把当前 `/odom` 记录为任务原点，后续所有点位都是相对这个原点的坐标
-
-首次测试建议保持
-
-```yaml
-max_forward_waypoints: 1
-return_home_enabled: false
-```
-
-逐步打开方式
-
-```yaml
-# 执行前两个前进点
-max_forward_waypoints: 2
-
-# 执行全部前进点
-max_forward_waypoints: 0
-
-# 开启返航点
-return_home_enabled: true
-```
-
-过渡点写法
-
-```yaml
-prepare_action: "noop"
-arrival_task: "noop"
-```
-
-作业点写法
-
-```yaml
-prepare_action: "pre_detect_nav_02"
-arrival_task: "visual_pollination"
-```
-
----
-
-## 六，如何配置预识别动作
-
-预识别动作写在
-
-```text
-src/atlas_vision_pollination_backend/config/pollination_actions.yaml
-```
-
-格式如下
-
-```yaml
-prepare_actions:
-  pre_detect_nav_02:
-    type: "joints"
-    joints_rad: [1.606, 2.315, 5.875, 2.152, 3.141]
-    speed_rad_s: 3.14
-    timeout_s: 8.0
-```
-
-字段说明
-
-| 字段 | 说明 |
-|---|---|
-| `type` | 当前支持 `noop` 和 `joints` |
-| `joints_rad` | 五个关节目标角，单位 rad |
-| `speed_rad_s` | 动作速度，单位 rad/s |
-| `timeout_s` | 等待到位超时时间，单位 s |
-
-点位如何引用预识别动作
-
-```yaml
-prepare_action: "pre_detect_nav_02"
-```
-
-视觉授粉后端执行 `visual_pollination` 时，会先执行当前点的 `prepare_action`，然后才触发视觉识别
-
----
-
-## 七，如何配置工具点和授粉序列
-
-工具点和授粉序列写在
-
-```text
-src/atlas_vision_pollination_backend/config/pollination_actions.yaml
-```
-
-当前最终授粉工具点为
-
-```yaml
-pollination_tool_point_m: [0.05, -0.015, 0.087]
-```
-
-它位于
-
-```yaml
-arrival_tasks:
-  visual_pollination:
-    pollination_tool_point_m: [0.05, -0.015, 0.087]
-```
-
-预授粉工具点为
-
-```yaml
-pre_pollination_tool_point_m: [0.05, -0.015, 0.097]
-```
-
-两者含义
-
-| 字段 | 说明 |
-|---|---|
-| `pre_pollination_tool_point_m` | 预授粉偏移，用于先靠近目标 |
-| `pollination_tool_point_m` | 授粉偏移，用于真正接触目标 |
-
-动作序列如下
-
-```yaml
-sequence:
-  - type: "ensure_prepare_pose"
-    name: "到达预识别位姿"
-
-  - type: "visual_position"
-    name: "到达预授粉位姿"
-    tool_point_ref: "pre_pollination_tool_point_m"
-
-  - type: "visual_position"
-    name: "到达授粉位姿"
-    tool_point_ref: "pollination_tool_point_m"
-
-  - type: "dwell"
-    name: "授粉停留"
-    duration_s: 0.3
-
-  - type: "visual_position"
-    name: "回到预授粉位姿"
-    tool_point_ref: "pre_pollination_tool_point_m"
-
-  - type: "joints_action"
-    name: "回到预识别位姿"
-    action_ref: "prepare_action"
-```
-
-执行逻辑
-
-```text
-预识别位姿
-  ↓
-视觉 service 返回相机坐标目标
-  ↓
-手眼变换得到 arm_base_link 下的目标点
-  ↓
-根据 pre_pollination_tool_point_m 计算预授粉末端位置
-  ↓
-根据 pollination_tool_point_m 计算授粉末端位置
-  ↓
-停留
-  ↓
-回到预授粉
-  ↓
-回到预识别
-```
-
-视觉目标的 base 坐标只在预识别位姿下计算一次，后续动作使用同一个目标 base 坐标和检测时刻的工具坐标方向，避免机械臂移动后重复使用过期相机坐标导致误差
-
----
-
-## 八，如何配置伪导航
-
-伪导航参数写在
-
-```text
-src/atlas_nav_pseudo_backend/config/pseudo_nav.yaml
-```
-
-常用参数
-
-| 参数 | 说明 |
-|---|---|
-| `control_rate_hz` | 控制频率 |
-| `odom_timeout_s` | `/odom` 超时时间 |
-| `waypoint_timeout_s` | 单点最大移动时间 |
-| `kp_xy` | 平面位置比例系数 |
-| `kp_yaw` | 航向比例系数 |
-| `max_linear_speed_m_s` | 最大线速度 |
-| `max_angular_speed_rad_s` | 最大角速度 |
-| `max_linear_accel_m_s2` | 最大线加速度 |
-| `max_angular_accel_rad_s2` | 最大角加速度 |
-| `position_tolerance_m` | 到点位置误差阈值 |
-| `yaw_tolerance_rad` | 到点航向误差阈值 |
-| `settle_duration_s` | 刹车稳定等待时间 |
-
-首次实车建议保持低速
-
-```yaml
-max_linear_speed_m_s: 0.20
-max_angular_speed_rad_s: 0.40
-position_tolerance_m: 0.04
-yaw_tolerance_rad: 0.08
-```
-
----
-
-## 九，各功能包说明
-
-### mcu_comm_bridge
-
-负责串口协议桥接，不做任务决策
-
-主要输出
+MCU 与任务触发：
 
 ```text
 /mcu/status
 /mcu/auto_task_event
-/odom
-/imu
-/arm/joint_states
-/arm/pose
-/arm/pose_position
-```
-
-主要输入和服务
-
-```text
-/motor_cmd_vel
-/mcu/set_arm_joints
-/mcu/set_arm_position
 /mcu/report_mission_result
 /mcu/estop
 ```
 
-### atlas_mission_interfaces
-
-定义任务层接口
-
-主要接口
+导航：
 
 ```text
-MissionStatus.msg
-NavigationStatus.msg
-ManipulationStatus.msg
-StartNavigation.srv
-CancelNavigation.srv
-StartManipulation.srv
-CancelManipulation.srv
-DetectCameraTarget.srv
+/atlas/navigation/start
+/atlas/navigation/cancel
+/atlas/navigation/status
+/atlas/navigation/cmd_vel
 ```
 
-### atlas_mission_manager
-
-负责总任务状态机和安全门控
-
-它负责
+视觉和手眼：
 
 ```text
-监听 START 和 RESET
-读取 mission_route.yaml
-选择 navigation_backend 和 manipulation_backend
-按点位调用导航后端
-按点位调用视觉授粉后端
-发布最终 /motor_cmd_vel
-上报 DONE 或 FAIL
+/vision_detect
+/detection_centers
+/pick_target
+/move_to_initial_pose
+/move_to_sorting_scan_a
+/move_to_sorting_scan_b
+/initial_pose_ready
+/vision_pose_ready
+/atlas/vision/classify_sorting_rule
+/atlas/vision/detect_target
 ```
 
-它不负责
+机械臂：
 
 ```text
-直接计算伪导航速度
-直接调用视觉模型
-直接计算手眼变换
-直接生成授粉末端点
+/atlas/manipulation/start
+/atlas/manipulation/cancel
+/atlas/manipulation/status
+/mcu/set_arm_pose
+/mcu/set_arm_position
+/mcu/set_suction
 ```
 
-### atlas_nav_pseudo_backend
+## 验证命令
 
-负责伪导航
-
-它负责
-
-```text
-接收目标点
-读取 /odom
-计算任务相对目标
-输出 /atlas/navigation/cmd_vel
-判断到点和稳定
-```
-
-它不直接发布 `/motor_cmd_vel`，最终速度必须经过 `atlas_mission_manager` 安全门控
-
-### atlas_vision_pollination_backend
-
-负责视觉授粉
-
-它负责
-
-```text
-提供 /vision/detect_camera_target
-调用视觉识别
-执行预识别动作
-计算手眼变换
-计算预授粉和授粉位置
-调用 /mcu/set_arm_position
-等待机械臂到位
-发布 /atlas/manipulation/status
-```
-
-### handeye_calibration_tool
-
-负责手眼标定辅助
-
-输出结果用于配置视觉授粉后端中的手眼参数
-
----
-
-## 十，首次实车联调建议
-
-### 第一步，只验证启动和状态
-
-```yaml
-max_forward_waypoints: 1
-return_home_enabled: false
-```
-
-第一个点保持
-
-```yaml
-arrival_task: "noop"
-```
-
-观察
+构建受影响比赛栈：
 
 ```bash
-ros2 topic echo /atlas/mission/status
-ros2 topic echo /atlas/navigation/status
+source /opt/ros/humble/setup.bash
+colcon build --packages-select \
+  atlas_competition_config \
+  atlas_nav_full_backend \
+  atlas_competition_vision_backend \
+  atlas_competition_manipulation_backend \
+  handeye_bridge \
+  atlas_competition_bringup
 ```
 
-### 第二步，验证伪导航方向
-
-把第一个点设置成小距离移动
-
-```yaml
-x: 0.00
-y: -0.07
-yaw: 0.00
-```
-
-确认机器人移动方向和预期一致
-
-### 第三步，打开第一个作业点
-
-```yaml
-max_forward_waypoints: 2
-```
-
-如果要先验证底盘，不执行授粉，可以把第二个点临时设为
-
-```yaml
-arrival_task: "noop"
-```
-
-### 第四步，打开视觉授粉
-
-把作业点设置为
-
-```yaml
-arrival_task: "visual_pollination"
-```
-
-观察
+运行核心单元测试：
 
 ```bash
-ros2 topic echo /atlas/manipulation/status
+source /opt/ros/humble/setup.bash
+export PYTHONPATH=$PWD/src/app/atlas_competition_config:$PYTHONPATH
+export PYTHONPATH=$PWD/src/app/atlas_competition_vision_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/app/atlas_competition_manipulation_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/nav_system/atlas_nav_full_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/vision_system/handeye_bridge:$PYTHONPATH
+
+python3 -m pytest \
+  src/app/atlas_competition_config/test/test_config.py \
+  src/app/atlas_competition_vision_backend/test/test_backend.py \
+  src/app/atlas_competition_manipulation_backend/test/test_manipulation_config.py \
+  src/nav_system/atlas_nav_full_backend/test/test_competition_navigation.py \
+  src/vision_system/handeye_bridge/test/test_vision_pose_gate.py
 ```
 
-### 第五步，逐步打开全部点
-
-```yaml
-max_forward_waypoints: 0
-```
-
-前进路线稳定后再开启返航
-
-```yaml
-return_home_enabled: true
-```
-
----
-
-## 十一，常见问题
-
-### 没有启动任务
-
-检查
+沙箱或无写权限环境下解析 launch 时，ROS 日志目录可能需要指到 `/tmp`：
 
 ```bash
-ros2 topic echo /mcu/status
-ros2 topic echo /mcu/auto_task_event
+ROS_LOG_DIR=/tmp/atlas_ros_log \
+ros2 launch atlas_competition_bringup competition_stack.launch.py --show-args
 ```
 
-确认
+## 实车配置顺序
 
-```text
-app_state = AutoPi
-auto_start_latched = true
-```
+1. 先确认 `mcu_comm_bridge` 能稳定发布 `/mcu/status`、`/odom`、`/arm/pose`
+2. 建 A/B 两套半场地图，得到各自的 `.yaml`、地图图片和 `.pbstream`
+3. 在 A/B 地图中实测 `pickup`、`park_1`、`park_2` 的 `x / y / yaw`
+4. 实测 `sorting_scan_a`、`sorting_scan_b` 机械臂观察位姿
+5. 配置并验证 `sorting_rule.park_1_roi` 和 `park_2_roi`
+6. 实测 `park_1`、`park_2` 放置基准位姿、层高和四个 slot 偏移
+7. 逐项把对应 `configured` 或 `enabled` 改为 `true`，再启动整栈
 
-### 机器人不动
+## 安全原则
 
-检查
-
-```bash
-ros2 topic echo /atlas/navigation/cmd_vel
-ros2 topic echo /motor_cmd_vel
-ros2 topic echo /odom
-```
-
-如果 `/atlas/navigation/cmd_vel` 有速度但 `/motor_cmd_vel` 没有速度，说明总状态机安全门控没有放行
-
-### 到点后不执行视觉授粉
-
-检查点位配置
-
-```yaml
-arrival_task: "visual_pollination"
-```
-
-检查服务
-
-```bash
-ros2 service list | grep vision
-```
-
-### 机械臂不到位
-
-检查
-
-```bash
-ros2 topic echo /arm/joint_states
-ros2 topic echo /arm/pose_position
-```
-
-确认 `pollination_actions.yaml` 中的动作目标在机械臂工作空间内
-
-### 授粉深度不合适
-
-修改
-
-```yaml
-pollination_tool_point_m: [0.05, -0.015, 0.087]
-```
-
-接触过深就增大 z，接触不到就减小 z
-
----
-
-## 十二，后续扩展方式
-
-切换完整导航后端时，只需要新增导航后端功能包，并在 `mission_route.yaml` 中修改
-
-```yaml
-navigation_backend: "full_nav"
-```
-
-切换新的视觉任务后端时，只需要新增 manipulation 后端功能包，并在 `mission_route.yaml` 中修改
-
-```yaml
-manipulation_backend: "new_backend_name"
-```
-
-总任务状态机只依赖标准 service 和 status 话题，不需要改动主流程
-
----
-
-## 点位与多任务配置补充
-
-当前路线配置已升级为 `pre_move_action + arrival_jobs` 结构
-
-```text
-pre_move_action
-  在底盘移动前执行
-  用于收臂，安全姿态，或移动到某个预识别位姿
-
-arrival_jobs
-  在底盘到点稳定后依次执行
-  PASS_BY 点为空列表
-  AREA_A 和 AREA_B 每个点默认两个 job
-  AREA_C 每个点默认一个 job
-```
-
-视觉授粉任务支持 `visual_pollination_multi`
-
-```text
-visual_pollination_a_0_3  每个 job 识别 0 到 3 朵雌花
-visual_pollination_b_0_3  每个 job 识别 0 到 3 朵雌花
-visual_pollination_c_0_2  每个 job 识别 0 到 2 朵雌花
-```
-
-每朵花的动作序列在 `pollination_actions.yaml` 的 `per_target_sequence` 中配置
-
-默认顺序为
-
-```text
-预识别位姿
-→ 预授粉位姿
-→ 授粉位姿
-→ 授粉停留
-→ 回到预授粉位姿
-```
-
-每个 job 完成后会执行 `after_all_targets_sequence`，默认回到预识别位姿
+- Pi 不主动请求 MCU 进入 AutoPi；自动任务由 MCU 侧条件触发
+- 速度输出先进入 `/atlas/navigation/cmd_vel`，再由任务安全门控输出到底盘
+- 顶层 YAML 默认值全部是安全拒绝状态
+- 未确认地图、坐标、机械臂位姿、ROI 或放置点之前，不开启对应 `configured/enabled`
+- A/B arena 一场比赛只锁定一次，不允许运行中切换半场地图
