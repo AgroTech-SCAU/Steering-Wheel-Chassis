@@ -6,6 +6,11 @@ from typing import Callable, Iterable, Optional
 
 import yaml
 
+from atlas_competition_config.config import (
+    apply_vision_backend_overrides,
+    load_optional_competition_config,
+)
+
 try:
     import rclpy
     from rclpy.callback_groups import ReentrantCallbackGroup
@@ -224,6 +229,7 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("services.vision_detect", "/vision_detect")
         self.declare_parameter("services.move_to_sorting_scan_a", "/move_to_sorting_scan_a")
         self.declare_parameter("services.move_to_sorting_scan_b", "/move_to_sorting_scan_b")
+        self.declare_parameter("competition_config", "")
         self.declare_parameter("class_aliases.chilun", "gear")
         self.declare_parameter("class_aliases.luosi", "t_bolt")
         self.declare_parameter("sorting_rule.enabled", False)
@@ -283,7 +289,7 @@ class CompetitionVisionBackend(Node):
         self.get_logger().info("competition vision backend ready")
 
     def _load_config(self) -> BackendConfig:
-        return BackendConfig.from_dict({
+        base = {
             "class_aliases": {
                 "chilun": str(self.get_parameter("class_aliases.chilun").value),
                 "luosi": str(self.get_parameter("class_aliases.luosi").value),
@@ -293,7 +299,13 @@ class CompetitionVisionBackend(Node):
                 "park_1_roi": list(self.get_parameter("sorting_rule.park_1_roi").value),
                 "park_2_roi": list(self.get_parameter("sorting_rule.park_2_roi").value),
             },
-        })
+        }
+        competition = load_optional_competition_config(
+            str(self.get_parameter("competition_config").value)
+        )
+        if competition is not None:
+            base = apply_vision_backend_overrides(base, competition.vision)
+        return BackendConfig.from_dict(base)
 
     def _on_vision_pose_ready(self, msg) -> None:
         self._vision_pose_ready = bool(msg.data)
@@ -417,6 +429,8 @@ class CompetitionVisionBackend(Node):
 def load_yaml_config(path: str) -> BackendConfig:
     with open(path, encoding="utf-8") as stream:
         data = yaml.safe_load(stream) or {}
+    if "competition" in data:
+        return BackendConfig.from_dict(data.get("competition", {}).get("vision", {}) or {})
     params = data.get("atlas_competition_vision_backend", {}).get("ros__parameters", data)
     return BackendConfig.from_dict(params)
 

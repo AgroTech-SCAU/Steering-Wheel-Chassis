@@ -7,20 +7,44 @@ import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
-import rclpy
-from geometry_msgs.msg import PoseStamped
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool
-from std_srvs.srv import SetBool, Trigger
+import yaml
 
-from atlas_mission_interfaces.msg import ManipulationStatus
-from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
-from mcu_comm_bridge.srv import SetArmPosition
-from vison_topic_interfaces.msg import PickTarget
+from atlas_competition_config.config import (
+    apply_manipulation_placement_overrides,
+    load_optional_competition_config,
+)
+
+try:
+    import rclpy
+    from geometry_msgs.msg import PoseStamped
+    from rclpy.node import Node
+    from rclpy.executors import MultiThreadedExecutor
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    from std_msgs.msg import Bool
+    from std_srvs.srv import SetBool, Trigger
+
+    from atlas_mission_interfaces.msg import ManipulationStatus
+    from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
+    from mcu_comm_bridge.srv import SetArmPosition
+    from vison_topic_interfaces.msg import PickTarget
+except ImportError:  # Unit tests exercise pure config helpers without ROS.
+    rclpy = None
+    PoseStamped = None
+    Node = object
+    MultiThreadedExecutor = None
+    DurabilityPolicy = None
+    QoSProfile = None
+    ReliabilityPolicy = None
+    Bool = None
+    SetBool = None
+    Trigger = None
+    ManipulationStatus = None
+    CancelManipulation = None
+    StartManipulation = None
+    SetArmPosition = None
+    PickTarget = None
 
 
 @dataclass
@@ -39,6 +63,8 @@ class XYZ:
 
 class CompetitionManipulationBackend(Node):
     def __init__(self) -> None:
+        if rclpy is None:
+            raise RuntimeError("rclpy is required to run the competition manipulation backend")
         super().__init__("atlas_competition_manipulation_backend")
 
         self.backend_name = str(self.declare_parameter("backend_name", "vision_arm").value)
@@ -69,6 +95,7 @@ class CompetitionManipulationBackend(Node):
         self.suction_service = str(
             self.declare_parameter("suction_service", "/mcu/set_suction").value
         )
+        self.declare_parameter("competition_config", "")
 
         self.service_timeout_s = float(self.declare_parameter("service_timeout_s", 2.0).value)
         self.motion_timeout_s = float(self.declare_parameter("motion_timeout_s", 12.0).value)
@@ -108,31 +135,21 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("view_scan.dz_m", 0.0).value
         )
 
-        self.place_enabled = bool(
-            self.declare_parameter("placement.enabled", False).value
-        )
-        self.place_approach_m = float(
-            self.declare_parameter("placement.approach_m", 0.060).value
-        )
-        self.place_layer_step_m = float(
-            self.declare_parameter("placement.layer_step_m", 0.050).value
-        )
+        placement_config = self._load_placement_config()
+        self.place_enabled = bool(placement_config["enabled"])
+        self.place_approach_m = float(placement_config["approach_m"])
+        self.place_layer_step_m = float(placement_config["layer_step_m"])
         self.park1_base = XYZ(
-            float(self.declare_parameter("placement.park_1.x_m", 0.0).value),
-            float(self.declare_parameter("placement.park_1.y_m", 0.0).value),
-            float(self.declare_parameter("placement.park_1.first_layer_z_m", 0.0).value),
+            float(placement_config["park_1"]["x_m"]),
+            float(placement_config["park_1"]["y_m"]),
+            float(placement_config["park_1"]["first_layer_z_m"]),
         )
         self.park2_base = XYZ(
-            float(self.declare_parameter("placement.park_2.x_m", 0.0).value),
-            float(self.declare_parameter("placement.park_2.y_m", 0.0).value),
-            float(self.declare_parameter("placement.park_2.first_layer_z_m", 0.0).value),
+            float(placement_config["park_2"]["x_m"]),
+            float(placement_config["park_2"]["y_m"]),
+            float(placement_config["park_2"]["first_layer_z_m"]),
         )
-        raw_offsets = list(
-            self.declare_parameter(
-                "placement.slot_offsets_xy_m",
-                [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05],
-            ).value
-        )
+        raw_offsets = list(placement_config["slot_offsets_xy_m"])
         if len(raw_offsets) != 8:
             raise ValueError("placement.slot_offsets_xy_m 必须正好包含 8 个数（4 组 x/y）")
         self.slot_offsets = [
@@ -180,6 +197,47 @@ class CompetitionManipulationBackend(Node):
             f"机械臂动作后端已启动 backend={self.backend_name}; "
             f"place_enabled={self.place_enabled}; view_scan_enabled={self.view_scan_enabled}"
         )
+
+    def _load_placement_config(self) -> dict:
+        base = {
+            "placement": {
+                "enabled": bool(self.declare_parameter("placement.enabled", False).value),
+                "approach_m": float(self.declare_parameter("placement.approach_m", 0.060).value),
+                "layer_step_m": float(
+                    self.declare_parameter("placement.layer_step_m", 0.050).value
+                ),
+                "park_1": {
+                    "x_m": float(self.declare_parameter("placement.park_1.x_m", 0.0).value),
+                    "y_m": float(self.declare_parameter("placement.park_1.y_m", 0.0).value),
+                    "first_layer_z_m": float(
+                        self.declare_parameter(
+                            "placement.park_1.first_layer_z_m", 0.0
+                        ).value
+                    ),
+                },
+                "park_2": {
+                    "x_m": float(self.declare_parameter("placement.park_2.x_m", 0.0).value),
+                    "y_m": float(self.declare_parameter("placement.park_2.y_m", 0.0).value),
+                    "first_layer_z_m": float(
+                        self.declare_parameter(
+                            "placement.park_2.first_layer_z_m", 0.0
+                        ).value
+                    ),
+                },
+                "slot_offsets_xy_m": list(
+                    self.declare_parameter(
+                        "placement.slot_offsets_xy_m",
+                        [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05],
+                    ).value
+                ),
+            }
+        }
+        competition = load_optional_competition_config(
+            str(self.get_parameter("competition_config").value)
+        )
+        if competition is not None:
+            base = apply_manipulation_placement_overrides(base, competition.manipulation)
+        return base["placement"]
 
     # ---------------- ROS 状态 ----------------
     def _on_initial_ready(self, msg: Bool) -> None:
@@ -576,3 +634,21 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def load_placement_config(path: str) -> dict:
+    with open(path, encoding="utf-8") as stream:
+        data = yaml.safe_load(stream) or {}
+    if "competition" in data:
+        return dict(
+            data.get("competition", {})
+            .get("manipulation", {})
+            .get("placement", {})
+            or {}
+        )
+    return dict(
+        data.get("atlas_competition_manipulation_backend", {})
+        .get("ros__parameters", {})
+        .get("placement", {})
+        or {}
+    )

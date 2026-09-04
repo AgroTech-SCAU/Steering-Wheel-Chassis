@@ -21,6 +21,8 @@ def generate_launch_description():
     ld = LaunchDescription([
         DeclareLaunchArgument('no_preview', default_value='true',
                               description='关闭 OpenCV 预览窗口'),
+        DeclareLaunchArgument('competition_config', default_value='',
+                              description='顶层比赛 YAML；为空时使用 handeye_bridge 默认配置'),
     ])
 
     # ── 视觉检测 ──
@@ -50,7 +52,7 @@ def generate_launch_description():
     ld.add_action(Node(
         package='handeye_bridge', executable='bridge_node',
         name='handeye_bridge', output='screen',
-        parameters=[config_file],
+        parameters=[config_file, {'competition_config': LaunchConfiguration('competition_config')}],
         respawn=True, respawn_delay=2.0,
     ))
 

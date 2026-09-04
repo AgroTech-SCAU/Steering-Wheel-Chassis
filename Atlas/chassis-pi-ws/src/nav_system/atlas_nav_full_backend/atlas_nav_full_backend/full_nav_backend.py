@@ -9,11 +9,12 @@ Nav2 NavigateToPose action。这样任务状态机不用直接依赖 Nav2 的 ac
 from __future__ import annotations
 
 import math
+import os
 from typing import Optional, Tuple
 
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.action import ActionClient
-from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
 
@@ -22,6 +23,15 @@ from atlas_mission_interfaces.srv import CancelNavigation, StartNavigation
 from geometry_msgs.msg import PoseStamped, Quaternion
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
+
+from atlas_competition_config.config import (
+    ArenaLock,
+    CompetitionConfigError,
+    NavigationGoal,
+    load_optional_competition_config,
+    resolve_navigation_waypoint,
+)
+from atlas_nav_full_backend.competition_navigation import Nav2StackLauncher
 
 
 def yaw_to_quaternion(yaw: float) -> Quaternion:
@@ -63,8 +73,31 @@ class FullNavBackend(Node):
         self.odom_frame = str(self.declare_parameter('odom_frame', 'odom').value)
         self.map_frame = str(self.declare_parameter('map_frame', 'map').value)
         self.action_server_timeout_s = float(self.declare_parameter('action_server_timeout_s', 3.0).value)
+        self.stack_ready_timeout_s = float(self.declare_parameter('stack_ready_timeout_s', 30.0).value)
         self.status_publish_rate_hz = float(self.declare_parameter('status_publish_rate_hz', 5.0).value)
         self.unknown_distance_error_m = float(self.declare_parameter('unknown_distance_error_m', -1.0).value)
+        self.competition_config_path = str(self.declare_parameter('competition_config', '').value)
+        self.nav_launch_package = str(self.declare_parameter('nav_launch_package', 'at_nav2').value)
+        self.nav_launch_file = str(self.declare_parameter('nav_launch_file', 'at_nav.launch.py').value)
+        self.nav2_params_file = str(self.declare_parameter(
+            'nav2_params_file', self._default_nav2_params_file()).value)
+        self.nav_cmd_vel_output = str(self.declare_parameter(
+            'nav_cmd_vel_output', '/atlas/navigation/cmd_vel').value)
+
+        self.competition_config = load_optional_competition_config(self.competition_config_path)
+        self.navigation_config = {}
+        self.semantic_navigation_enabled = self.competition_config is not None
+        if self.competition_config is not None:
+            self.backend_name = self.competition_config.backend_name
+            self.navigation_config = self.competition_config.navigation
+            self.action_name = str(self.navigation_config.get('action_name', self.action_name))
+            self.coordinate_mode = str(
+                self.navigation_config.get('coordinate_mode', 'absolute_map'))
+            self.action_server_timeout_s = float(
+                self.navigation_config.get(
+                    'action_server_timeout_s', self.action_server_timeout_s))
+            self.stack_ready_timeout_s = float(
+                self.navigation_config.get('stack_ready_timeout_s', self.stack_ready_timeout_s))
 
         self.status_pub = self.create_publisher(NavigationStatus, self.status_topic, 10)
         self.start_srv = self.create_service(StartNavigation, self.start_service, self.on_start)
@@ -77,6 +110,14 @@ class FullNavBackend(Node):
         self.task_origin: Optional[Tuple[float, float, float]] = None
         self.active_goal_handle = None
         self.result_future = None
+        self.arena_lock = ArenaLock()
+        self.launched_arena = ''
+        self.stack_launcher = Nav2StackLauncher(
+            launch_package=self.nav_launch_package,
+            launch_file=self.nav_launch_file,
+            params_file=self.nav2_params_file,
+            cmd_vel_output=self.nav_cmd_vel_output,
+        )
         self.active_waypoint_id = ''
         self.active_target_x_m = 0.0
         self.active_target_y_m = 0.0
@@ -93,6 +134,14 @@ class FullNavBackend(Node):
             f'完整导航后端已启动 backend={self.backend_name} action={self.action_name} mode={self.coordinate_mode}'
         )
 
+    @staticmethod
+    def _default_nav2_params_file() -> str:
+        try:
+            return os.path.join(
+                get_package_share_directory('at_nav2'), 'config', 'at_nav2_params.yaml')
+        except Exception:  # noqa: BLE001
+            return ''
+
     def on_odom(self, msg: Odometry) -> None:
         self.latest_odom = msg
 
@@ -103,10 +152,22 @@ class FullNavBackend(Node):
         yaw = quaternion_to_yaw(self.latest_odom.pose.pose.orientation)
         return float(p.x), float(p.y), yaw
 
-    def build_goal_pose(self, request: StartNavigation.Request) -> Optional[PoseStamped]:
+    def build_goal_pose(
+        self,
+        request: StartNavigation.Request,
+        semantic_goal: Optional[NavigationGoal] = None,
+    ) -> Optional[PoseStamped]:
         """根据配置把任务点转换为 Nav2 goal pose。"""
         goal = PoseStamped()
         goal.header.stamp = self.get_clock().now().to_msg()
+
+        if semantic_goal is not None:
+            goal.header.frame_id = self.map_frame
+            goal.pose.position.x = float(semantic_goal.x_m)
+            goal.pose.position.y = float(semantic_goal.y_m)
+            goal.pose.position.z = 0.0
+            goal.pose.orientation = yaw_to_quaternion(float(semantic_goal.yaw_rad))
+            return goal
 
         if self.coordinate_mode == 'absolute_map':
             goal.header.frame_id = self.map_frame
@@ -156,13 +217,31 @@ class FullNavBackend(Node):
             response.success = False
             response.message = '完整导航后端正在执行目标，请先取消当前目标'
             return response
-        if not self.nav_action.wait_for_server(timeout_sec=max(0.1, self.action_server_timeout_s)):
+        semantic_goal = None
+        wait_timeout_s = self.action_server_timeout_s
+        if self.semantic_navigation_enabled:
+            try:
+                arena = self.arena_lock.accept(request.arena)
+                semantic_goal = resolve_navigation_waypoint(
+                    self.navigation_config,
+                    arena,
+                    request.waypoint_id,
+                )
+                self._ensure_nav_stack(semantic_goal)
+                wait_timeout_s = max(self.action_server_timeout_s, self.stack_ready_timeout_s)
+            except CompetitionConfigError as exc:
+                response.success = False
+                response.message = str(exc)
+                self.fail(1110, response.message)
+                return response
+
+        if not self.nav_action.wait_for_server(timeout_sec=max(0.1, wait_timeout_s)):
             response.success = False
             response.message = f'Nav2 action server 未就绪: {self.action_name}'
             self.fail(1103, response.message)
             return response
 
-        goal_pose = self.build_goal_pose(request)
+        goal_pose = self.build_goal_pose(request, semantic_goal)
         if goal_pose is None:
             response.success = False
             response.message = self.message
@@ -195,6 +274,24 @@ class FullNavBackend(Node):
             f'x={goal_pose.pose.position.x:.3f} y={goal_pose.pose.position.y:.3f} yaw={request.yaw_rad:.3f}'
         )
         return response
+
+    def _ensure_nav_stack(self, goal: NavigationGoal) -> None:
+        if self.launched_arena == goal.arena:
+            return
+        for label, path in (('map', goal.map_path), ('pbstream', goal.pbstream_path)):
+            if not os.path.exists(path):
+                raise CompetitionConfigError(
+                    f'arena {goal.arena} {label} file does not exist: {path}'
+                )
+        if not self.nav2_params_file or not os.path.exists(self.nav2_params_file):
+            raise CompetitionConfigError(
+                f'Nav2 params file does not exist: {self.nav2_params_file}'
+            )
+        self.stack_launcher.start(goal.map_path, goal.pbstream_path)
+        self.launched_arena = goal.arena
+        self.get_logger().info(
+            f'已启动 arena {goal.arena} 导航栈 map={goal.map_path} pbstream={goal.pbstream_path}'
+        )
 
     def on_cancel(self, request: CancelNavigation.Request, response: CancelNavigation.Response):
         reason = request.reason or '收到取消请求'
@@ -294,6 +391,10 @@ class FullNavBackend(Node):
         msg.error_code = int(self.error_code)
         msg.message = self.message
         self.status_pub.publish(msg)
+
+    def destroy_node(self) -> bool:
+        self.stack_launcher.shutdown()
+        return super().destroy_node()
 
 
 def main(args=None) -> None:

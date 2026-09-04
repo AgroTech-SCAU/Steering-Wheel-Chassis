@@ -1,6 +1,6 @@
 # chassis-pi-ws
 
-本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，完整导航，RACOM 视觉识别，手眼变换，机械臂动作序列和 PI 端吸盘控制连接成一条可配置的自动任务链路
+本工作区用于 Pi 端自动任务系统，核心目标是把 MCU 状态，完整导航，RAICOM 视觉识别，手眼变换，机械臂动作序列和 PI 端吸盘控制连接成一条可配置的自动任务链路
 
 当前默认任务链路为
 
@@ -17,7 +17,7 @@ atlas_nav_full_backend 调用 Nav2 NavigateToPose 移动到点位
   ↓
 Nav2 输出 /atlas/navigation/cmd_vel，由 mission_manager 门控到 /motor_cmd_vel
   ↓
-racom_vision 检测目标，atlas_racom_vision_backend 适配为 /vision/detect_camera_target
+RAICOM_vision 检测目标，atlas_RAICOM_vision_backend 适配为 /vision/detect_camera_target
   ↓
 atlas_vision_pollination_backend 执行动作序列、手眼变换、机械臂服务和必要的 PI 端吸盘控制
   ↓
@@ -30,7 +30,7 @@ atlas_vision_pollination_backend 执行动作序列、手眼变换、机械臂�
 总任务状态机
 完整导航后端 Nav2 NavigateToPose 适配器
 伪导航后端
-RACOM 视觉适配器
+RAICOM 视觉适配器
 视觉作业动作后端
 手眼变换
 PI 端末端吸盘条件控制
@@ -43,7 +43,7 @@ PI 端末端吸盘条件控制
 仍需继续实车标定和完善
 
 ```text
-RACOM 像素点到相机真实三维点的标定或深度接入
+RAICOM 像素点到相机真实三维点的标定或深度接入
 完整地图 map/pbstream 与点位坐标复核
 动态避障和复杂失败恢复策略
 ```
@@ -64,7 +64,7 @@ src/
 │   ├── atlas_nav_pseudo_backend
 │   └── robot_startup
 └── vision_system/
-    ├── racom_vision/atlas_racom_vision_backend
+    ├── RAICOM_vision/atlas_RAICOM_vision_backend
     ├── raicom_vsion/vison_topic
     ├── atlas_vision_pollination_backend
     └── handeye_calibration_tool
@@ -77,8 +77,8 @@ src/
 | `atlas_mission_manager` | 总任务状态机，后端选择，安全门控，DONE 和 FAIL 上报 |
 | `atlas_nav_full_backend` | 完整导航后端，把任务点转换为 Nav2 `NavigateToPose` action |
 | `atlas_nav_pseudo_backend` | 伪导航后端，使用 `/odom` 做任务相对点位移动 |
-| `atlas_racom_vision_backend` | RACOM 视觉适配器，把 `/vision_detect` 转换为 `/vision/detect_camera_target` |
-| `vison_topic` | RACOM/RAICOM ONNX 检测服务，包名沿用历史拼写 |
+| `atlas_RAICOM_vision_backend` | RAICOM 视觉适配器，把 `/vision_detect` 转换为 `/vision/detect_camera_target` |
+| `vison_topic` | RAICOM/RAICOM ONNX 检测服务，包名沿用历史拼写 |
 | `atlas_vision_pollination_backend` | 视觉作业动作后端，手眼变换，机械臂动作序列和吸盘动作 |
 | `handeye_calibration_tool` | 手眼标定辅助工具，生成视觉授粉所需的手眼参数 |
 
@@ -214,7 +214,7 @@ ros2 topic echo /atlas/manipulation/status
 | `src/nav_system/atlas_nav_pseudo_backend/config/pseudo_nav.yaml` | 伪导航控制参数，速度限制，到点阈值，超时 |
 | `src/vision_system/atlas_vision_pollination_backend/config/pollination_actions.yaml` | 预识别关节位姿，工具点偏移，授粉序列 |
 | `src/vision_system/atlas_vision_pollination_backend/config/pollination.yaml` | 视觉授粉后端参数，手眼参数，等待阈值 |
-| `src/vision_system/racom_vision/atlas_racom_vision_backend/config/racom_camera_target.yaml` | RACOM 视觉适配参数，像素到相机坐标近似转换 |
+| `src/vision_system/RAICOM_vision/atlas_RAICOM_vision_backend/config/RAICOM_camera_target.yaml` | RAICOM 视觉适配参数，像素到相机坐标近似转换 |
 | `src/vision_system/atlas_vision_pollination_backend/config/camera_target.yaml` | 旧视觉模型回退配置 |
 | `src/mcu_comm_bridge/config/mcu_comm_bridge.yaml` | 串口和 ROS 话题参数 |
 

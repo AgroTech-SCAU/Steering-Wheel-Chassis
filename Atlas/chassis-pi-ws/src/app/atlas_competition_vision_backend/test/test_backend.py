@@ -5,6 +5,7 @@ from atlas_competition_vision_backend.backend import (
     Detection,
     classify_with_scan_sequence,
     detect_camera_target_from_centers,
+    load_yaml_config,
     resolve_sorting_rule,
 )
 
@@ -117,3 +118,28 @@ def test_detect_camera_target_selects_each_slot_by_corner_index():
         ).cargo_class
         for slot in range(4)
     ] == ["gear", "t_bolt", "gear", "t_bolt"]
+
+
+def test_load_yaml_config_accepts_top_level_competition_vision_section(tmp_path):
+    """Catches the backend ignoring competition.vision in the single top-level YAML."""
+    config_path = tmp_path / "competition.yaml"
+    config_path.write_text(
+        """
+competition:
+  vision:
+    class_aliases:
+      chilun: gear
+      luosi: t_bolt
+    sorting_rule:
+      enabled: true
+      park_1_roi: [10, 20, 110, 120]
+      park_2_roi: [130, 20, 230, 120]
+""",
+        encoding="utf-8",
+    )
+
+    config = load_yaml_config(str(config_path))
+
+    assert config.sorting_enabled is True
+    assert config.park_1_roi == (10.0, 20.0, 110.0, 120.0)
+    assert config.park_2_roi == (130.0, 20.0, 230.0, 120.0)

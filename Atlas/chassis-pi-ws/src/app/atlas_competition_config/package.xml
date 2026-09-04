@@ -1,19 +1,14 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>atlas_nav_full_backend</name>
+  <name>atlas_competition_config</name>
   <version>0.1.0</version>
-  <description>Atlas 任务状态机使用的 Nav2 完整导航后端适配器。</description>
-  <maintainer email="3465219188@qq.com">yangxuan</maintainer>
+  <description>Shared top-level competition YAML parser for Atlas backends.</description>
+  <maintainer email="1219921425@qq.com">AgroTech-SCAU</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>rclpy</depend>
-  <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
-  <depend>nav2_msgs</depend>
-  <depend>atlas_mission_interfaces</depend>
-  <depend>atlas_competition_config</depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

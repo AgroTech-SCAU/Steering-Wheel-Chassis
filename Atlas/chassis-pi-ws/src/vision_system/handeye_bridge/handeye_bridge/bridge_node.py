@@ -33,6 +33,11 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 from vison_topic_interfaces.msg import DetectionCenterArray, PickTarget
 
+from atlas_competition_config.config import (
+    apply_handeye_scan_overrides,
+    load_optional_competition_config,
+)
+
 try:
     from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
 except ImportError:  # 兼容直接运行源码文件
@@ -112,6 +117,7 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("sorting_scan_b_service", "/move_to_sorting_scan_b")
         self.declare_parameter("initial_pose_ready_topic", "/initial_pose_ready")
         self.declare_parameter("vision_pose_ready_topic", "/vision_pose_ready")
+        self.declare_parameter("competition_config", "")
         self.declare_parameter("plane1_z_m", 0.05)
         self.declare_parameter("plane2_z_m", 0.12)
         self.declare_parameter("plane3_z_m", 0.19)
@@ -165,6 +171,7 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("workspace_z_min_m", -0.20)
         self.declare_parameter("workspace_z_max_m", 0.50)
         self.declare_parameter("initial_pose_departure_tolerance_m", 0.03)
+        self._sorting_scan_overrides = self._load_sorting_scan_overrides()
 
         # ── 深度模式 ──
         # "manual": 使用 planeX_z_m 固定高度 (默认, 兼容旧配置)
@@ -321,6 +328,23 @@ class HandEyeBridgeNode(Node):
         except Exception:
             return path
 
+    def _load_sorting_scan_overrides(self) -> dict:
+        competition = load_optional_competition_config(
+            str(self.get_parameter("competition_config").value)
+        )
+        if competition is None:
+            return {}
+        return apply_handeye_scan_overrides({}, competition.vision)
+
+    def _scan_value(self, key: str, field: str):
+        section = self._sorting_scan_overrides.get(key, {})
+        if isinstance(section, dict) and field in section:
+            return section[field]
+        return self.get_parameter(f"{key}.{field}").value
+
+    def _scan_configured(self, key: str) -> bool:
+        return bool(self._scan_value(key, "configured"))
+
     # ── 加载 ──
 
     def _load_intrinsics(self, path: str) -> bool:
@@ -464,12 +488,12 @@ class HandEyeBridgeNode(Node):
     def _sorting_scan_command(
         self, key: str) -> Tuple[float, float, float, float, float, float]:
         values = (
-            float(self.get_parameter(f"{key}.x_m").value),
-            float(self.get_parameter(f"{key}.y_m").value),
-            float(self.get_parameter(f"{key}.z_m").value),
-            float(self.get_parameter(f"{key}.pitch_rad").value),
-            float(self.get_parameter(f"{key}.yaw_rad").value),
-            float(self.get_parameter(f"{key}.speed_rad_s").value),
+            float(self._scan_value(key, "x_m")),
+            float(self._scan_value(key, "y_m")),
+            float(self._scan_value(key, "z_m")),
+            float(self._scan_value(key, "pitch_rad")),
+            float(self._scan_value(key, "yaw_rad")),
+            float(self._scan_value(key, "speed_rad_s")),
         )
         if not np.isfinite(values).all():
             raise ValueError(f"{key} 位置参数包含 NaN/inf")
@@ -537,10 +561,10 @@ class HandEyeBridgeNode(Node):
         return response
 
     def _request_sorting_scan_pose(self, key: str, display_name: str) -> Tuple[bool, str]:
-        if not bool(self.get_parameter(f"{key}.configured").value):
+        if not self._scan_configured(key):
             message = (
-                f"{display_name} 尚未配置：请实车填写 bridge_node.yaml 的 "
-                f"{key}.x/y/z_m、pitch/yaw 参数，并把 {key}.configured 改为 true")
+                f"{display_name} 尚未配置：请实车填写顶层 competition.yaml 的 "
+                f"competition.vision.{key}，并把 configured 改为 true")
             self.get_logger().error(message)
             self._publish_initial_ready(False)
             self._publish_vision_ready(False)
@@ -746,7 +770,7 @@ class HandEyeBridgeNode(Node):
             except ValueError:
                 pass
         for key in ("sorting_scan_a", "sorting_scan_b"):
-            configured = bool(self.get_parameter(f"{key}.configured").value)
+            configured = self._scan_configured(key)
             try:
                 x, y, z, _pitch, _yaw, _speed = self._sorting_scan_command(key)
                 targets.append(VisionPoseTarget(

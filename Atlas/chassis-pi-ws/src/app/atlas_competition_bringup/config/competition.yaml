@@ -1,0 +1,68 @@
+# Atlas 智械争锋顶层比赛配置
+#
+# 只改这一份文件即可把实测地图、语义点、视觉观察位和放置位姿接入整栈
+# 默认值保持 fail-safe：未实测字段必须保持 configured/enabled=false 或空路径
+
+competition:
+  backend_name: nav2_competition
+
+  vision:
+    sorting_scan_a:
+      configured: false
+      x_m: 0.0
+      y_m: 0.0
+      z_m: 0.0
+      pitch_rad: 0.0
+      yaw_rad: 0.0
+      speed_rad_s: 0.5
+    sorting_scan_b:
+      configured: false
+      x_m: 0.0
+      y_m: 0.0
+      z_m: 0.0
+      pitch_rad: 0.0
+      yaw_rad: 0.0
+      speed_rad_s: 0.5
+    sorting_rule:
+      enabled: false
+      park_1_roi: [0, 0, 0, 0]
+      park_2_roi: [0, 0, 0, 0]
+    class_aliases:
+      chilun: gear
+      luosi: t_bolt
+
+  navigation:
+    coordinate_mode: absolute_map
+    action_name: navigate_to_pose
+    action_server_timeout_s: 10.0
+    stack_ready_timeout_s: 30.0
+    arenas:
+      A:
+        map: ""
+        pbstream: ""
+        waypoints:
+          pickup: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_1: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_2: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+      B:
+        map: ""
+        pbstream: ""
+        waypoints:
+          pickup: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_1: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_2: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+
+  manipulation:
+    placement:
+      enabled: false
+      approach_m: 0.060
+      layer_step_m: 0.050
+      park_1:
+        x_m: 0.0
+        y_m: 0.0
+        first_layer_z_m: 0.0
+      park_2:
+        x_m: 0.0
+        y_m: 0.0
+        first_layer_z_m: 0.0
+      slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]
