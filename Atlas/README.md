@@ -1,731 +1,464 @@
-<div align="center">
-
 # Atlas
 
-</div>
+Atlas 是 AgroTech 协会的中型轮式机器人平台；这个目录统一管理整车 MCU 控制程序、Pi 端 ROS2 自主任务工作区、PC 主臂遥操作脚本、ASRPro 语音链路和整车通信协议文档
 
-> `Atlas` 是 AgroTech 协会新一代中型轮式机器人平台  
-> 当前目录用于统一管理 Atlas 的 MCU 底盘控制代码、PC 主臂遥操作脚本、树莓派 Pi 端通信桥、ROS2 导航系统，以及仿真与真机联调链路
+当前主线是智械争锋全自主区：MCU 侧触发 AutoPi，Pi 端运行 YASMIN 比赛状态机，完成 A/B 场地识别、语义导航、视觉抓取、园区放置和 DONE/FAIL 上报
 
----
+## Quick Start
 
-## 1. 平台定位
+### 1. 整车角色分工
 
-`Atlas` 面向中型轮式机器人平台，目标是形成一套可用于比赛、实验和后续研究的整车软件系统
+| 端 | 目录 | 作用 |
+|---|---|---|
+| MCU | `chassis_control_code/` | 底盘实时控制、机械臂执行、AutoPi 状态、安全边界和串口协议 |
+| Pi | `chassis-pi-ws/` | ROS2 Humble、MCU bridge、导航、视觉、YASMIN 比赛状态机 |
+| PC | `chassis-pc-ws/` | 主臂遥操作和上位机调试 |
+| ASRPro | `atlas_asrpro/` | 语音触发和播报相关链路 |
 
-当前软件链路可以分为四层：
-
-```text
-PC 主臂 teleop / 上位机调试
-        ->
-ROS2 导航系统 / 状态机 / 上层任务
-        ->
-树莓派 5 chassis-pi-ws 通信桥
-        ->
-MCU 底盘实时控制程序
-        ->
-轮式底盘 / IMU / 电机 / 编码器 / 机械臂
-```
-
-其中：
-
-- MCU 端负责底盘实时控制、IMU 与里程计组织、PC/Pi 协议解析、应用状态机与安全边界控制
-- Pi 端负责把 MCU 数据转换为 ROS2 话题，并把 ROS2 控制命令转换为 MCU 协议帧
-- ROS2 端负责雷达驱动、建图、定位、路径规划、速度输出以及导航链路编排
-- PC 端负责主臂遥操作输入，并通过串口向 MCU 下发 `PC_MASTER_JOINTS` 与 `PC_HEARTBEAT`
-
----
-
-## 2. 目录结构
+正式自主比赛入口在 Pi 端：
 
 ```text
-Atlas/
-├── chassis_control_code/
-│   ├── arm_description/           # Atlas 底盘与机械臂模型
-│   ├── src/                       # MCU 端底层控制代码
-│   └── robot.ioc                  # STM32CubeMX 工程
-│
-├── chassis-pi-ws/
-│   ├── src/
-│   │   └── mcu_comm_bridge/       # Pi 端 ROS2 <-> MCU 通信桥
-│   └── README.md
-│
-├── chassis-pc-ws/
-│   ├── scripts/
-│   │   └── teleop.py              # PC 主臂遥操作脚本
-│   └── README.md
-│
-├── chassis-pi-ws/src/nav_system/
-│   ├── at_nav2/                   # Nav2 导航栈与 Cartographer 纯定位启动
-│   ├── atlas_nav_full_backend/    # 任务状态机使用的完整导航后端适配器
-│   ├── atlas_nav_pseudo_backend/  # 伪导航后端，用于安全联调
-│   └── README.md
-│
-├── chassis-pi-ws/src/vision_system/
-│   ├── racom_vision/              # RACOM 视觉适配层，默认替换旧视觉模型
-│   ├── raicom_vsion/              # 原 RACOM/RAICOM 检测服务源码目录
-│   ├── atlas_vision_pollination_backend/ # 动作序列、手眼变换和作业后端
-│   └── README.md
-│
-├── docs/
-│   └── comms_protocol.md          # PC / Pi / MCU 统一通信协议说明
-│
-└── README.md
+Atlas/chassis-pi-ws/src/app/atlas_competition_bringup/config/competition.yaml
+Atlas/chassis-pi-ws/src/app/atlas_competition_bringup/launch/competition_stack.launch.py
 ```
 
----
+### 2. MCU 侧准备
 
-## 3. 系统功能
-
-### 3.1 MCU 底盘控制
-
-`chassis_control_code` 是烧录到 MCU 控制板中的底层控制程序
-
-它主要负责：
-
-- 接收 PC 端 `PC_HEARTBEAT`、`PC_MASTER_JOINTS`
-- 接收 Pi 端 `PI_CONTROL`、`PI_ARM_ACTION`、`PI_YAW_ACTION`、`PI_ESTOP`、`PI_ACK`
-- 执行底盘速度控制、机械臂控制、yaw hold 与任务事件消费
-- 周期性发布 `MCU_IMU`、`MCU_ODOM`、`MCU_ARM_STATE`、`MCU_STATUS`
-- 维护 PC/Pi 在线状态、fresh timeout、急停、故障与应用状态机权限边界
-
-当前关键 MCU -> 上位机数据帧：
+MCU 工程位于：
 
 ```text
-MCU_STATUS      0x21   5~10Hz   app_state / ready_flags / online_flags / fault
-MCU_IMU         0x25   100Hz    acc_x/y/z + gyro_x/y/z + roll/pitch/yaw
-MCU_ODOM        0x26   50Hz     x/y/yaw + vx/vy/wz
-MCU_ARM_STATE   0x27   50Hz     q0~q4 + pose(xyz + quat xyzw) + status_flags
+Atlas/chassis_control_code/
 ```
 
-当前关键上位机 -> MCU 控制帧：
+使用 STM32CubeMX、EIDE 或当前工程配置的工具链编译烧录上电后先确认：
+
+- MCU 固件已烧录
+- Pi 可以打开 MCU 串口，例如 `/dev/ttyACM0`、`/dev/ttyUSB0` 或固定软链接 `/dev/mcu_uart`
+- MCU 能输出状态、里程计、IMU 和机械臂状态帧
+- AutoPi 由 MCU 侧条件触发，Pi 端不主动强行切换 MCU 模式
+
+### 3. PC 遥操作准备
+
+PC 端目录：
 
 ```text
-PC_HEARTBEAT     0x10
-PC_MASTER_JOINTS 0x11
-PI_HEARTBEAT     0x30
-PI_CONTROL       0x31
-PI_ARM_ACTION    0x40
-PI_YAW_ACTION    0x41
-PI_MISSION_EVENT 0x42
-PI_ESTOP         0x43
-PI_ACK           0x44
+Atlas/chassis-pc-ws/
 ```
 
----
-
-### 3.2 Pi 端底盘通信桥
-
-`chassis-pi-ws` 运行在树莓派 5 上，是 ROS2 导航系统和 MCU 底盘控制程序之间的通信桥
-
-它主要负责：
-
-- 通过串口连接 MCU
-- 解析 MCU 二进制协议帧
-- 将 `MCU_ODOM` 发布为 `/odom`
-- 将 `MCU_IMU` 发布为 `/imu`
-- 将 `MCU_ARM_STATE` 发布为 `/arm/joint_states`、`/arm/pose` 与 `/arm/pose_position`
-- 根据 MCU 里程计发布 `odom -> base_footprint` TF
-- 订阅状态机仲裁后的 `/motor_cmd_vel`
-- 将 `/motor_cmd_vel` 转换为 `PI_CONTROL` 并周期性下发给 MCU
-- 通过 service 下发刹车、急停、yaw hold、yaw target 等一次性命令
-
-Pi 端对外提供的主要 ROS2 接口：
-
-| 接口 | 类型 | 方向 | 说明 |
-| --- | --- | --- | --- |
-| `/odom` | `nav_msgs/msg/Odometry` | 发布 | 底盘局部里程计，供 Cartographer 和 Nav2 使用 |
-| `/imu` | `sensor_msgs/msg/Imu` | 发布 | MCU IMU 与融合姿态数据 |
-| `/arm/joint_states` | `sensor_msgs/msg/JointState` | 发布 | 机械臂 q0~q4 当前关节角 |
-| `/arm/pose` | `geometry_msgs/msg/PoseStamped` | 发布 | MCU 正运动学求得的末端位姿，四元数顺序为 `x/y/z/w` |
-| `/arm/pose_position` | `geometry_msgs/msg/PointStamped` | 发布 | 机械臂末端位置话题，与 `/arm/pose` 的 `pose.position` 同源 |
-| `odom -> base_footprint` | TF | 发布 | 底盘局部 TF |
-| `/motor_cmd_vel` | `geometry_msgs/msg/Twist` | 订阅 | 状态机仲裁后的底盘速度指令 |
-| `/mcu/set_brake` | `std_srvs/srv/SetBool` | service | 设置或解除底盘刹车 |
-| `/mcu/estop` | `mcu_comm_bridge/srv/Estop` | service | 向 MCU 发送急停事件 |
-| `/mcu/set_yaw_hold` | `std_srvs/srv/SetBool` | service | 开启或关闭 MCU 侧 yaw hold |
-| `/mcu/set_yaw_target` | `mcu_comm_bridge/srv/SetYawTarget` | service | 设置 MCU 侧目标 yaw |
-| `/mcu/set_suction` | `std_srvs/srv/SetBool` | service | PI 端条件控制末端吸盘，默认要求 MCU 处于 AutoPi |
-
----
-
-### 3.3 PC 主臂遥操作链路
-
-`chassis-pc-ws` 用于运行 PC 端主臂遥操作脚本，目前以单脚本方式工作
-
-它主要负责：
-
-- 连接主臂 Dynamixel 串口
-- 周期性读取主臂 q0~q4 与末端开关状态
-- 将主臂角度打包为 `PC_MASTER_JOINTS`
-- 向 MCU 周期性发送 `PC_HEARTBEAT`
-- 为机械臂手动跟随、调试和主从控制提供输入链路
-
-典型 PC -> MCU 遥操作链路：
-
-```text
-PC teleop
-  -> PC_MASTER_JOINTS / PC_HEARTBEAT
-MCU
-  -> app_fsm / manual mode permission check
-机械臂执行层
-```
-
----
-
-### 3.4 ROS2 导航系统
-
-`chassis-pi-ws/src/nav_system` 是 Atlas 的 ROS2 导航与整车启动目录，基于 ROS2 Humble、Cartographer 2D 和 Nav2 构建
-
-它主要负责：
-
-- 启动 LSLIDAR N10P 雷达驱动并发布 `/scan`
-- 启动 URDF 模型和 `robot_state_publisher`
-- 使用 Cartographer 进行 2D 建图或纯定位
-- 使用 Nav2 完成全局规划和局部控制
-- 通过 `atlas_mission_manager` 对 Nav2 输出速度进行任务级安全门控
-- 将门控后的最终速度指令发布到 `/motor_cmd_vel`
-
-典型导航控制链路：
-
-```text
-LSLIDAR
-  -> /scan
-Cartographer / Nav2
-
-MCU
-  -> MCU_ODOM
-chassis-pi-ws
-  -> /odom + odom -> base_footprint
-Cartographer / Nav2
-
-Nav2 controller_server
-  -> /cmd_vel remap 到 /atlas/navigation/cmd_vel
-atlas_mission_manager
-  -> /motor_cmd_vel
-mcu_comm_bridge
-  -> PI_CONTROL
-MCU
-```
-
-
----
-
-### 3.5 当前 PI 端默认任务链路
-
-本版本中，PI 端任务系统默认使用完整导航后端和 `racom_vision`：
-
-```text
-/mcu_comm_bridge
-  -> /odom, /imu, /arm/joint_states, /arm/pose
-
-at_nav2
-  -> Cartographer 纯定位
-  -> Nav2 navigation_launch
-  -> /atlas/navigation/cmd_vel
-
-atlas_nav_full_backend
-  -> /atlas/navigation/start
-  -> Nav2 NavigateToPose
-  -> /atlas/navigation/status
-
-atlas_mission_manager
-  -> 根据任务阶段把 /atlas/navigation/cmd_vel 门控到 /motor_cmd_vel
-
-racom_vision + atlas_racom_vision_backend
-  -> /vision_detect
-  -> /vision/detect_camera_target
-
-atlas_vision_pollination_backend
-  -> 复用原动作序列、手眼变换和机械臂服务
-  -> 必要时通过 /mcu/set_suction 或机械臂服务附带字段控制吸盘
-```
-
-推荐总启动：
+典型运行方式：
 
 ```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch atlas_mission_manager mission_stack.launch.py
+cd Atlas/chassis-pc-ws/scripts
+python3 teleop.py --leader-port /dev/ttyUSB0 --mcu-port /dev/ttyUSB1 --freq 50
 ```
 
-可选回退：
+PC 遥操作用于主臂手动跟随和调试，不是自主比赛的主入口
 
-```bash
-# 不启动 Nav2，只做任务状态机安全联调
-ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=pseudo
+### 4. Pi 端环境和编译
 
-# 回退旧视觉目标服务
-ros2 launch atlas_mission_manager mission_stack.launch.py manipulation_backend:=vision_pollination
-```
-
-PI 端吸盘控制默认要求 MCU 处于 `AutoPi`：
-
-```bash
-ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: true}"
-ros2 service call /mcu/set_suction std_srvs/srv/SetBool "{data: false}"
-```
-
----
-
-## 4. 环境要求
-
-推荐运行环境：
+Pi 端目录：
 
 ```text
-树莓派 5
-Ubuntu 22.04
-ROS2 Humble
+Atlas/chassis-pi-ws/
 ```
 
-建议安装的 ROS2 组件：
+安装依赖：
 
 ```bash
 sudo apt update
 sudo apt install -y \
   python3-colcon-common-extensions \
   python3-rosdep \
-  ros-humble-desktop \
+  python3-yaml \
+  python3-opencv \
+  python3-numpy \
   ros-humble-navigation2 \
   ros-humble-nav2-bringup \
   ros-humble-cartographer \
   ros-humble-cartographer-ros \
-  ros-humble-gazebo-ros-pkgs \
   ros-humble-xacro \
   ros-humble-robot-state-publisher \
-  ros-humble-joint-state-publisher-gui \
-  ros-humble-rviz2 \
-  libpcap-dev \
-  libpcl-dev
+  ros-humble-rviz2
 ```
 
-如果是第一次使用 `rosdep`：
+编译：
 
 ```bash
-sudo rosdep init
-rosdep update
-```
-
----
-
-## 5. 编译
-
-Atlas 当前包含多个子工作区，通常按模块分别编译
-
-### 5.1 Pi 端工作区
-
-```bash
-cd ~/chassis-pi-ws
+cd Atlas/chassis-pi-ws
+source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-如果修改了 service 文件，例如 `Estop.srv`、`SetYawTarget.srv` 或 `SetArmJoints/SetArmPose/SetArmPosition/SetArmOrientation.srv`，建议清理后重新编译：
+### 5. 放入 A/B 半场地图
 
-```bash
-rm -rf build install log
-colcon build --symlink-install
-source install/setup.bash
-```
-
-### 5.2 导航与任务包
-
-导航、任务状态机、视觉适配器和 MCU 通信桥都位于 `chassis-pi-ws/src` 下；常规情况下只需要编译 PI 端工作区即可
-
-### 5.3 MCU 工程
-
-`chassis_control_code` 为 STM32 工程，通常通过 STM32CubeMX / EIDE / 对应工具链进行编译与烧录
-
----
-
-## 6. MCU 串口与协议配置
-
-当前建议优先使用 USB 虚拟串口或 USB-TTL 模块，而不是树莓派 GPIO UART
-
-常见设备名：
+需要准备两套独立半场地图资源；导航 backend 会在视觉判断出 A/B 后，只启动对应半场的地图和定位栈
 
 ```text
-/dev/ttyACM0   # STM32 USB CDC 常见设备名
-/dev/ttyUSB0   # USB-TTL 常见设备名
-/dev/mcu_uart  # 建议通过 udev 固定后的设备名
+arena_A.yaml
+arena_A.pgm 或 arena_A.png
+arena_A.pbstream
+
+arena_B.yaml
+arena_B.pgm 或 arena_B.png
+arena_B.pbstream
 ```
 
-建议为 MCU 串口创建固定软链接：
+地图可以放在仓库内，例如：
+
+```text
+Atlas/chassis-pi-ws/src/nav_system/at_nav2/maps/
+```
+
+也可以放在外部目录，然后在 `competition.yaml` 中使用绝对路径引用
+
+### 6. 配置唯一比赛 YAML
+
+正式比赛优先只改这一份：
+
+```text
+Atlas/chassis-pi-ws/src/app/atlas_competition_bringup/config/competition.yaml
+```
+
+必须填入并打开对应安全门：
+
+| 配置段 | 内容 |
+|---|---|
+| `competition.navigation.arenas.A` | A 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
+| `competition.navigation.arenas.B` | B 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
+| `competition.vision.sorting_scan_a/b` | 机械臂判断 A/B 的两个视觉扫描位姿 |
+| `competition.vision.sorting_rule` | `park_1_roi`、`park_2_roi` 分拣标识 ROI |
+| `competition.manipulation.placement` | `park_1 / park_2` 放置基准位姿、层高、slot 偏移 |
+
+未实测字段保持：
+
+```yaml
+configured: false
+enabled: false
+```
+
+地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
+
+### 7. 启动整场比赛栈
 
 ```bash
-sudo nano /etc/udev/rules.d/99-mcu-uart.rules
+cd Atlas/chassis-pi-ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch atlas_competition_bringup competition_stack.launch.py
 ```
 
-示例规则：
+使用外部比赛配置：
+
+```bash
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+常用联调参数：
+
+```bash
+ros2 launch atlas_competition_bringup competition_stack.launch.py --show-args
+
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  no_preview:=true
+
+ros2 launch atlas_competition_bringup competition_stack.launch.py \
+  enable_navigation:=false \
+  enable_vision:=false \
+  enable_manipulation:=false \
+  enable_mission:=false
+```
+
+### 8. 状态检查
+
+```bash
+ros2 topic echo /mcu/status
+ros2 topic echo /atlas/mission/status
+ros2 topic echo /atlas/navigation/status
+ros2 topic echo /atlas/manipulation/status
+ros2 topic hz /odom
+ros2 topic hz /scan
+```
+
+关键服务：
+
+```bash
+ros2 service list | grep atlas
+ros2 service list | grep move_to_sorting
+ros2 service list | grep mcu
+```
+
+### 9. 整车执行链路
+
+```text
+ASRPro / 遥控器 / MCU 条件触发
+  ↓
+MCU 进入 AutoPi 并向 Pi 发布自动任务事件
+  ↓
+Pi 端 atlas_mission_yasmin 启动比赛任务
+  ↓
+vision backend 调用 handeye_bridge 扫描 sorting_scan_A / sorting_scan_B
+  ↓
+识别 arena=A/B 和 park_1/park_2 的货物映射
+  ↓
+atlas_nav_full_backend 锁定 A/B 并启动对应半场 map/pbstream
+  ↓
+YASMIN 只发送 pickup / park_1 / park_2 语义点
+  ↓
+导航到 pickup，视觉定位并抓取
+  ↓
+按分拣规则导航到 park_1 或 park_2
+  ↓
+机械臂按 placement 配置放置
+  ↓
+8 件完成后通过 MCU 上报 DONE；异常时上报 FAIL
+```
+
+## 目录结构
+
+```text
+Atlas/
+├── atlas_asrpro/                  # ASRPro 语音链路
+├── chassis_control_code/          # MCU 底盘与机械臂控制工程
+├── chassis-pc-ws/                 # PC 主臂遥操作脚本
+├── chassis-pi-ws/                 # Pi 端 ROS2 自主任务工作区
+├── docs/                          # 整车通信协议和说明文档
+└── README.md
+```
+
+Pi 端核心目录：
+
+```text
+chassis-pi-ws/src/
+├── app/
+│   ├── atlas_competition_bringup/
+│   ├── atlas_competition_config/
+│   ├── atlas_competition_manipulation_backend/
+│   ├── atlas_competition_vision_backend/
+│   ├── atlas_mission_interfaces/
+│   └── atlas_mission_yasmin/
+├── mcu_comm_bridge/
+├── nav_system/
+│   ├── at_nav2/
+│   ├── atlas_nav_full_backend/
+│   ├── atlas_nav_pseudo_backend/
+│   └── robot_startup/
+└── vision_system/
+    ├── handeye_bridge/
+    ├── vison_topic/
+    └── vison_topic_interfaces/
+```
+
+## 关键模块
+
+| 模块 | 作用 |
+|---|---|
+| `chassis_control_code` | MCU 实时控制、状态机、安全边界和串口协议 |
+| `chassis-pc-ws` | PC 主臂遥操作输入和调试 |
+| `atlas_asrpro` | 语音触发与播报链路 |
+| `mcu_comm_bridge` | MCU 与 ROS2 的串口桥接，发布 `/odom`、`/imu`、机械臂状态并接收控制命令 |
+| `atlas_mission_yasmin` | 比赛任务状态机，负责 8 件货物循环、分类规则应用和任务编排 |
+| `atlas_competition_bringup` | 正式比赛统一启动入口，安装顶层 `competition.yaml` |
+| `atlas_competition_config` | 顶层 YAML 解析、A/B arena 锁定和语义 waypoint 解析 |
+| `atlas_nav_full_backend` | Nav2 完整导航后端，按 `arena + waypoint_id` 解析真实 map 坐标 |
+| `at_nav2` | Cartographer 纯定位、map_server 和 Nav2 bringup |
+| `handeye_bridge` | 检测像素到机械臂坐标转换、抓取目标发布和视觉扫描位姿控制 |
+| `vison_topic` | ONNX 目标检测服务，包名保持现有拼写 |
+| `atlas_competition_vision_backend` | 识别 A/B 与分拣规则，提供比赛视觉服务 |
+| `atlas_competition_manipulation_backend` | 执行观察、抓取和放置动作 |
+
+## 主要接口
+
+MCU 与任务触发：
+
+```text
+/mcu/status
+/mcu/auto_task_event
+/mcu/report_mission_result
+/mcu/estop
+```
+
+底盘与传感器：
+
+```text
+/odom
+/imu
+/scan
+/tf
+/tf_static
+/motor_cmd_vel
+```
+
+导航：
+
+```text
+/atlas/navigation/start
+/atlas/navigation/cancel
+/atlas/navigation/status
+/atlas/navigation/cmd_vel
+```
+
+视觉和手眼：
+
+```text
+/vision_detect
+/detection_centers
+/pick_target
+/move_to_initial_pose
+/move_to_sorting_scan_a
+/move_to_sorting_scan_b
+/initial_pose_ready
+/vision_pose_ready
+/atlas/vision/classify_sorting_rule
+/atlas/vision/detect_target
+```
+
+机械臂：
+
+```text
+/arm/joint_states
+/arm/pose
+/arm/pose_position
+/atlas/manipulation/start
+/atlas/manipulation/cancel
+/atlas/manipulation/status
+/mcu/set_arm_pose
+/mcu/set_arm_position
+/mcu/set_suction
+```
+
+## A/B 地图与导航配置
+
+A/B 两套半场地图是必须的；`atlas_nav_full_backend` 在第一次有效导航请求时锁定 arena，并用该 arena 的 `map` 和 `pbstream` 启动导航栈
+
+`competition.yaml` 示例：
+
+```yaml
+competition:
+  navigation:
+    coordinate_mode: absolute_map
+    arenas:
+      A:
+        map: "/path/to/arena_A.yaml"
+        pbstream: "/path/to/arena_A.pbstream"
+        waypoints:
+          pickup: {x: 1.0, y: 0.0, yaw: 0.0, configured: true}
+          park_1: {x: 2.0, y: 0.4, yaw: 1.57, configured: true}
+          park_2: {x: 2.0, y: -0.4, yaw: -1.57, configured: true}
+      B:
+        map: "/path/to/arena_B.yaml"
+        pbstream: "/path/to/arena_B.pbstream"
+        waypoints:
+          pickup: {x: 1.0, y: 0.0, yaw: 0.0, configured: true}
+          park_1: {x: 2.0, y: 0.4, yaw: 1.57, configured: true}
+          park_2: {x: 2.0, y: -0.4, yaw: -1.57, configured: true}
+```
+
+相对路径会按 `competition.yaml` 所在目录解析；绝对路径原样使用
+
+## MCU 串口配置
+
+Pi 端 MCU 通信配置文件：
+
+```text
+Atlas/chassis-pi-ws/src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
+```
+
+常见串口设备：
+
+```text
+/dev/ttyACM0
+/dev/ttyUSB0
+/dev/mcu_uart
+```
+
+建议通过 udev 固定软链接：
 
 ```text
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="mcu_uart", GROUP="dialout", MODE="0660"
 ```
 
-重新加载规则：
+应用规则并检查权限：
 
 ```bash
 sudo udevadm control --reload-rules
 sudo udevadm trigger
-```
-
-将当前用户加入串口权限组：
-
-```bash
 sudo usermod -aG dialout $USER
-```
-
-重新登录或重启后检查：
-
-```bash
 ls -l /dev/mcu_uart
-groups
 ```
 
-完整协议说明见：
+通信协议说明见：
 
 ```text
-docs/comms_protocol.md
+Atlas/docs/comms_protocol.md
 ```
 
----
+## 实车配置顺序
 
-## 7. Pi 端桥接节点使用方法
+1. 烧录 MCU，并确认 Pi 串口连接正常
+2. 启动 `mcu_comm_bridge`，确认 `/mcu/status`、`/odom`、`/imu`、`/arm/pose` 有数据
+3. 启动雷达，确认 `/scan` 有数据且 TF 链路正确
+4. 建 A/B 两套半场地图，保存各自 `.yaml`、地图图片和 `.pbstream`
+5. 在 A/B 地图中实测 `pickup`、`park_1`、`park_2` 的 `x / y / yaw`
+6. 实测 `sorting_scan_a`、`sorting_scan_b` 机械臂观察位姿
+7. 配置并验证分拣标识 ROI
+8. 实测 `park_1`、`park_2` 放置基准位姿、层高和四个 slot 偏移
+9. 逐项把对应 `configured` 或 `enabled` 改为 `true`，再启动整场比赛栈
 
-单独启动 MCU 通信桥：
+## 验证命令
+
+构建 Pi 端工作区：
 
 ```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch mcu_comm_bridge mcu_comm_bridge.launch.py
+cd Atlas/chassis-pi-ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
 ```
 
-临时指定串口：
+构建比赛相关包：
 
 ```bash
-ros2 run mcu_comm_bridge mcu_comm_bridge_node --ros-args \
-  -p port:=/dev/ttyUSB0 \
-  -p baudrate:=1000000
+colcon build --packages-select \
+  atlas_competition_config \
+  atlas_nav_full_backend \
+  atlas_competition_vision_backend \
+  atlas_competition_manipulation_backend \
+  handeye_bridge \
+  atlas_competition_bringup
 ```
 
-推荐配置文件位置：
-
-```text
-chassis-pi-ws/src/mcu_comm_bridge/config/mcu_comm_bridge.yaml
-```
-
-常用参数：
-
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `port` | `/dev/ttyUSB0` | MCU 串口设备 |
-| `baudrate` | `1000000` | 串口波特率 |
-| `odom_topic` | `/odom` | 里程计话题 |
-| `imu_topic` | `/imu` | IMU 话题 |
-| `cmd_vel_topic` | `/motor_cmd_vel` | 底盘速度输入话题 |
-| `arm_joint_state_topic` | `/arm/joint_states` | 机械臂关节状态话题 |
-| `arm_pose_topic` | `/arm/pose` | 机械臂末端位姿话题 |
-| `arm_pose_position_topic` | `/arm/pose_position` | 机械臂末端位置话题 |
-| `odom_frame_id` | `odom` | odom 坐标系 |
-| `base_frame_id` | `base_footprint` | 底盘基座坐标系 |
-| `imu_frame_id` | `imu_link` | IMU 坐标系 |
-| `arm_frame_id` | `arm_base_link` | 机械臂参考坐标系 |
-| `publish_tf` | `true` | 是否发布 `odom -> base_footprint` |
-| `control_rate_hz` | `50.0` | `PI_CONTROL` 下发频率 |
-| `cmd_vel_timeout_ms` | `200` | 底盘速度指令超时时间 |
-
----
-
-## 8. PC 端遥操作使用方法
-
-PC 端说明见：
-
-```text
-chassis-pc-ws/README.md
-```
-
-典型运行方式：
+运行核心测试：
 
 ```bash
-python3 teleop.py \
-  --leader-port /dev/ttyUSB0 \
-  --mcu-port /dev/ttyUSB1 \
-  --freq 50
+export PYTHONPATH=$PWD/src/app/atlas_competition_config:$PYTHONPATH
+export PYTHONPATH=$PWD/src/app/atlas_competition_vision_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/app/atlas_competition_manipulation_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/nav_system/atlas_nav_full_backend:$PYTHONPATH
+export PYTHONPATH=$PWD/src/vision_system/handeye_bridge:$PYTHONPATH
+
+python3 -m pytest \
+  src/app/atlas_competition_config/test/test_config.py \
+  src/app/atlas_competition_vision_backend/test/test_backend.py \
+  src/app/atlas_competition_manipulation_backend/test/test_manipulation_config.py \
+  src/nav_system/atlas_nav_full_backend/test/test_competition_navigation.py \
+  src/vision_system/handeye_bridge/test/test_vision_pose_gate.py
 ```
 
-仅调试主臂输入、不向 MCU 发包：
+解析比赛 launch 参数：
 
 ```bash
-python3 teleop.py \
-  --leader-port /dev/ttyUSB0 \
-  --dry-run \
-  --print-rate 10
+ROS_LOG_DIR=/tmp/atlas_ros_log \
+ros2 launch atlas_competition_bringup competition_stack.launch.py --show-args
 ```
 
-使用前建议先确认：
-
-- 主臂 Dynamixel 端口可正常打开
-- MCU 串口与波特率匹配
-- `PC_MASTER_JOINTS` 的 payload 长度与 MCU 解析实现一致
-
----
-
-## 9. 导航系统使用方法
-
-### 9.1 仿真启动
-
-启动 Gazebo 仿真：
-
-```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch robot_gazebo gazebo_sim.launch.py
-```
-
-启动仿真导航：
-
-```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch at_nav2 at_nav_gazebo.launch.py
-```
-
-### 9.2 建图
-
-启动仿真或真机传感器后，运行 Cartographer 建图：
-
-```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch robot_cartographer_mapping robot_cartographer_mapping_gazebo.launch.py
-```
-
-保存 Cartographer 状态：
-
-```bash
-ros2 service call /write_state cartographer_ros_msgs/srv/WriteState \
-  "{filename: '$(pwd)/map.pbstream'}"
-```
-
-导出 Nav2 使用的地图：
-
-```bash
-ros2 run nav2_map_server map_saver_cli -t map -f map
-```
-
-### 9.3 真机启动
-
-真机启动前应确认：
-
-- MCU 已烧录并上电
-- Pi 能打开 MCU 串口
-- 雷达设备已连接
-- 地图文件已放到 `at_nav2/maps/`
-- `atlas_mission_manager`、`atlas_nav_full_backend`、`atlas_racom_vision_backend` 在工作区中可用
-- MCU 已进入允许 Pi 控制的 `AutoPi` 状态
-
-启动整车系统：
-
-```bash
-source ~/chassis-pi-ws/install/setup.bash
-ros2 launch robot_startup robot_start.launch.py
-```
-
-当前 `robot_startup` 已纳入 `mcu_comm_bridge`、雷达、机器人模型和任务总栈；如果只分步调试，可单独启动对应 launch
-
----
-
-## 10. 联调检查
-
-### 10.1 检查话题
-
-```bash
-ros2 topic list
-```
-
-至少应看到：
-
-```text
-/scan
-/odom
-/imu
-/arm/joint_states
-/arm/pose
-/arm/pose_position
-/atlas/navigation/cmd_vel
-/motor_cmd_vel
-/tf
-/tf_static
-```
-
-检查频率：
-
-```bash
-ros2 topic hz /odom
-ros2 topic hz /imu
-ros2 topic hz /arm/joint_states
-ros2 topic hz /arm/pose
-ros2 topic hz /arm/pose_position
-ros2 topic hz /scan
-```
-
-期望：
-
-```text
-/odom 约 50Hz
-/imu 约 100Hz
-/arm/joint_states 约 50Hz
-/arm/pose 约 50Hz
-/arm/pose_position 约 50Hz
-/scan 按雷达配置输出
-```
-
-### 10.2 检查 TF
-
-```bash
-ros2 run tf2_ros tf2_echo odom base_footprint
-ros2 run tf2_ros tf2_echo base_link laser_link
-```
-
-完整 TF 链路应为：
-
-```text
-map -> odom -> base_footprint -> base_link -> laser_link
-```
-
-### 10.3 检查底盘控制下发
-
-手动发布速度：
-
-```bash
-ros2 topic pub /motor_cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}"
-```
-
-如果 MCU 已进入 `AutoPi` 状态，底盘应执行对应速度
-
-### 10.4 检查机械臂状态
-
-```bash
-ros2 topic echo /arm/joint_states
-ros2 topic echo /arm/pose
-ros2 topic echo /arm/pose_position
-```
-
-如果没有数据，优先检查 MCU 是否已发送 `MCU_ARM_STATE(0x27)`
-
-### 10.5 检查 service
-
-刹车：
-
-```bash
-ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: true}"
-```
-
-解除刹车：
-
-```bash
-ros2 service call /mcu/set_brake std_srvs/srv/SetBool "{data: false}"
-```
-
-开启 yaw hold：
-
-```bash
-ros2 service call /mcu/set_yaw_hold std_srvs/srv/SetBool "{data: true}"
-```
-
-设置目标 yaw：
-
-```bash
-ros2 service call /mcu/set_yaw_target mcu_comm_bridge/srv/SetYawTarget "{yaw_rad: 1.57}"
-```
-
-急停：
-
-```bash
-ros2 service call /mcu/estop mcu_comm_bridge/srv/Estop "{reason: 1}"
-```
-
----
-
-## 11. 当前注意事项
-
-- `chassis-pi-ws` 默认订阅 `/motor_cmd_vel`，不是 `/cmd_vel`
-- 完整任务链路中 Nav2 的 `/cmd_vel` 已 remap 为 `/atlas/navigation/cmd_vel`，再由 `atlas_mission_manager` 门控到 `/motor_cmd_vel`
-- MCU 是否执行 Pi 下发速度，最终由 MCU 状态机决定
-- 普通底盘速度属于周期性控制，使用 topic + `PI_CONTROL`
-- 刹车、急停、yaw hold、yaw target 属于一次性命令，使用 service
-- `MCU_ARM_STATE` 已纳入协议，但真机联调时仍需确认其发布频率与字段有效位
-- `odom -> base_footprint` 应由 Pi 端桥接节点发布
-- `map -> odom` 应由 Cartographer 纯定位或建图节点发布
-- PC 主臂输入是否生效，最终由 MCU 手动模式与权限状态决定
-
----
-
-## 12. TODO
-
-### 12.1 启动与集成
-
-- [ ] 将 `mcu_comm_bridge` 正式纳入 `robot_startup/launch/robot_start.launch.py`
-- [x] 接入 `atlas_mission_manager`、完整导航后端和 PI 端速度门控
-- [x] 明确 `/cmd_vel`、`/atlas/navigation/cmd_vel`、`/motor_cmd_vel` 与底盘执行层之间的完整链路
-- [ ] 确认真机启动时 `/scan`、`/odom`、`/tf` 均已在 Nav2 启动前可用
-
-### 12.2 地图与定位
-
-- [ ] 补齐真实场地 `map.pbstream`
-- [ ] 补齐真实场地 `map.yaml` 和 `map.pgm`
-- [ ] 修正 `at_nav.launch.py` 中地图文件和 RViz 文件路径
-- [ ] 建立真实场地建图、保存、纯定位启动的标准流程
-
-### 12.3 Pi 端通信桥
-
-- [ ] 为 `SerialPort::write_all()` 增加超时保护，避免 USB 串口异常时忙等或阻塞
-- [ ] 发布 `/mcu/status` 或 `diagnostic_msgs/DiagnosticArray`
-- [ ] 补充 `MCU_ACK`、`MCU_STATUS` 的 ROS2 可观测性输出
-- [ ] 将 MCU 时间戳与 ROS 时间戳的同步策略文档化
-- [ ] 增加 rosbag 记录建议和通信统计说明
-
-### 12.4 PC 端遥操作
-
-- [ ] 明确 `teleop.py` 与文档中的参数、默认端口、协议版本是否完全一致
-- [ ] 补充主臂关节方向、零位与夹爪阈值的标定流程
-- [ ] 统一 `PC_MASTER_JOINTS` 的 payload 变更说明与 MCU 解析实现
-
-### 12.5 机器人模型与 TF
-
-- [ ] 在 URDF 中补全 `imu_link`
-- [ ] 明确 `base_link -> imu_link` 的安装位姿
-- [ ] 确认 `laser_link` 命名与雷达驱动 `frame_id` 完全一致
-- [ ] 检查 `base_footprint -> base_link` 与实际底盘高度是否一致
-
-### 12.6 MCU 端
-
-- [ ] 补充 MCU 固件编译和烧录说明
-- [ ] 补充 MCU 状态机说明，尤其是 `AutoPi` 与手动模式的进入条件
-- [ ] 补充 `MCU_IMU`、`MCU_ODOM`、`MCU_ARM_STATE`、`PI_CONTROL` 的实测频率记录
-- [ ] 补充 MCU 故障、急停、PC/Pi 离线处理策略说明
-
-### 12.7 系统联调
-
-- [ ] 建立最小闭环验收表：`/odom`、`/imu`、`/scan`、TF、`/motor_cmd_vel`、MCU 执行
-- [ ] 建立真机低速测试流程
-- [ ] 建立急停和刹车测试流程
-- [ ] 建立 Nav2 目标点导航测试流程
-- [ ] 建立常见问题排查文档
-
----
-
-## 13. 总结
-
-`Atlas` 当前已经具备 MCU 底盘控制、PC 主臂遥操作、Pi 端通信桥、完整导航后端、RACOM 视觉适配和任务状态机主线
-
-它的最小闭环目标是打通：
-
-```text
-MCU -> /odom -> Cartographer / Nav2 -> /atlas/navigation/cmd_vel -> mission_manager -> /motor_cmd_vel -> MCU
-```
-
-同时补齐：
-
-```text
-PC teleop -> PC_MASTER_JOINTS -> MCU -> 机械臂执行
-```
-
-在完成启动整合、地图路径修正、FSM 包确认、通信观测性补强以及真机联调后，`Atlas` 就可以进入更稳定的整车闭环验证阶段
+## 安全原则
+
+- Pi 不主动请求 MCU 进入 AutoPi；自动任务由 MCU 侧条件触发
+- Nav2 速度先进入 `/atlas/navigation/cmd_vel`，再经任务安全门控输出到 `/motor_cmd_vel`
+- 顶层 `competition.yaml` 默认保持安全拒绝状态
+- 未确认地图、坐标、机械臂位姿、ROI 或放置点之前，不开启对应 `configured/enabled`
+- A/B arena 一场比赛只锁定一次，不允许运行中切换半场地图
+- 急停、刹车、串口离线和 MCU 状态异常优先由 MCU/Pi 安全链处理
