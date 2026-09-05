@@ -113,7 +113,39 @@ Atlas/chassis-pi-ws/src/nav_system/at_nav2/maps/
 
 也可以放在外部目录，然后在 `competition.yaml` 中使用绝对路径引用
 
-### 6. 配置唯一比赛 YAML
+### 6. 确认视觉和手眼标定
+
+顶层 `competition.yaml` 管比赛场地、导航点、视觉扫描位姿、分拣 ROI 和放置位姿；相机内参和手眼矩阵属于 Pi 端视觉标定资产，当前由 `handeye_bridge` 单独加载：
+
+```text
+Atlas/chassis-pi-ws/src/vision_system/handeye_bridge/config/camera_intrinsics.yaml
+Atlas/chassis-pi-ws/src/vision_system/handeye_bridge/config/samples_result.yaml
+Atlas/chassis-pi-ws/src/vision_system/handeye_bridge/config/bridge_node.yaml
+```
+
+`samples_result.yaml` 保存当前 eye-in-hand 矩阵，运行时按 `^gripper T_camera` 使用；`bridge_node.yaml` 通过 `handeye_result_file: "samples_result.yaml"` 指向它；更换相机、镜头、分辨率、安装位或末端工具后，需要重新标定并替换 `camera_intrinsics.yaml` / `samples_result.yaml`，再重新编译和重启 handeye_bridge
+
+```bash
+cd Atlas/chassis-pi-ws
+colcon build --symlink-install --packages-select handeye_bridge
+source install/setup.bash
+```
+
+抓取高度、手动补偿和自动发送开关仍在 `bridge_node.yaml` 中确认：
+
+```yaml
+plane1_z_m: 0.031
+plane2_z_m: 0.07
+plane3_z_m: 0.109
+manual_offset_x_m: -0.055
+manual_offset_y_m: 0.000
+manual_offset_z_m: 0.000
+auto_send: true
+```
+
+新矩阵首次上车时建议先把 `auto_send` 设为 `false`，只看日志中的像素到基座坐标计算结果；空载验证安全后再打开自动发送
+
+### 7. 配置唯一比赛 YAML
 
 正式比赛优先只改这一份：
 
@@ -140,7 +172,7 @@ enabled: false
 
 地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
 
-### 7. 启动整场比赛栈
+### 8. 启动整场比赛栈
 
 ```bash
 cd Atlas/chassis-pi-ws
@@ -171,7 +203,7 @@ ros2 launch atlas_competition_bringup competition_stack.launch.py \
   enable_mission:=false
 ```
 
-### 8. 状态检查
+### 9. 状态检查
 
 ```bash
 ros2 topic echo /mcu/status
@@ -182,6 +214,17 @@ ros2 topic hz /odom
 ros2 topic hz /scan
 ```
 
+视觉和手眼联调时重点看：
+
+```bash
+ros2 topic echo /initial_pose_ready
+ros2 topic echo /vision_pose_ready
+ros2 topic echo /detection_centers
+ros2 topic echo /arm/pose
+```
+
+`/pick_target` 会触发 handeye_bridge 计算抓取目标；当前 `auto_send: true` 时还会向 `/mcu/set_arm_pose` 发送机械臂目标，联调前确认机械臂作业空间安全
+
 关键服务：
 
 ```bash
@@ -190,7 +233,7 @@ ros2 service list | grep move_to_sorting
 ros2 service list | grep mcu
 ```
 
-### 9. 整车执行链路
+### 10. 整车执行链路
 
 ```text
 ASRPro / 遥控器 / MCU 条件触发
