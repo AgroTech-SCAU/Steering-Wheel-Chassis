@@ -12,14 +12,83 @@ src/app/atlas_competition_bringup/config/competition.yaml
 
 ## Quick Start
 
-### 1. 进入工作区并加载 ROS
+### 1. 进入树莓派工作区并加载 ROS
 
 ```bash
 cd ~/chassis-pi-ws
 source /opt/ros/humble/setup.bash
 ```
 
-### 2. 确认视觉和手眼标定资产
+本工作区面向树莓派上的 Ubuntu 22.04 / ROS2 Humble；以下命令应在树莓派执行，而不是在遥操作 PC 执行
+
+### 2. 安装系统、ROS 和 Python 依赖
+
+```bash
+sudo apt update
+sudo apt install -y \
+  python3-colcon-common-extensions \
+  python3-pip \
+  python3-rosdep \
+  python3-yaml \
+  python3-opencv \
+  python3-numpy \
+  ros-humble-navigation2 \
+  ros-humble-nav2-bringup \
+  ros-humble-cartographer \
+  ros-humble-cartographer-ros \
+  ros-humble-xacro \
+  ros-humble-robot-state-publisher \
+  ros-humble-rviz2
+```
+
+全新系统如果还没有初始化 rosdep，先执行一次（已经初始化过则跳过 `rosdep init`）：
+
+```bash
+sudo rosdep init
+rosdep update
+```
+
+如果 `src/third_lib/yasmin` 不存在，先取得当前工作区使用的 YASMIN 源码版本：
+
+```bash
+mkdir -p src/third_lib
+git clone https://github.com/uleroboticsgroup/yasmin.git src/third_lib/yasmin
+git -C src/third_lib/yasmin checkout f28363379d9661e1c6048e304427488ee903be2c
+```
+
+然后在工作区根目录安装声明的依赖：
+
+```bash
+rosdep install --from-paths src --ignore-src -r -y
+python3 -m pip install --user -r requirements.txt
+```
+
+验证 rosdep 之外的两项显式依赖：
+
+```bash
+python3 -c "import onnxruntime; print(onnxruntime.__version__)"
+test -f src/third_lib/yasmin/yasmin/package.xml
+```
+
+`vison_topic` 直接使用 `onnxruntime` 运行检测模型，因此由根目录 `requirements.txt` 管理，不依赖不存在或不稳定的 rosdep 映射；`atlas_mission_yasmin` 还需要上面固定版本的 YASMIN 源码；第二条检查失败时不要继续编译
+
+### 3. 准备 A/B 半场地图
+
+每个半场都需要地图 YAML、对应图片和 Cartographer 状态文件：
+
+```text
+arena_A.yaml
+arena_A.pgm 或 arena_A.png
+arena_A.pbstream
+
+arena_B.yaml
+arena_B.pgm 或 arena_B.png
+arena_B.pbstream
+```
+
+地图可以放入 `src/nav_system/at_nav2/maps/`，也可以保存在外部固定目录并在 `competition.yaml` 中填写绝对路径；完成建图后再测量两个半场的 `pickup / park_1 / park_2`
+
+### 4. 确认视觉和手眼标定资产
 
 顶层 `competition.yaml` 管比赛场地、导航点、视觉扫描位姿、分拣 ROI 和放置位姿；相机内参和手眼矩阵属于标定资产，当前由 `handeye_bridge` 单独加载：
 
@@ -29,12 +98,7 @@ src/vision_system/handeye_bridge/config/samples_result.yaml
 src/vision_system/handeye_bridge/config/bridge_node.yaml
 ```
 
-`samples_result.yaml` 保存当前 eye-in-hand 矩阵，运行时按 `^gripper T_camera` 使用；`bridge_node.yaml` 通过 `handeye_result_file: "samples_result.yaml"` 指向它；更换相机、镜头、分辨率、安装位或末端工具后，需要重新标定并替换 `camera_intrinsics.yaml` / `samples_result.yaml`，再重新编译和重启
-
-```bash
-colcon build --symlink-install --packages-select handeye_bridge
-source install/setup.bash
-```
+`samples_result.yaml` 保存当前 eye-in-hand 矩阵，运行时按 `^gripper T_camera` 使用；`bridge_node.yaml` 通过 `handeye_result_file: "samples_result.yaml"` 指向它；更换相机、镜头、分辨率、安装位或末端工具后，需要重新标定并替换 `camera_intrinsics.yaml` / `samples_result.yaml`，然后在第 6 步重新编译并重启
 
 抓取高度、手动补偿和自动发送开关仍在 `bridge_node.yaml` 中确认：
 
@@ -50,7 +114,7 @@ auto_send: true
 
 新矩阵首次上车时建议先把 `auto_send` 设为 `false`，只看日志中的像素到基座坐标计算结果；空载验证安全后再打开自动发送
 
-### 3. 配置顶层比赛 YAML
+### 5. 配置顶层比赛 YAML
 
 正式比赛优先只改：
 
@@ -77,14 +141,16 @@ enabled: false
 
 地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
 
-### 4. 编译
+### 6. 完成配置后编译
 
 ```bash
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 5. 启动整场比赛栈
+包内 `competition.yaml` 和标定 YAML 会安装到 `install/`；修改源码目录中的这些文件后必须重新编译；通过下一步 `competition_config:=/绝对路径/competition.yaml` 传入的外部比赛配置不需要重新编译
+
+### 7. 启动整场比赛栈
 
 使用包内默认顶层配置：
 
@@ -99,7 +165,7 @@ ros2 launch atlas_competition_bringup competition_stack.launch.py \
   competition_config:=/path/to/competition.yaml
 ```
 
-### 6. 常用联调方式
+### 8. 常用联调方式
 
 查看启动参数：
 
@@ -149,7 +215,7 @@ ros2 topic echo /arm/pose
 
 `/pick_target` 会触发 handeye_bridge 计算抓取目标；当前 `auto_send: true` 时还会向 `/mcu/set_arm_pose` 发送机械臂目标，联调前确认机械臂作业空间安全
 
-### 7. 查看运行状态
+### 9. 查看运行状态
 
 ```bash
 ros2 topic echo /mcu/status

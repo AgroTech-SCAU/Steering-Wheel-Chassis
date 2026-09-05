@@ -1,0 +1,2 @@
+# Runtime used by vison_topic for ONNX object detection.
+onnxruntime>=1.16,<2

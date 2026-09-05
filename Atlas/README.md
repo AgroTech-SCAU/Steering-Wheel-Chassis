@@ -1,10 +1,14 @@
 # Atlas
 
-Atlas 是 AgroTech 协会的中型轮式机器人平台；这个目录统一管理整车 MCU 控制程序、Pi 端 ROS2 自主任务工作区、PC 主臂遥操作脚本、ASRPro 语音链路和整车通信协议文档
+Atlas 是 AgroTech 协会的中型轮式机器人平台；这个目录统一管理整车 MCU 控制程序、Pi 端 ROS2 自主任务工作区、PC 主臂遥操作 App、ASRPro 语音链路和整车通信协议文档
 
 当前主线是智械争锋全自主区：MCU 侧触发 AutoPi，Pi 端运行 YASMIN 比赛状态机，完成 A/B 场地识别、语义导航、视觉抓取、园区放置和 DONE/FAIL 上报
 
 ## Quick Start
+
+下面的命令按实际设备划分：`chassis-pc-ws` 只在遥操作 PC 上运行，`chassis-pi-ws` 只在树莓派的 Ubuntu 22.04 / ROS2 Humble 环境运行；不要在 PC 上用 Pi 工作区能否启动来判断树莓派部署是否完整
+
+本 Quick Start 是从未完成的实车配置走到整场联调的执行清单，不表示仓库默认 YAML 已可直接参赛；地图、导航点、扫描位姿、ROI 和放置位姿都需要按第 5～7 步实测填写
 
 ### 1. 整车角色分工
 
@@ -45,16 +49,17 @@ PC 端目录：
 Atlas/chassis-pc-ws/
 ```
 
-典型运行方式：
+安装 App 的 Python 依赖并从源码启动：
 
 ```bash
-cd Atlas/chassis-pc-ws/scripts
-python3 teleop.py --leader-port /dev/ttyUSB0 --mcu-port /dev/ttyUSB1 --freq 50
+cd Atlas/chassis-pc-ws
+python3 -m pip install -r requirements.txt
+python3 scripts/main.py
 ```
 
-PC 遥操作用于主臂手动跟随和调试，不是自主比赛的主入口
+App 启动后扫描串口，在界面中选择“主臂串口”和“从臂 MCU 串口”，应用配置后点击“开始运行”；已经打包时也可以直接启动 `AtlasTeleop`；PC 遥操作用于手动控制和调试，不是 Pi 自主比赛栈的入口；完整说明见 `chassis-pc-ws/README.md`
 
-### 4. Pi 端环境和编译
+### 4. Pi 端环境和依赖
 
 Pi 端目录：
 
@@ -68,6 +73,7 @@ Atlas/chassis-pi-ws/
 sudo apt update
 sudo apt install -y \
   python3-colcon-common-extensions \
+  python3-pip \
   python3-rosdep \
   python3-yaml \
   python3-opencv \
@@ -81,15 +87,34 @@ sudo apt install -y \
   ros-humble-rviz2
 ```
 
-编译：
+安装 ROS 包依赖和 Pi 端额外 Python 依赖：
+
+全新系统如果还没有初始化 rosdep，先执行一次（已经初始化过则跳过 `rosdep init`）：
+
+```bash
+sudo rosdep init
+rosdep update
+```
+
+如果 `src/third_lib/yasmin` 不存在，先取得当前工作区使用的 YASMIN 源码版本：
+
+```bash
+cd Atlas/chassis-pi-ws
+mkdir -p src/third_lib
+git clone https://github.com/uleroboticsgroup/yasmin.git src/third_lib/yasmin
+git -C src/third_lib/yasmin checkout f28363379d9661e1c6048e304427488ee903be2c
+```
 
 ```bash
 cd Atlas/chassis-pi-ws
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
-source install/setup.bash
+python3 -m pip install --user -r requirements.txt
+python3 -c "import onnxruntime; print(onnxruntime.__version__)"
+test -f src/third_lib/yasmin/yasmin/package.xml
 ```
+
+`vison_topic` 运行 ONNX 模型时直接导入 `onnxruntime`，该依赖没有可靠的 Humble rosdep 键，因此由工作区根目录的 `requirements.txt` 明确管理；比赛状态机还依赖固定版本的 YASMIN 源码；最后一条检查失败时，不要继续编译；依赖和配置准备完成后再执行第 8 步整包编译
 
 ### 5. 放入 A/B 半场地图
 
@@ -123,13 +148,7 @@ Atlas/chassis-pi-ws/src/vision_system/handeye_bridge/config/samples_result.yaml
 Atlas/chassis-pi-ws/src/vision_system/handeye_bridge/config/bridge_node.yaml
 ```
 
-`samples_result.yaml` 保存当前 eye-in-hand 矩阵，运行时按 `^gripper T_camera` 使用；`bridge_node.yaml` 通过 `handeye_result_file: "samples_result.yaml"` 指向它；更换相机、镜头、分辨率、安装位或末端工具后，需要重新标定并替换 `camera_intrinsics.yaml` / `samples_result.yaml`，再重新编译和重启 handeye_bridge
-
-```bash
-cd Atlas/chassis-pi-ws
-colcon build --symlink-install --packages-select handeye_bridge
-source install/setup.bash
-```
+`samples_result.yaml` 保存当前 eye-in-hand 矩阵，运行时按 `^gripper T_camera` 使用；`bridge_node.yaml` 通过 `handeye_result_file: "samples_result.yaml"` 指向它；更换相机、镜头、分辨率、安装位或末端工具后，需要重新标定并替换 `camera_intrinsics.yaml` / `samples_result.yaml`，然后在第 8 步重新编译并重启
 
 抓取高度、手动补偿和自动发送开关仍在 `bridge_node.yaml` 中确认：
 
@@ -172,7 +191,18 @@ enabled: false
 
 地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
 
-### 8. 启动整场比赛栈
+### 8. 完成配置后编译 Pi 工作区
+
+```bash
+cd Atlas/chassis-pi-ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+包内 `competition.yaml` 和标定 YAML 会安装到 `install/`；修改源码目录中的这些文件后必须重新编译；若使用下一步的 `competition_config:=/绝对路径/competition.yaml` 传入外部比赛配置，则该外部文件本身不需要重新编译
+
+### 9. 启动整场比赛栈
 
 ```bash
 cd Atlas/chassis-pi-ws
@@ -203,7 +233,7 @@ ros2 launch atlas_competition_bringup competition_stack.launch.py \
   enable_mission:=false
 ```
 
-### 9. 状态检查
+### 10. 状态检查
 
 ```bash
 ros2 topic echo /mcu/status
@@ -233,7 +263,7 @@ ros2 service list | grep move_to_sorting
 ros2 service list | grep mcu
 ```
 
-### 10. 整车执行链路
+### 11. 整车执行链路
 
 ```text
 ASRPro / 遥控器 / MCU 条件触发
@@ -265,7 +295,7 @@ YASMIN 只发送 pickup / park_1 / park_2 语义点
 Atlas/
 ├── atlas_asrpro/                  # ASRPro 语音链路
 ├── chassis_control_code/          # MCU 底盘与机械臂控制工程
-├── chassis-pc-ws/                 # PC 主臂遥操作脚本
+├── chassis-pc-ws/                 # PC 主臂遥操作 App
 ├── chassis-pi-ws/                 # Pi 端 ROS2 自主任务工作区
 ├── docs/                          # 整车通信协议和说明文档
 └── README.md
