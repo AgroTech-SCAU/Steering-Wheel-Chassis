@@ -1,0 +1,39 @@
+# Copyright (C) 2025 Miguel Ángel González Santamarta
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Dict
+from yasmin.state import State
+from yasmin import Blackboard
+
+class Concurrence(State):
+    def __init__(
+        self,
+        states: Dict[str, State],
+        default_outcome: str,
+        outcome_map: Dict[str, Dict[str, str]],
+        parameter_mappings: Dict[str, Dict[str, str]] = ...,
+    ) -> None: ...
+    def get_states(self) -> Dict[str, State]: ...
+    def get_outcome_map(self) -> Dict[str, Dict[str, str]]: ...
+    def get_default_outcome(self) -> str: ...
+    def set_parameter_mappings(
+        self, state_name: str, parameter_mappings: Dict[str, str]
+    ) -> None: ...
+    def get_parameter_mappings(self) -> Dict[str, Dict[str, str]]: ...
+    def configure(self) -> None: ...
+    def validate(self, strict_mode: bool = False) -> None: ...
+    def cancel_state(self) -> None: ...
+    def to_string(self) -> str: ...
+    def __str__(self) -> str: ...
+    def __call__(self, blackboard: Blackboard) -> str: ...

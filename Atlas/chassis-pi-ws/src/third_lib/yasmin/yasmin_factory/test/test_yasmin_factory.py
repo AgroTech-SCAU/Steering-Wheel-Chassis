@@ -1,0 +1,432 @@
+# Copyright (C) 2025 Miguel Ángel González Santamarta
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import unittest
+import os
+import tempfile
+from lxml import etree as ET
+from yasmin import Blackboard, StateMachine
+from yasmin_factory.factory import YasminFactory
+
+
+class TestYasminFactory(unittest.TestCase):
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.factory = YasminFactory()
+        self.test_dir = os.path.dirname(os.path.abspath(__file__))
+
+    def test_create_python_state_simple(self):
+        """Test creating a simple Python state."""
+        state_xml = '<State name="TestState" type="py" module="test.test_simple_state" class="TestSimpleState"/>'
+        state_elem = ET.fromstring(state_xml)
+
+        state = self.factory.create_state(state_elem)
+
+        self.assertIsNotNone(state)
+        self.assertEqual(len(state.get_outcomes()), 2)
+        self.assertIn("outcome1", state.get_outcomes())
+        self.assertIn("outcome2", state.get_outcomes())
+
+    def test_create_cpp_state(self):
+        """Test creating a C++ state using pybind bridge."""
+        state_xml = (
+            '<State name="CppState" type="cpp" class="yasmin_factory/TestSimpleState"/>'
+        )
+        state_elem = ET.fromstring(state_xml)
+
+        state = self.factory.create_state(state_elem)
+        self.assertIsNotNone(state)
+        self.assertEqual(len(state.get_outcomes()), 2)
+
+    def test_create_state_invalid_type(self):
+        """Test creating a state with invalid type."""
+        state_xml = '<State name="InvalidState" type="invalid" class="SomeClass"/>'
+        state_elem = ET.fromstring(state_xml)
+
+        with self.assertRaises(ValueError) as context:
+            self.factory.create_state(state_elem)
+
+        self.assertIn("Unknown state type", str(context.exception))
+
+    def test_create_state_missing_class(self):
+        """Test creating a state with missing class attribute."""
+        state_xml = '<State name="NoClass" type="py" module="some.module"/>'
+        state_elem = ET.fromstring(state_xml)
+
+        with self.assertRaises(KeyError):
+            self.factory.create_state(state_elem)
+
+    def test_create_state_missing_module(self):
+        """Test creating a Python state with missing module attribute."""
+        state_xml = '<State name="NoModule" type="py" class="SomeClass"/>'
+        state_elem = ET.fromstring(state_xml)
+
+        with self.assertRaises(KeyError):
+            self.factory.create_state(state_elem)
+
+    def test_create_sm_from_xml(self):
+        """Test creating a state machine from XML string."""
+        sm_xml = """
+        <StateMachine outcomes="end">
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+
+        sm = self.factory.create_sm(root)
+
+        self.assertIsNotNone(sm)
+        self.assertIsInstance(sm, StateMachine)
+        self.assertIn("end", sm.get_outcomes())
+
+    def test_create_sm_from_file_cpppy(self):
+        """Test creating a state machine from XML file."""
+        xml_file = os.path.join(self.test_dir, "test_simple_sm_1.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+        self.assertIsInstance(sm, StateMachine)
+        self.assertIn("end", sm.get_outcomes())
+
+    def test_create_sm_from_file_pycpp(self):
+        """Test creating a state machine from XML file."""
+        xml_file = os.path.join(self.test_dir, "test_simple_sm_2.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+        self.assertIsInstance(sm, StateMachine)
+        self.assertIn("end", sm.get_outcomes())
+
+    def test_create_sm_from_invalid_file(self):
+        """Test creating a state machine from non-existent file."""
+        with self.assertRaises(Exception):
+            self.factory.create_sm_from_file("/non/existent/file.xml")
+
+    def test_create_sm_from_invalid_xml(self):
+        """Test creating a state machine from invalid XML."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
+            f.write("This is not valid XML")
+            temp_file = f.name
+
+        try:
+            with self.assertRaises(Exception):
+                self.factory.create_sm_from_file(temp_file)
+        finally:
+            os.unlink(temp_file)
+
+    def test_create_sm_invalid_root_element(self):
+        """Test creating a state machine with invalid root element."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
+            f.write('<?xml version="1.0"?><InvalidRoot/>')
+            temp_file = f.name
+
+        try:
+            with self.assertRaises(ValueError) as context:
+                self.factory.create_sm_from_file(temp_file)
+            self.assertIn("Root element must be 'StateMachine'", str(context.exception))
+        finally:
+            os.unlink(temp_file)
+
+    def test_state_execution(self):
+        """Test executing a created state."""
+        state_xml = '<State name="TestState" type="py" module="test.test_simple_state" class="TestSimpleState"/>'
+        state_elem = ET.fromstring(state_xml)
+
+        state = self.factory.create_state(state_elem)
+        blackboard = Blackboard()
+
+        # Execute state multiple times
+        outcome1 = state.execute(blackboard)
+        self.assertEqual(outcome1, "outcome1")
+        self.assertEqual(blackboard["counter"], 1)
+
+        outcome2 = state.execute(blackboard)
+        self.assertEqual(outcome2, "outcome1")
+        self.assertEqual(blackboard["counter"], 2)
+
+        outcome3 = state.execute(blackboard)
+        self.assertEqual(outcome3, "outcome2")
+        self.assertEqual(blackboard["counter"], 3)
+
+    def test_nested_state_machine(self):
+        """Test creating a nested state machine."""
+        xml_file = os.path.join(self.test_dir, "test_nested_sm.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+        self.assertIsInstance(sm, StateMachine)
+        self.assertIn("final_outcome", sm.get_outcomes())
+
+    def test_remapping(self):
+        """Test remapping across multiple states that pass data through the chain."""
+        xml_file = os.path.join(self.test_dir, "test_remapping.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+
+        # Set up initial input
+        blackboard = Blackboard()
+        blackboard["initial_data"] = "start"
+
+        outcome = sm(blackboard)
+
+        # Check the chain of processing
+        self.assertEqual(outcome, "end")
+        self.assertTrue(blackboard.contains("final_data"))
+        self.assertEqual(blackboard.get("final_data"), "processed_start")
+        self.assertTrue(blackboard.contains("final_data_2"))
+        self.assertEqual(blackboard.get("final_data_2"), "processed_processed_start")
+
+    def test_file_path_mechanism(self):
+        """Test including external state machine via file_path attribute."""
+        xml_file = os.path.join(self.test_dir, "test_file_path_sm.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+        self.assertIsInstance(sm, StateMachine)
+
+        # Verify the state machine name is set
+        self.assertEqual(sm.get_name(), "MainStateMachine")
+
+        # Verify the outcomes include the final outcome
+        self.assertIn("final_end", sm.get_outcomes())
+
+        # Execute the state machine
+        blackboard = Blackboard()
+        outcome = sm(blackboard)
+
+        # The state machine should execute through FirstState -> IncludedSM -> final_end
+        # or directly to final_end depending on FirstState's execution
+        self.assertIn(outcome, ["final_end"])
+
+    def test_state_and_state_machine_parameters_from_xml(self):
+        """Test that Param and ParamRemap elements are parsed correctly."""
+        sm_xml = """
+        <StateMachine outcomes="end">
+            <Param name="root_topic" description="Root topic" default_type="str" default_value="/root"/>
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Param name="topic" description="Leaf topic" default_type="str" default_value="/leaf"/>
+                <ParamRemap old="topic" new="root_topic"/>
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+
+        sm = self.factory.create_sm(root)
+
+        self.assertTrue(sm.has_parameter("root_topic"))
+        self.assertEqual(sm.get_parameter("root_topic"), "/root")
+        self.assertEqual(sm.get_parameter_mappings(), {"State1": {"topic": "root_topic"}})
+
+        child = sm.get_states()["State1"]["state"]
+        self.assertTrue(child.has_parameter("topic"))
+        self.assertEqual(child.get_parameter("topic"), "/leaf")
+
+        sm.configure()
+        self.assertEqual(child.get_parameter("topic"), "/root")
+
+    def test_sm_description_from_xml(self):
+        """Test that a state machine parses description from XML."""
+        sm_xml = """
+        <StateMachine outcomes="end" description="Test SM description">
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+        sm = self.factory.create_sm(root)
+
+        self.assertIsNotNone(sm)
+        self.assertEqual(sm.get_description(), "Test SM description")
+
+    def test_sm_keys_from_xml(self):
+        """Test that a state machine parses global Key elements from XML."""
+        sm_xml = """
+        <StateMachine outcomes="end">
+            <Key name="param_int" type="in" default_value="42" default_type="int" description="An integer"/>
+            <Key name="param_str" type="in" default_value="hello" default_type="str" description="A string"/>
+            <Key name="param_float" type="in" default_value="3.14" default_type="float"/>
+            <Key name="param_bool" type="in" default_value="true" default_type="bool"/>
+            <Key name="result" type="out" description="Output value"/>
+            <Key name="shared_key" type="in/out" default_value="5" default_type="int" description="Shared"/>
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+        sm = self.factory.create_sm(root)
+
+        self.assertIsNotNone(sm)
+        input_keys = sm.get_input_keys()
+        output_keys = sm.get_output_keys()
+        self.assertEqual(len(input_keys), 5)
+        self.assertEqual(len(output_keys), 2)
+
+        input_by_name = {k["name"]: k for k in input_keys}
+        output_by_name = {k["name"]: k for k in output_keys}
+
+        self.assertEqual(input_by_name["param_int"]["default_value"], 42)
+        self.assertEqual(input_by_name["param_str"]["default_value"], "hello")
+        self.assertAlmostEqual(
+            input_by_name["param_float"]["default_value"], 3.14, places=2
+        )
+        self.assertEqual(input_by_name["param_bool"]["default_value"], True)
+        self.assertEqual(input_by_name["shared_key"]["default_value"], 5)
+        self.assertEqual(output_by_name["result"]["description"], "Output value")
+        self.assertEqual(output_by_name["shared_key"]["description"], "Shared")
+
+    def test_nested_sm_description_and_global_keys(self):
+        """Test nested SM metadata and keys on both root and nested state machines."""
+        sm_xml = """
+        <StateMachine outcomes="end" description="Root description">
+            <Key name="root_key" type="in" default_value="root_val" default_type="str" description="Root key"/>
+            <StateMachine name="Inner" outcomes="inner_done" description="Inner description">
+                <Key name="inner_key" type="in" default_value="10" default_type="int" description="Inner key"/>
+                <State name="S1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                    <Transition from="outcome1" to="S1"/>
+                    <Transition from="outcome2" to="inner_done"/>
+                </State>
+                <Transition from="inner_done" to="end"/>
+            </StateMachine>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+        sm = self.factory.create_sm(root)
+        inner_sm = self.factory.create_sm(root.find("StateMachine"))
+
+        self.assertIsNotNone(sm)
+        self.assertIsNotNone(inner_sm)
+        self.assertEqual(sm.get_description(), "Root description")
+        self.assertEqual(inner_sm.get_description(), "Inner description")
+
+        root_input_keys = sm.get_input_keys()
+        root_output_keys = sm.get_output_keys()
+        inner_input_keys = inner_sm.get_input_keys()
+        inner_output_keys = inner_sm.get_output_keys()
+
+        self.assertEqual(len(root_input_keys), 1)
+        self.assertEqual(len(root_output_keys), 0)
+        self.assertEqual(len(inner_input_keys), 1)
+        self.assertEqual(len(inner_output_keys), 0)
+
+        self.assertEqual(root_input_keys[0]["name"], "root_key")
+        self.assertEqual(inner_input_keys[0]["name"], "inner_key")
+        self.assertEqual(inner_input_keys[0]["default_value"], 10)
+
+    def test_fsm_metadata_from_file(self):
+        """Test loading FSM metadata (description and defaults) from file."""
+        xml_file = os.path.join(self.test_dir, "test_fsm_metadata.xml")
+        sm = self.factory.create_sm_from_file(xml_file)
+
+        self.assertIsNotNone(sm)
+        self.assertEqual(sm.get_name(), "TestFsmMetadata")
+        self.assertEqual(sm.get_description(), "Root SM description")
+        self.assertEqual(sm.get_outcome_description("end"), "Final outcome")
+
+        root_input_keys = sm.get_input_keys()
+        root_output_keys = sm.get_output_keys()
+        self.assertEqual(len(root_input_keys), 4)
+        self.assertEqual(len(root_output_keys), 2)
+
+    def test_sm_container_keys_from_xml(self):
+        """Test homogeneous list and dict key defaults parsed from XML."""
+        sm_xml = """
+        <StateMachine outcomes="end">
+            <Key name="names" type="in" default_value='["alice","bob"]' default_type="list[str]"/>
+            <Key name="ids" type="in" default_value='[1,2,3]' default_type="list[int]"/>
+            <Key name="weights" type="in" default_value='[1,2.5,3]' default_type="list[float]"/>
+            <Key name="flags" type="in" default_value='[true,false,true]' default_type="list[bool]"/>
+            <Key name="name_map" type="in" default_value='{"first":"alice","second":"bob"}' default_type="dict[str,str]"/>
+            <Key name="count_map" type="in" default_value='{"a":1,"b":2}' default_type="dict[str,int]"/>
+            <Key name="ratio_map" type="in" default_value='{"a":1,"b":2.5}' default_type="dict[str,float]"/>
+            <Key name="flag_map" type="in" default_value='{"a":true,"b":false}' default_type="dict[str,bool]"/>
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+        sm = self.factory.create_sm(root)
+
+        input_by_name = {k["name"]: k for k in sm.get_input_keys()}
+
+        self.assertEqual(input_by_name["names"]["default_value"], ["alice", "bob"])
+        self.assertEqual(input_by_name["ids"]["default_value"], [1, 2, 3])
+        self.assertEqual(input_by_name["weights"]["default_value"], [1.0, 2.5, 3.0])
+        self.assertEqual(input_by_name["flags"]["default_value"], [True, False, True])
+        self.assertEqual(
+            input_by_name["name_map"]["default_value"],
+            {"first": "alice", "second": "bob"},
+        )
+        self.assertEqual(input_by_name["count_map"]["default_value"], {"a": 1, "b": 2})
+        self.assertEqual(
+            input_by_name["ratio_map"]["default_value"], {"a": 1.0, "b": 2.5}
+        )
+        self.assertEqual(
+            input_by_name["flag_map"]["default_value"], {"a": True, "b": False}
+        )
+
+    def test_sm_container_parameters_from_xml(self):
+        """Test homogeneous list and dict parameter defaults parsed from XML."""
+        sm_xml = """
+        <StateMachine outcomes="end">
+            <Param name="name_list" default_value='["alice","bob"]' default_type="list[str]"/>
+            <Param name="int_list" default_value='[1,2,3]' default_type="list[int]"/>
+            <Param name="float_list" default_value='[1,2.5,3]' default_type="list[float]"/>
+            <Param name="bool_list" default_value='[true,false,true]' default_type="list[bool]"/>
+            <Param name="str_dict" default_value='{"a":"x","b":"y"}' default_type="dict[str,str]"/>
+            <Param name="int_dict" default_value='{"a":1,"b":2}' default_type="dict[str,int]"/>
+            <Param name="float_dict" default_value='{"a":1,"b":2.5}' default_type="dict[str,float]"/>
+            <Param name="bool_dict" default_value='{"a":true,"b":false}' default_type="dict[str,bool]"/>
+            <State name="State1" type="py" module="test.test_simple_state" class="TestSimpleState">
+                <Transition from="outcome1" to="State1"/>
+                <Transition from="outcome2" to="end"/>
+            </State>
+        </StateMachine>
+        """
+        root = ET.fromstring(sm_xml)
+        sm = self.factory.create_sm(root)
+
+        self.assertEqual(sm.get_parameter("name_list"), ["alice", "bob"])
+        self.assertEqual(sm.get_parameter("int_list"), [1, 2, 3])
+        self.assertEqual(sm.get_parameter("float_list"), [1.0, 2.5, 3.0])
+        self.assertEqual(sm.get_parameter("bool_list"), [True, False, True])
+        self.assertEqual(sm.get_parameter("str_dict"), {"a": "x", "b": "y"})
+        self.assertEqual(sm.get_parameter("int_dict"), {"a": 1, "b": 2})
+        self.assertEqual(sm.get_parameter("float_dict"), {"a": 1.0, "b": 2.5})
+        self.assertEqual(sm.get_parameter("bool_dict"), {"a": True, "b": False})
+
+    def test_create_orthogonal_state(self):
+        """Test creating and executing an orthogonal state from XML."""
+        xml_path = os.path.join(self.test_dir, "test_orthogonal_sm.xml")
+        sm = self.factory.create_sm_from_file(xml_path)
+        self.assertIsNotNone(sm)
+        bb = Blackboard()
+        outcome = sm(bb)
+        self.assertEqual(outcome, "done")
+
+
+if __name__ == "__main__":
+    unittest.main()

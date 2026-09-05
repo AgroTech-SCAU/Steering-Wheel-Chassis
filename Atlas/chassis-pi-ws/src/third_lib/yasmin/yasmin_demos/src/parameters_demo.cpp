@@ -1,0 +1,198 @@
+// Copyright (C) 2025 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <chrono>
+#include <memory>
+#include <string>
+
+#include <rclcpp/rclcpp.hpp>
+
+#include "yasmin/logs.hpp"
+#include "yasmin/state.hpp"
+#include "yasmin/state_machine.hpp"
+#include "yasmin_ros/basic_outcomes.hpp"
+#include "yasmin_ros/get_parameters_state.hpp"
+#include "yasmin_ros/ros_logs.hpp"
+#include "yasmin_ros/yasmin_node.hpp"
+#include "yasmin_viewer/yasmin_viewer_pub.hpp"
+
+// Note: Local FooState and BarState definitions are intentional here.
+// This demo specifically illustrates ROS parameter loading via the
+// blackboard-key pattern (max_counter, counter_str, foo_str), which
+// differs from the shared yasmin_demos::FooState / BarState that use the
+// declare_parameter/configure interface.  Do not replace them with the
+// shared versions.
+/**
+ * @brief Represents the "Foo" state in the state machine.
+ *
+ * This state increments a counter each time it is executed and
+ * communicates the current count via the blackboard.
+ */
+class FooState : public yasmin::State {
+public:
+  /// Counter to track the number of executions.
+  int counter;
+
+  /**
+   * @brief Constructs a FooState object, initializing the counter.
+   */
+  FooState() : yasmin::State({"outcome1", "outcome2"}), counter(0) {
+    this->set_description(
+        "Increments a counter until the value from 'max_counter' is reached "
+        "and writes the formatted counter string to the blackboard.");
+    this->add_input_key(
+        "max_counter",
+        "Maximum number of iterations before the state finishes.");
+    this->add_input_key<std::string>(
+        "counter_str", "Prefix used when formatting the counter string.",
+        std::string("Counter"));
+    this->add_output_key("foo_str",
+                         "Formatted counter string written to the blackboard.");
+  };
+
+  /**
+   * @brief Executes the Foo state logic.
+   *
+   * This method logs the execution, waits for 3 seconds,
+   * increments the counter, and sets a string in the blackboard.
+   * The state will transition to either "outcome1" or "outcome2"
+   * based on the current value of the counter.
+   *
+   * @param blackboard Shared pointer to the blackboard for state communication.
+   * @return std::string The outcome of the execution: "outcome1" or "outcome2".
+   */
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override {
+    YASMIN_LOG_INFO("Executing state FOO");
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    if (this->counter < blackboard->get<int>("max_counter")) {
+      this->counter += 1;
+      blackboard->set<std::string>("foo_str",
+                                   blackboard->get<std::string>("counter_str") +
+                                       ": " + std::to_string(this->counter));
+      return "outcome1";
+
+    } else {
+      return "outcome2";
+    }
+  };
+};
+
+/**
+ * @brief Represents the "Bar" state in the state machine.
+ *
+ * This state logs the value from the blackboard and provides
+ * a single outcome to transition.
+ */
+class BarState : public yasmin::State {
+public:
+  /**
+   * @brief Constructs a BarState object.
+   */
+  BarState() : yasmin::State({"outcome3"}) {
+    this->set_description("Reads and prints the formatted counter string "
+                          "stored in 'foo_str' from the blackboard.");
+    this->add_input_key("foo_str",
+                        "Formatted counter string produced by FooState.");
+  }
+
+  /**
+   * @brief Executes the Bar state logic.
+   *
+   * This method logs the execution, waits for 3 seconds,
+   * retrieves a string from the blackboard, and logs it.
+   *
+   * @param blackboard Shared pointer to the blackboard for state communication.
+   * @return std::string The outcome of the execution: "outcome3".
+   */
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override {
+    YASMIN_LOG_INFO("Executing state BAR");
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    YASMIN_LOG_INFO(blackboard->get<std::string>("foo_str").c_str());
+
+    return "outcome3";
+  }
+};
+
+int main(int argc, char *argv[]) {
+  // Initialize ROS 2
+  rclcpp::init(argc, argv);
+
+  // Set ROS 2 logs
+  yasmin_ros::set_ros_loggers();
+  YASMIN_LOG_INFO("yasmin_parameters_demo");
+
+  // Create a state machine
+  auto sm = yasmin::StateMachine::make_shared(
+      std::initializer_list<std::string>{"outcome4"}, true);
+  sm->set_description("Loads configuration values into the blackboard and then "
+                      "runs a loop that formats and prints a counter string "
+                      "until the configured maximum is reached.");
+  sm->add_input_key<int>(
+      "max_counter",
+      "Maximum number of iterations before the state machine finishes.", 3);
+  sm->add_input_key<std::string>(
+      "counter_str", "Prefix used when formatting the counter string.",
+      std::string("Counter"));
+  sm->add_output_key("foo_str",
+                     "Formatted counter string produced during execution.");
+
+  auto getting_parameters_state = yasmin_ros::GetParametersState::make_shared(
+      yasmin_ros::GetParametersState::Parameters{
+          {"max_counter", 3},
+          {"counter_str", std::string("Counter")},
+      });
+  getting_parameters_state->set_description(
+      "Loads the configured parameters and stores them in the blackboard.");
+  getting_parameters_state->add_output_key(
+      "max_counter",
+      "Maximum number of iterations before the state machine finishes.");
+  getting_parameters_state->add_output_key(
+      "counter_str", "Prefix used when formatting the counter string.");
+
+  // Add states to the state machine
+  sm->add_state("GETTING_PARAMETERS", getting_parameters_state,
+                {
+                    {yasmin_ros::basic_outcomes::SUCCEED, "FOO"},
+                    {yasmin_ros::basic_outcomes::ABORT, "outcome4"},
+                });
+  sm->add_state("FOO", std::make_shared<FooState>(),
+                {
+                    {"outcome1", "BAR"},
+                    {"outcome2", "outcome4"},
+                });
+  sm->add_state("BAR", std::make_shared<BarState>(),
+                {
+                    {"outcome3", "FOO"},
+                });
+
+  {
+    // Publish state machine updates
+    yasmin_viewer::YasminViewerPub yasmin_pub(sm, "YASMIN_PARAMETERS_DEMO");
+
+    // Execute the state machine
+    try {
+      std::string outcome = (*sm.get())();
+      YASMIN_LOG_INFO(outcome.c_str());
+    } catch (const std::exception &e) {
+      YASMIN_LOG_WARN(e.what());
+    }
+  }
+
+  yasmin_ros::YasminNode::destroy_instance();
+  rclcpp::shutdown();
+
+  return 0;
+}

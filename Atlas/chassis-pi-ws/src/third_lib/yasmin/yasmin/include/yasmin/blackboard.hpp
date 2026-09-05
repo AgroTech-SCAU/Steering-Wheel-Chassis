@@ -1,0 +1,243 @@
+// Copyright (C) 2023 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef YASMIN__BLACKBOARD_HPP_
+#define YASMIN__BLACKBOARD_HPP_
+
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "yasmin/demangle.hpp"
+#include "yasmin/logs.hpp"
+#include "yasmin/types.hpp"
+
+namespace yasmin {
+
+/**
+ * @class Blackboard
+ * @brief A thread-safe storage for key-value pairs of varying types.
+ *
+ * The Blackboard class allows storing, retrieving, and managing
+ * values associated with string keys in a thread-safe manner using
+ * a recursive mutex.
+ */
+class Blackboard {
+private:
+  /**
+   * @brief Shared storage used by blackboard copies.
+   *
+   * Values, type information and the synchronization primitive are shared so
+   * copied blackboards can access the same underlying data while keeping their
+   * own remapping scope.
+   */
+  struct SharedStorage {
+    /// Mutex for thread safety of the shared storage.
+    mutable std::recursive_mutex mutex;
+    /// Storage for key-value pairs.
+    std::unordered_map<std::string, std::shared_ptr<void>> values;
+    /// Storage for type information for each key.
+    TypeRegistry type_registry;
+  };
+
+  /// Shared storage for key-value pairs and type information.
+  std::shared_ptr<SharedStorage> storage;
+  /// Storage for key remappings local to this blackboard handle.
+  Remappings remappings;
+
+  /** @brief Internal method that returns the remapped key. If the key is
+   * not remapped, returns the argument key.
+   *  @param key The key to remap.
+   *  @return The (possibly remapped) key.
+   */
+  const std::string &remap(const std::string &key) const;
+
+public:
+  /**
+   * @brief Raw type-erased entry used by batched lookups.
+   */
+  struct RawEntry {
+    std::shared_ptr<void> value;
+    std::string type_name;
+  };
+
+  /**
+   * @brief Get the raw value and type name for a single key under one lock.
+   */
+  RawEntry get_raw(const std::string &key) const;
+
+  /**
+   * @brief Get raw values and type names for a batch of keys under one lock.
+   */
+  std::vector<RawEntry>
+  get_raw_batch(const std::vector<std::string> &keys) const;
+
+  /**
+   * @brief Shared pointer type for Blackboard.
+   */
+  YASMIN_PTR_ALIASES(Blackboard)
+
+  /**
+   * @brief Default constructor for Blackboard.
+   */
+  Blackboard();
+
+  /**
+   * @brief Copy constructor for Blackboard.
+   * @param other The instance to copy from.
+   *
+   * The copied blackboard shares the underlying storage with @p other while
+   * keeping its own local remapping table.
+   */
+  Blackboard(const Blackboard &other);
+
+  /**
+   * @brief Set a value in the blackboard.
+   * @tparam T The type of the value to store.
+   * @param name The key to associate with the value.
+   * @param value The value to store.
+   *
+   * @note When @p T is a pybind11 Python type (e.g. `py::object`), in-place
+   * updates modify Python refcounts and require the GIL. C++ threads that
+   * call `set<py::object>` directly (e.g. `Concurrence` workers) **must**
+   * hold the GIL. The Python wrapper (`BlackboardPyWrapper::set`) acquires
+   * the GIL automatically; direct C++ callers do not.
+   */
+  template <class T> void set(const std::string &name, T value) {
+    using DecayT = std::decay_t<T>;
+
+    YASMIN_LOG_DEBUG("Setting '%s' in the blackboard", name.c_str());
+
+    std::lock_guard<std::recursive_mutex> lk(this->storage->mutex);
+
+    // Apply remapping if exists
+    const std::string &key = this->remap(name);
+    const std::string type_name = demangle_type(typeid(DecayT).name());
+
+    auto type_it = this->storage->type_registry.find(key);
+    if (type_it != this->storage->type_registry.end() &&
+        type_it->second == type_name) {
+      // Same type: update existing value in-place (avoids allocation)
+      *(std::static_pointer_cast<DecayT>(this->storage->values.at(key))) =
+          std::move(value);
+    } else {
+      // New key or different type: (re)create entry
+      this->storage->values[key] = std::make_shared<DecayT>(std::move(value));
+      this->storage->type_registry[key] = type_name;
+    }
+  }
+
+  /**
+   * @brief Retrieve a value from the blackboard.
+   * @tparam T The type of the value to retrieve.
+   * @param key The key associated with the value.
+   * @return The value associated with the specified key.
+   * @throws std::runtime_error if the key does not exist.
+   */
+  template <class T> T get(const std::string &key) const {
+
+    YASMIN_LOG_DEBUG("Getting '%s' from the blackboard", key.c_str());
+
+    std::lock_guard<std::recursive_mutex> lk(this->storage->mutex);
+
+    const std::string &remapped_key = this->remap(key);
+    auto it = this->storage->values.find(remapped_key);
+    if (it == this->storage->values.end()) {
+      throw std::runtime_error("Element '" + key +
+                               "' does not exist in the blackboard");
+    }
+
+    // Return the value casted to the requested type
+    return *(std::static_pointer_cast<T>(it->second));
+  }
+
+  /**
+   * @brief Remove a value from the blackboard.
+   * @param key The key associated with the value to remove.
+   */
+  void remove(const std::string &key);
+
+  /**
+   * @brief Check if a key exists in the blackboard.
+   * @param key The key to check.
+   * @return True if the key exists, false otherwise.
+   */
+  bool contains(const std::string &key) const;
+
+  /**
+   * @brief Copy a value from another blackboard.
+   * @param other The source blackboard.
+   * @param source_key The key to read from the source blackboard.
+   * @param target_key The key to write in this blackboard.
+   *
+   * The stored value is forwarded using the existing type-erased storage so the
+   * type does not need to be known at compile time.
+   *
+   * @note This performs a shallow copy: the shared_ptr entries in the target
+   * blackboard refer to the same underlying value object as the source.
+   * Mutating the value through one handle affects the other.
+   */
+  void copy_value_from(const Blackboard &other, const std::string &source_key,
+                       const std::string &target_key);
+
+  /**
+   * @brief Get the number of key-value pairs in the blackboard.
+   * @return The size of the blackboard.
+   */
+  int size() const;
+
+  /**
+   * @brief Get the keys visible in the current remapping scope.
+   * @return A sorted list of visible key names.
+   *
+   * If one or more remappings point to a stored key, the remapped names are
+   * returned instead of the underlying storage key. Multiple remapped names can
+   * therefore refer to the same stored value.
+   */
+  std::vector<std::string> keys() const;
+
+  /**
+   * @brief Get the type of a value stored in the blackboard.
+   * @param key The key associated with the value.
+   * @return A string representation of the type.
+   * @throws std::runtime_error if the key does not exist.
+   */
+  std::string get_type(const std::string &key) const;
+
+  /**
+   * @brief Convert the contents of the blackboard to a string.
+   * @return A string representation of the blackboard.
+   */
+  std::string to_string() const;
+
+  /**
+   * @brief Set the remappings of the blackboard.
+   * @param remappings The remappings to set.
+   */
+  void set_remappings(const Remappings &remappings);
+
+  /**
+   * @brief Get the remappings of the blackboard.
+   * @return The remappings of the blackboard.
+   */
+  Remappings get_remappings() const;
+};
+
+} // namespace yasmin
+
+#endif // YASMIN__BLACKBOARD_HPP_

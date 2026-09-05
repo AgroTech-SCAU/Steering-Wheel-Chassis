@@ -1,0 +1,140 @@
+// Copyright (C) 2026 Maik Knof
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "yasmin_pcl/filters/random_sample_state.hpp"
+
+#include <pcl/filters/random_sample.h>
+
+#include <exception>
+#include <limits>
+
+#include <pluginlib/class_list_macros.hpp>
+
+#include "yasmin/logs.hpp"
+#include "yasmin_pcl/common/cloud_types.hpp"
+#include "yasmin_pcl/common/filter_state_utils.hpp"
+
+namespace yasmin_pcl::filters {
+
+RandomSampleState::RandomSampleState()
+    : yasmin::State({"succeeded", "aborted"}) {
+  this->sample_ = 1;
+  this->seed_ = 0;
+  this->negative_ = false;
+  this->keep_organized_ = false;
+  this->user_filter_value_ = std::numeric_limits<float>::quiet_NaN();
+  this->extract_removed_indices_ = false;
+
+  this->set_description(
+      "Applies pcl::RandomSample to a pcl::PCLPointCloud2 stored in the "
+      "blackboard.");
+  this->set_outcome_description("succeeded",
+                                "The cloud was sampled successfully.");
+  this->set_outcome_description(
+      "aborted", "The input cloud was invalid or filtering failed.");
+
+  this->declare_parameter<int>(
+      "sample", "Number of samples to draw from the input cloud.", 1);
+  this->declare_parameter<int>(
+      "seed", "Seed used by the internal random generator.", 0);
+  this->declare_parameter<bool>("negative",
+                                "Return points that were not sampled.", false);
+  this->declare_parameter<bool>(
+      "keep_organized",
+      "Keep the organized cloud structure by replacing filtered points.",
+      false);
+  this->declare_parameter<float>(
+      "user_filter_value",
+      "Replacement value used when keep_organized is enabled.",
+      std::numeric_limits<float>::quiet_NaN());
+  this->declare_parameter<bool>("extract_removed_indices",
+                                "Store removed point indices in the blackboard "
+                                "output key removed_indices.",
+                                false);
+
+  this->add_input_key("input_cloud",
+                      "Input cloud stored as pcl::PCLPointCloud2::Ptr.");
+  this->add_input_key(
+      "input_indices",
+      "Optional subset of point indices stored as pcl::Indices.");
+  this->add_output_key("output_cloud",
+                       "Sampled cloud stored as pcl::PCLPointCloud2::Ptr.");
+  this->add_output_key("output_indices",
+                       "Sampled indices stored as pcl::Indices.");
+  this->add_output_key("removed_indices",
+                       "Removed point indices stored as pcl::Indices.");
+}
+
+void RandomSampleState::configure() {
+  this->sample_ = this->get_parameter<int>("sample");
+  this->seed_ = this->get_parameter<int>("seed");
+  this->negative_ = this->get_parameter<bool>("negative");
+  this->keep_organized_ = this->get_parameter<bool>("keep_organized");
+  this->user_filter_value_ = this->get_parameter<float>("user_filter_value");
+  this->extract_removed_indices_ =
+      this->get_parameter<bool>("extract_removed_indices");
+}
+
+std::string
+RandomSampleState::execute(yasmin::Blackboard::SharedPtr blackboard) {
+  try {
+    const auto input_cloud =
+        blackboard->get<common::PclPointCloud2Ptr>("input_cloud");
+
+    if (!input_cloud) {
+      YASMIN_LOG_WARN("Input PCL point cloud pointer is null");
+      return "aborted";
+    }
+
+    pcl::RandomSample<pcl::PCLPointCloud2> filter;
+    filter.setInputCloud(input_cloud);
+    filter.setSample(static_cast<unsigned int>(this->sample_));
+    filter.setSeed(static_cast<unsigned int>(this->seed_));
+    filter.setNegative(this->negative_);
+    filter.setKeepOrganized(this->keep_organized_);
+    filter.setUserFilterValue(this->user_filter_value_);
+    common::set_optional_input_indices(filter, blackboard);
+
+    auto output_cloud = common::make_pcl_point_cloud2();
+    filter.filter(*output_cloud);
+    blackboard->set<common::PclPointCloud2Ptr>("output_cloud", output_cloud);
+
+    // Derive output indices from a second filter pass with the same seed so
+    // the random sample is identical to the one that produced output_cloud.
+    // PCL's RandomSample<PCLPointCloud2> does not expose
+    // setExtractRemovedIndices, so we cannot retrieve kept/removed indices from
+    // a single pass. Resetting the seed before the indices pass ensures
+    // deterministic, matching results.
+    common::Indices output_indices;
+    filter.setSeed(static_cast<unsigned int>(this->seed_));
+    filter.filter(output_indices);
+    blackboard->set<common::Indices>("output_indices", output_indices);
+
+    if (this->extract_removed_indices_) {
+      const auto domain_indices = common::make_domain_indices(input_cloud);
+      blackboard->set<common::Indices>(
+          "removed_indices",
+          common::compute_removed_indices(domain_indices, output_indices));
+    }
+
+    return "succeeded";
+  } catch (const std::exception &e) {
+    YASMIN_LOG_ERROR("RandomSample filtering failed: %s", e.what());
+    return "aborted";
+  }
+}
+
+} // namespace yasmin_pcl::filters
+
+PLUGINLIB_EXPORT_CLASS(yasmin_pcl::filters::RandomSampleState, yasmin::State)

@@ -1,0 +1,23 @@
+<class_libraries>
+  <library path="tf_buffer_state">
+    <class name="yasmin_ros/TfBufferState"
+           type="yasmin_ros::TfBufferState"
+           base_class_type="yasmin::State">
+      <description>Create a tf2 buffer and transform listener and store them in the blackboard.</description>
+    </class>
+  </library>
+  <library path="ros_serialize_cpp_state">
+    <class name="yasmin_ros/RosSerializeCppState"
+           type="yasmin_ros::RosSerializeCppState"
+           base_class_type="yasmin::State">
+      <description>Serialize a C++ ROS interface instance into bytes.</description>
+    </class>
+  </library>
+  <library path="ros_deserialize_cpp_state">
+    <class name="yasmin_ros/RosDeserializeCppState"
+           type="yasmin_ros::RosDeserializeCppState"
+           base_class_type="yasmin::State">
+      <description>Deserialize bytes into a C++ ROS interface instance.</description>
+    </class>
+  </library>
+</class_libraries>

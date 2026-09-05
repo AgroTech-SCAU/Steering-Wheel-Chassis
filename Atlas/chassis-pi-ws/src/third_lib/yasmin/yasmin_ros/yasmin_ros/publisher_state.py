@@ -1,0 +1,97 @@
+# Copyright (C) 2025 Miguel Ángel González Santamarta
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Callable, Union, Type, Any
+
+from rclpy.node import Node
+from rclpy.publisher import Publisher
+from rclpy.qos import QoSProfile
+from rclpy.callback_groups import CallbackGroup
+
+import yasmin
+from yasmin import State, Blackboard
+from yasmin_ros.ros_state_utils import resolve_node
+from yasmin_ros.basic_outcomes import SUCCEED, CANCEL
+from yasmin_ros.ros_clients_cache import ROSClientsCache
+
+
+class PublisherState(State):
+    """
+    Template class to publish ROS 2 messages.
+
+    This class provides functionality to publish to a ROS 2 topic
+    and create custom messages.
+    """
+
+    def __init__(
+        self,
+        msg_type: Type,
+        topic_name: str,
+        create_message_handler: Callable,
+        qos: Union[QoSProfile, int] = 10,
+        callback_group: CallbackGroup = None,
+        node: Node = None,
+    ) -> None:
+        """
+        Construct a new PublisherState with ROS 2 node and specific QoS.
+
+        Args:
+            msg_type (Type): The type of message to be published.
+            topic_name (str): The name of the topic to publish to.
+            create_message_handler (Callable[[Blackboard], Any]): A callback handler to create messages.
+            qos (Union[QoSProfile, int], optional): Quality of Service settings for the topic.
+            callback_group (CallbackGroup, optional): The callback group for the publisher.
+            node (Node, optional): The ROS 2 node to use. If None, a default node is created.
+        """
+
+        ## Callback handler to create messages.
+        self._create_message_handler: Callable[[Blackboard], Any] = create_message_handler
+
+        self._node = resolve_node(node)
+
+        ## Name of the topic to publish to.
+        self._topic_name: str = topic_name
+
+        ## Publisher to the ROS 2 topic.
+        self._pub: Publisher = ROSClientsCache.get_or_create_publisher(
+            self._node,
+            msg_type,
+            topic_name,
+            qos,
+            callback_group=callback_group,
+        )
+
+        if not self._create_message_handler:
+            raise ValueError("create_message_handler is needed")
+
+        super().__init__([SUCCEED, CANCEL])
+
+    def execute(self, blackboard: Blackboard) -> str:
+        """
+        Execute the publishing operation.
+
+        Args:
+            blackboard (Blackboard): A shared pointer to the blackboard for data storage.
+
+        Returns:
+            str: A string outcome indicating the result of the publishing operation.
+        """
+
+        if self.is_canceled():
+            return CANCEL
+
+        yasmin.YASMIN_LOG_DEBUG(f"Publishing to topic '{self._topic_name}'")
+        msg = self._create_message_handler(blackboard)
+        self._pub.publish(msg)
+        return SUCCEED

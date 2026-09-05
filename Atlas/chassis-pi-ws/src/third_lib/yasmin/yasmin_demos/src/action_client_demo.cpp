@@ -1,0 +1,212 @@
+// Copyright (C) 2023 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <memory>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <example_interfaces/action/fibonacci.hpp>
+
+#include "yasmin/cb_state.hpp"
+#include "yasmin/logs.hpp"
+#include "yasmin/state_machine.hpp"
+#include "yasmin_ros/action_state.hpp"
+#include "yasmin_ros/basic_outcomes.hpp"
+#include "yasmin_ros/ros_logs.hpp"
+#include "yasmin_ros/yasmin_node.hpp"
+#include "yasmin_viewer/yasmin_viewer_pub.hpp"
+
+using std::placeholders::_1;
+using std::placeholders::_2;
+using Fibonacci = example_interfaces::action::Fibonacci;
+
+/**
+ * @brief Prints the result of the Fibonacci action.
+ *
+ * Retrieves the final Fibonacci sequence from the blackboard and outputs it to
+ * stderr.
+ *
+ * @param blackboard Shared pointer to the blackboard storing the Fibonacci
+ * sequence.
+ * @return The outcome status indicating success.
+ */
+std::string print_result(yasmin::Blackboard::SharedPtr blackboard) {
+
+  auto fibo_res = blackboard->get<std::vector<int>>("fibo_res");
+
+  std::stringstream ss;
+  ss << "Result: [";
+  for (size_t i = 0; i < fibo_res.size(); i++) {
+    ss << fibo_res[i];
+    if (i < fibo_res.size() - 1) {
+      ss << ", ";
+    }
+  }
+  ss << "]";
+
+  YASMIN_LOG_INFO(ss.str().c_str());
+
+  return yasmin_ros::basic_outcomes::SUCCEED;
+}
+
+/**
+ * @class FibonacciState
+ * @brief Represents the action state for the Fibonacci action.
+ *
+ * This class manages goal creation, response handling, and feedback processing
+ * for the Fibonacci action.
+ */
+class FibonacciState : public yasmin_ros::ActionState<Fibonacci> {
+
+public:
+  /**
+   * @brief Constructs a new FibonacciState object and initializes callbacks.
+   */
+  FibonacciState()
+      : yasmin_ros::ActionState<Fibonacci>(
+            "/fibonacci",
+            std::bind(&FibonacciState::create_goal_handler, this, _1), {},
+            std::bind(&FibonacciState::response_handler, this, _1, _2),
+            std::bind(&FibonacciState::print_feedback, this, _1, _2)) {
+    this->set_description("Calls the Fibonacci action server and stores the "
+                          "resulting sequence in the blackboard.");
+    this->add_input_key<int>("n", "Order of the Fibonacci sequence to compute.",
+                             10);
+    this->add_output_key("fibo_res",
+                         "Computed Fibonacci sequence returned by the action.");
+  };
+
+  /**
+   * @brief Callback for creating the Fibonacci action goal.
+   *
+   * Reads the order of the Fibonacci sequence from the blackboard.
+   *
+   * @param blackboard Shared pointer to the blackboard.
+   * @return The Fibonacci goal with the specified order.
+   */
+  Fibonacci::Goal
+  create_goal_handler(yasmin::Blackboard::SharedPtr blackboard) {
+
+    auto goal = Fibonacci::Goal();
+    goal.order = blackboard->get<int>("n");
+    return goal;
+  };
+
+  /**
+   * @brief Callback for handling the action response.
+   *
+   * Stores the resulting Fibonacci sequence in the blackboard.
+   *
+   * @param blackboard Shared pointer to the blackboard.
+   * @param response Shared pointer to the action result containing the
+   * sequence.
+   * @return The outcome status indicating success.
+   */
+  std::string response_handler(yasmin::Blackboard::SharedPtr blackboard,
+                               Fibonacci::Result::SharedPtr response) {
+
+    blackboard->set<std::vector<int>>("fibo_res", response->sequence);
+    return yasmin_ros::basic_outcomes::SUCCEED;
+  };
+
+  /**
+   * @brief Callback for printing action feedback.
+   *
+   * Displays each new partial Fibonacci sequence number as it is received.
+   *
+   * @param blackboard Shared pointer to the blackboard (not used in this
+   * method).
+   * @param feedback Shared pointer to the feedback message with partial
+   * sequence.
+   */
+  void print_feedback(yasmin::Blackboard::SharedPtr blackboard,
+                      std::shared_ptr<const Fibonacci::Feedback> feedback) {
+    (void)blackboard;
+
+    std::stringstream ss;
+    ss << "Received feedback: [";
+    for (size_t i = 0; i < feedback->sequence.size(); i++) {
+      ss << feedback->sequence[i];
+      if (i < feedback->sequence.size() - 1) {
+        ss << ", ";
+      }
+    }
+    ss << "]";
+
+    YASMIN_LOG_INFO(ss.str().c_str());
+  };
+};
+
+int main(int argc, char *argv[]) {
+
+  // Initialize ROS 2
+  rclcpp::init(argc, argv);
+
+  // Set ROS 2 logging
+  yasmin_ros::set_ros_loggers();
+  YASMIN_LOG_INFO("yasmin_action_client_demo");
+
+  // Create the state machine
+  auto sm = yasmin::StateMachine::make_shared(
+      std::initializer_list<std::string>{"outcome4"}, true);
+  sm->set_description("Calls the Fibonacci action server, stores the resulting "
+                      "sequence, and prints it.");
+  sm->add_input_key<int>("n", "Order of the Fibonacci sequence to compute.",
+                         10);
+  sm->add_output_key("fibo_res",
+                     "Computed Fibonacci sequence returned by the action.");
+
+  auto printing_result_state = yasmin::CbState::make_shared(
+      std::initializer_list<std::string>{yasmin_ros::basic_outcomes::SUCCEED},
+      print_result);
+  printing_result_state->set_description(
+      "Reads the computed Fibonacci sequence from the blackboard and prints "
+      "it.");
+  printing_result_state->add_input_key(
+      "fibo_res", "Computed Fibonacci sequence returned by the action.");
+
+  // Add states to the state machine
+  sm->add_state("CALLING_FIBONACCI", std::make_shared<FibonacciState>(),
+                {
+                    {yasmin_ros::basic_outcomes::SUCCEED, "PRINTING_RESULT"},
+                    {yasmin_ros::basic_outcomes::CANCEL, "outcome4"},
+                    {yasmin_ros::basic_outcomes::ABORT, "outcome4"},
+                });
+  sm->add_state("PRINTING_RESULT", printing_result_state,
+                {
+                    {yasmin_ros::basic_outcomes::SUCCEED, "outcome4"},
+                });
+
+  yasmin::Blackboard::SharedPtr blackboard = yasmin::Blackboard::make_shared();
+  blackboard->set<int>("n", 10);
+
+  {
+    // Publisher for visualizing the state machine
+    yasmin_viewer::YasminViewerPub yasmin_pub(sm, "YASMIN_ACTION_CLIENT_DEMO");
+
+    // Execute the state machine
+    try {
+      std::string outcome = (*sm.get())(blackboard);
+      YASMIN_LOG_INFO(outcome.c_str());
+    } catch (const std::exception &e) {
+      YASMIN_LOG_WARN(e.what());
+    }
+  }
+
+  yasmin_ros::YasminNode::destroy_instance();
+  rclcpp::shutdown();
+
+  return 0;
+}

@@ -1,0 +1,147 @@
+// Copyright (C) 2026 Maik Knof
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "yasmin_pcl/io/save_ply_state.hpp"
+
+#include <pcl/io/ply_io.h>
+
+#include <Eigen/Geometry>
+#include <exception>
+#include <filesystem>
+#include <string>
+
+#include <pluginlib/class_list_macros.hpp>
+
+#include "yasmin/logs.hpp"
+#include "yasmin_pcl/common/cloud_types.hpp"
+
+namespace yasmin_pcl::io {
+
+SavePlyState::SavePlyState() : yasmin::State({"succeeded", "aborted"}) {
+  this->file_path_.clear();
+  this->binary_mode_ = false;
+  this->use_camera_ = true;
+  this->origin_x_ = 0.0F;
+  this->origin_y_ = 0.0F;
+  this->origin_z_ = 0.0F;
+  this->origin_w_ = 0.0F;
+  this->orientation_x_ = 0.0F;
+  this->orientation_y_ = 0.0F;
+  this->orientation_z_ = 0.0F;
+  this->orientation_w_ = 1.0F;
+
+  this->set_description(
+      "Saves a pcl::PCLPointCloud2 cloud from the blackboard to a PLY file.");
+  this->set_outcome_description("succeeded", "The PLY file was written.");
+  this->set_outcome_description(
+      "aborted", "The input cloud was invalid or writing failed.");
+
+  this->declare_parameter<std::string>("file_path",
+                                       "Path to the PLY file to write.", "");
+  this->declare_parameter<bool>("binary_mode",
+                                "Write the PLY file in binary format.", false);
+  this->declare_parameter<bool>(
+      "use_camera",
+      "Write the PLY file with camera element metadata when supported.", true);
+  this->declare_parameter<float>(
+      "origin_x", "Sensor origin x component used for writing.", 0.0F);
+  this->declare_parameter<float>(
+      "origin_y", "Sensor origin y component used for writing.", 0.0F);
+  this->declare_parameter<float>(
+      "origin_z", "Sensor origin z component used for writing.", 0.0F);
+  this->declare_parameter<float>(
+      "origin_w", "Sensor origin w component used for writing.", 0.0F);
+  this->declare_parameter<float>("orientation_x",
+                                 "Orientation quaternion x component.", 0.0F);
+  this->declare_parameter<float>("orientation_y",
+                                 "Orientation quaternion y component.", 0.0F);
+  this->declare_parameter<float>("orientation_z",
+                                 "Orientation quaternion z component.", 0.0F);
+  this->declare_parameter<float>("orientation_w",
+                                 "Orientation quaternion w component.", 1.0F);
+
+  this->add_input_key("input_cloud",
+                      "Input cloud stored as pcl::PCLPointCloud2::Ptr.");
+}
+
+void SavePlyState::configure() {
+  this->file_path_ = this->get_parameter<std::string>("file_path");
+  this->binary_mode_ = this->get_parameter<bool>("binary_mode");
+  this->use_camera_ = this->get_parameter<bool>("use_camera");
+  this->origin_x_ = this->get_parameter<float>("origin_x");
+  this->origin_y_ = this->get_parameter<float>("origin_y");
+  this->origin_z_ = this->get_parameter<float>("origin_z");
+  this->origin_w_ = this->get_parameter<float>("origin_w");
+  this->orientation_x_ = this->get_parameter<float>("orientation_x");
+  this->orientation_y_ = this->get_parameter<float>("orientation_y");
+  this->orientation_z_ = this->get_parameter<float>("orientation_z");
+  this->orientation_w_ = this->get_parameter<float>("orientation_w");
+}
+
+std::string SavePlyState::execute(yasmin::Blackboard::SharedPtr blackboard) {
+  try {
+    if (this->is_canceled()) {
+      return "aborted";
+    }
+
+    if (this->file_path_.empty()) {
+      YASMIN_LOG_WARN("Parameter 'file_path' is empty");
+      return "aborted";
+    }
+
+    const auto parent = std::filesystem::path(this->file_path_).parent_path();
+    if (!parent.empty() && !std::filesystem::exists(parent)) {
+      YASMIN_LOG_WARN("Parent directory does not exist for '%s'",
+                      this->file_path_.c_str());
+      return "aborted";
+    }
+
+    const auto input_cloud =
+        blackboard->get<common::PclPointCloud2Ptr>("input_cloud");
+
+    if (!input_cloud) {
+      YASMIN_LOG_WARN("Input PCL point cloud pointer is null");
+      return "aborted";
+    }
+
+    if (this->is_canceled()) {
+      return "aborted";
+    }
+
+    const Eigen::Vector4f origin(this->origin_x_, this->origin_y_,
+                                 this->origin_z_, this->origin_w_);
+    const Eigen::Quaternionf orientation(
+        this->orientation_w_, this->orientation_x_, this->orientation_y_,
+        this->orientation_z_);
+
+    const int result = pcl::io::savePLYFile(
+        this->file_path_, *input_cloud, origin, orientation, this->binary_mode_,
+        this->use_camera_);
+
+    if (result < 0) {
+      YASMIN_LOG_WARN("Failed to write PLY file '%s'",
+                      this->file_path_.c_str());
+      return "aborted";
+    }
+
+    return "succeeded";
+  } catch (const std::exception &e) {
+    YASMIN_LOG_ERROR("Failed to save PLY file: %s", e.what());
+    return "aborted";
+  }
+}
+
+} // namespace yasmin_pcl::io
+
+PLUGINLIB_EXPORT_CLASS(yasmin_pcl::io::SavePlyState, yasmin::State)

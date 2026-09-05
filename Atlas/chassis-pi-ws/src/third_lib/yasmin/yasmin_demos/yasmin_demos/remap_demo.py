@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+
+# Copyright (C) 2025 Miguel Ángel González Santamarta
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import rclpy
+from yasmin_ros.basic_outcomes import SUCCEED
+
+import yasmin
+from yasmin import Blackboard, State, StateMachine
+from yasmin_demos.bar_state import BarState
+from yasmin_ros import set_ros_loggers
+from yasmin_ros.yasmin_node import YasminNode
+from yasmin_viewer import YasminViewerPub
+
+
+class Foo(State):
+    """
+    Represents the Foo state in the state machine.
+    """
+
+    def __init__(self):
+        """
+        Initializes the FooState instance, setting up the outcomes.
+
+        Outcomes:
+            SUCCEED: Indicates the state should continue to the next state.
+        """
+        super().__init__(outcomes=[SUCCEED])
+        self.set_description(
+            "Reads input data from the blackboard, logs it, and writes it back as output."
+        )
+        self.add_input_key(
+            "foo_data",
+            "Input data read by the Foo state.",
+        )
+        self.add_output_key(
+            "foo_out_data",
+            "Output data written by the Foo state.",
+        )
+
+    def execute(self, blackboard: Blackboard):
+        """
+        Executes the logic for the Foo state.
+
+        Args:
+            blackboard (Blackboard): The shared data structure for states.
+
+        Returns:
+            str: The outcome of the execution, which can be SUCCEED.
+
+        Raises:
+            Exception: May raise exceptions related to state execution.
+        """
+        data = blackboard["foo_data"]
+        yasmin.YASMIN_LOG_INFO(f"{data}")
+        blackboard["foo_out_data"] = data
+        return SUCCEED
+
+
+def main() -> None:
+    # Initialize ROS 2
+    rclpy.init()
+
+    # Set ROS 2 loggers
+    set_ros_loggers()
+    yasmin.YASMIN_LOG_INFO("yasmin_remapping_demo")
+
+    # Create a blackboard with initial data
+    blackboard = Blackboard()
+    blackboard["msg1"] = "test1"
+    blackboard["msg2"] = "test2"
+
+    # Create a finite state machine (FSM)
+    sm = StateMachine(outcomes=[SUCCEED], handle_sigint=True)
+    sm.set_description(
+        "Demonstrates blackboard remapping by forwarding values through multiple states."
+    )
+    sm.add_input_key(
+        "msg1",
+        "Initial input value remapped to the first Foo state.",
+    )
+    sm.add_input_key(
+        "msg2",
+        "Initial input value remapped to the second Foo state.",
+    )
+    sm.add_output_key(
+        "foo_out_data",
+        "Output data written by Foo and forwarded to Bar through remapping.",
+    )
+
+    # Add states to the FSM
+    sm.add_state(
+        "STATE1",
+        Foo(),
+        transitions={SUCCEED: "STATE2"},
+        remappings={"foo_data": "msg1"},
+    )
+    sm.add_state(
+        "STATE2",
+        Foo(),
+        transitions={SUCCEED: "STATE3"},
+        remappings={"foo_data": "msg2"},
+    )
+    sm.add_state(
+        "STATE3",
+        BarState(),
+        transitions={"outcome3": SUCCEED},
+        remappings={"foo_str": "foo_out_data"},
+    )
+
+    # Publish FSM information for visualization
+    pub = YasminViewerPub(sm, "YASMIN_REMAPPING_DEMO")
+
+    # Execute the FSM
+    try:
+        outcome = sm(blackboard)
+        yasmin.YASMIN_LOG_INFO(outcome)
+    except Exception as e:
+        yasmin.YASMIN_LOG_WARN(e)
+    finally:
+        pub.shutdown()
+
+    # Shutdown ROS 2 if it's running
+    YasminNode.destroy_instance()
+    if rclpy.ok():
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

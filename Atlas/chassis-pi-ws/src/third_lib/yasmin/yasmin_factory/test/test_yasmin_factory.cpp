@@ -1,0 +1,615 @@
+// Copyright (C) 2025 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <gtest/gtest.h>
+
+#include <cstdio>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <string>
+
+#include "yasmin/blackboard.hpp"
+#include "yasmin/state.hpp"
+#include "yasmin/state_machine.hpp"
+#include "yasmin_factory/yasmin_factory.hpp"
+
+using namespace yasmin_factory;
+
+class TestYasminFactory : public ::testing::Test {
+protected:
+  std::unique_ptr<YasminFactory> factory;
+  std::string test_dir;
+
+  void SetUp() override {
+    factory = std::make_unique<YasminFactory>();
+    // Get the current test directory
+    test_dir = __FILE__;
+    test_dir = test_dir.substr(0, test_dir.find_last_of("/\\"));
+  }
+
+  void TearDown() override {
+    if (factory) {
+      factory->cleanup();
+    }
+  }
+
+  // Helper function to create a temporary XML file
+  std::string createTempXMLFile(const std::string &content) {
+    char temp_path[] = "/tmp/yasmin_factory_test_XXXXXX";
+    int fd = mkstemp(temp_path);
+    if (fd == -1) {
+      throw std::runtime_error("Failed to create temp file");
+    }
+
+    close(fd);
+    std::string temp_file(temp_path);
+    std::ofstream ofs(temp_file);
+    ofs << content;
+    ofs.close();
+
+    if (ofs.fail()) {
+      std::remove(temp_file.c_str());
+      throw std::runtime_error("Failed to write to temp file");
+    }
+
+    return temp_file;
+  }
+
+  // Helper function to remove temporary file
+  void removeTempFile(const std::string &filename) {
+    std::remove(filename.c_str());
+  }
+};
+
+TEST_F(TestYasminFactory, TestCreateCppState) {
+  // Create a simple C++ state using XML
+  std::string xml_content = R"(
+    <State name="TestState" type="cpp" class="yasmin_factory/TestSimpleState"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  ASSERT_NE(state_elem, nullptr);
+
+  try {
+    auto state = factory->create_state(state_elem);
+
+    ASSERT_NE(state, nullptr);
+    auto outcomes = state->get_outcomes();
+    EXPECT_EQ(outcomes.size(), 2);
+    EXPECT_NE(outcomes.find("outcome1"), outcomes.end());
+    EXPECT_NE(outcomes.find("outcome2"), outcomes.end());
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestCreatePythonState) {
+  // Create a simple Python state using XML
+  std::string xml_content = R"(
+    <State name="TestState" type="py" module="test.test_simple_state" class="TestSimpleState"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  ASSERT_NE(state_elem, nullptr);
+
+  try {
+    auto state = factory->create_state(state_elem);
+
+    ASSERT_NE(state, nullptr);
+    auto outcomes = state->get_outcomes();
+    EXPECT_EQ(outcomes.size(), 2);
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "Python state creation failed: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestPythonStateParametersSurviveCppFactoryWrapping) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end">
+      <Param name="root_sleep_ms" description="Sleep delay" default_type="int" default_value="25"/>
+      <State name="State1" type="py" module="test.test_simple_state" class="TestParameterizedState">
+        <ParamRemap old="sleep_ms" new="root_sleep_ms"/>
+        <Transition from="done" to="end"/>
+      </State>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  auto sm = factory->create_sm(root);
+  ASSERT_NE(sm, nullptr);
+
+  const auto &states = sm->get_states();
+  auto state_it = states.find("State1");
+  ASSERT_NE(state_it, states.end());
+  ASSERT_TRUE(state_it->second->is_parameter_declared("sleep_ms"));
+
+  sm->configure();
+  EXPECT_EQ(state_it->second->get_parameter<int>("sleep_ms"), 25);
+
+  auto blackboard = yasmin::Blackboard::make_shared();
+  EXPECT_EQ((*sm)(blackboard), "end");
+  EXPECT_EQ(blackboard->get<int>("configured_sleep_ms"), 25);
+}
+
+TEST_F(TestYasminFactory, TestCreateStateInvalidType) {
+  std::string xml_content = R"(
+    <State name="InvalidState" type="invalid" class="SomeClass"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  ASSERT_NE(state_elem, nullptr);
+
+  EXPECT_THROW(
+      { auto state = factory->create_state(state_elem); }, std::runtime_error);
+}
+
+TEST_F(TestYasminFactory, TestCreateStateFromFileCppPy) {
+  std::string xml_file = test_dir + "/test_simple_sm_1.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+
+    ASSERT_NE(sm, nullptr);
+    auto outcomes = sm->get_outcomes();
+    EXPECT_NE(outcomes.find("end"), outcomes.end());
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestCreateStateFromFilePyCpp) {
+  std::string xml_file = test_dir + "/test_simple_sm_2.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+
+    ASSERT_NE(sm, nullptr);
+    auto outcomes = sm->get_outcomes();
+    EXPECT_NE(outcomes.find("end"), outcomes.end());
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestCreateStateFromInvalidFile) {
+  std::string xml_file = "/non/existent/file.xml";
+
+  EXPECT_THROW(
+      { auto sm = factory->create_sm_from_file(xml_file); },
+      std::runtime_error);
+}
+
+TEST_F(TestYasminFactory, TestCreateStateFromInvalidXML) {
+  std::string temp_file = createTempXMLFile("This is not valid XML");
+
+  EXPECT_THROW(
+      { auto sm = factory->create_sm_from_file(temp_file); },
+      std::runtime_error);
+
+  removeTempFile(temp_file);
+}
+
+TEST_F(TestYasminFactory, TestCreateStateFromInvalidRootElement) {
+  std::string xml_content = R"(<?xml version="1.0"?>
+    <InvalidRoot/>
+  )";
+
+  std::string temp_file = createTempXMLFile(xml_content);
+
+  EXPECT_THROW(
+      { auto sm = factory->create_sm_from_file(temp_file); },
+      std::runtime_error);
+
+  removeTempFile(temp_file);
+}
+
+TEST_F(TestYasminFactory, TestCreateSimpleStateMachine) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end">
+      <State name="State1" type="cpp" class="yasmin_factory/TestSimpleState">
+        <Transition from="outcome1" to="State1"/>
+        <Transition from="outcome2" to="end"/>
+      </State>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  try {
+    auto sm = factory->create_sm(root);
+
+    ASSERT_NE(sm, nullptr);
+    auto outcomes = sm->get_outcomes();
+    EXPECT_NE(outcomes.find("end"), outcomes.end());
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestStateExecution) {
+  std::string xml_content = R"(
+    <State name="TestState" type="cpp" class="yasmin_factory/TestSimpleState"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  ASSERT_NE(state_elem, nullptr);
+
+  try {
+    auto state = factory->create_state(state_elem);
+    auto blackboard = yasmin::Blackboard::make_shared();
+
+    // Execute state multiple times
+    std::string outcome1 = state->execute(blackboard);
+    EXPECT_EQ(outcome1, "outcome1");
+    EXPECT_EQ(blackboard->get<int>("counter"), 1);
+
+    std::string outcome2 = state->execute(blackboard);
+    EXPECT_EQ(outcome2, "outcome1");
+    EXPECT_EQ(blackboard->get<int>("counter"), 2);
+
+    std::string outcome3 = state->execute(blackboard);
+    EXPECT_EQ(outcome3, "outcome2");
+    EXPECT_EQ(blackboard->get<int>("counter"), 3);
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestNestedStateMachine) {
+  std::string xml_file = test_dir + "/test_nested_sm.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+
+    ASSERT_NE(sm, nullptr);
+    auto outcomes = sm->get_outcomes();
+    EXPECT_NE(outcomes.find("final_outcome"), outcomes.end());
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestFactoryCleanup) {
+  std::string xml_content = R"(
+    <State name="TestState" type="cpp" class="yasmin_factory/TestSimpleState"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  try {
+    auto state = factory->create_state(state_elem);
+    ASSERT_NE(state, nullptr);
+
+    // Destroy state before cleanup to avoid use-after-free of class loader
+    state.reset();
+
+    // Cleanup should not raise errors
+    factory->cleanup();
+
+    // Should still be able to create new factory
+    auto new_factory = std::make_unique<YasminFactory>();
+    auto new_state = new_factory->create_state(state_elem);
+    ASSERT_NE(new_state, nullptr);
+
+    // Destroy state before cleanup
+    new_state.reset();
+    new_factory->cleanup();
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestMissingRequiredAttribute) {
+  std::string xml_content = R"(
+    <State name="NoClass" type="cpp"/>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *state_elem = doc.FirstChildElement("State");
+
+  ASSERT_NE(state_elem, nullptr);
+
+  EXPECT_THROW(
+      { auto state = factory->create_state(state_elem); }, std::runtime_error);
+}
+
+TEST_F(TestYasminFactory, TestRemapping) {
+  std::string xml_file = test_dir + "/test_remapping.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+    ASSERT_NE(sm, nullptr);
+
+    // Set up initial input
+    auto blackboard = yasmin::Blackboard::make_shared();
+    blackboard->set<std::string>("initial_data", "start");
+
+    std::string outcome = (*sm)(blackboard);
+
+    // Check the chain of processing
+    EXPECT_EQ(outcome, "end");
+    EXPECT_TRUE(blackboard->contains("final_data"));
+    EXPECT_EQ(blackboard->get<std::string>("final_data"), "processed_start");
+    EXPECT_TRUE(blackboard->contains("final_data_2"));
+    EXPECT_EQ(blackboard->get<std::string>("final_data_2"),
+              "processed_processed_start");
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestFilePathMechanism) {
+  std::string xml_file = test_dir + "/test_file_path_sm.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+
+    ASSERT_NE(sm, nullptr);
+
+    // Verify the state machine name is set
+    EXPECT_EQ(sm->get_name(), "MainStateMachine");
+
+    // Verify the outcomes include the final outcome
+    auto outcomes = sm->get_outcomes();
+    EXPECT_NE(outcomes.find("final_end"), outcomes.end());
+
+    // Execute the state machine
+    auto blackboard = yasmin::Blackboard::make_shared();
+    std::string outcome = (*sm)(blackboard);
+
+    // The state machine should execute through FirstState -> IncludedSM ->
+    // final_end or directly to final_end depending on FirstState's execution
+    EXPECT_EQ(outcome, "final_end");
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestStateAndStateMachineParametersFromXml) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end">
+      <Param name="root_topic" description="Root topic" default_type="str" default_value="/root"/>
+      <State name="State1" type="cpp" class="yasmin_factory/TestSimpleState">
+        <Param name="topic" description="Leaf topic" default_type="str" default_value="/leaf"/>
+        <ParamRemap old="topic" new="root_topic"/>
+        <Transition from="outcome1" to="State1"/>
+        <Transition from="outcome2" to="end"/>
+      </State>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  try {
+    auto sm = factory->create_sm(root);
+
+    ASSERT_NE(sm, nullptr);
+    EXPECT_TRUE(sm->has_parameter("root_topic"));
+    EXPECT_EQ(sm->get_parameter<std::string>("root_topic"), "/root");
+
+    const auto &mappings = sm->get_parameter_mappings();
+    ASSERT_TRUE(mappings.find("State1") != mappings.end());
+    ASSERT_TRUE(mappings.at("State1").find("topic") !=
+                mappings.at("State1").end());
+    EXPECT_EQ(mappings.at("State1").at("topic"), "root_topic");
+
+    auto child = sm->get_states().at("State1");
+    EXPECT_TRUE(child->has_parameter("topic"));
+    EXPECT_EQ(child->get_parameter<std::string>("topic"), "/leaf");
+
+    sm->configure();
+    EXPECT_EQ(child->get_parameter<std::string>("topic"), "/root");
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestSmDescriptionFromXml) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end" description="Test SM description">
+      <State name="State1" type="cpp" class="yasmin_factory/TestSimpleState">
+        <Transition from="outcome1" to="State1"/>
+        <Transition from="outcome2" to="end"/>
+      </State>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  try {
+    auto sm = factory->create_sm(root);
+
+    ASSERT_NE(sm, nullptr);
+    EXPECT_EQ(sm->get_description(), "Test SM description");
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestSmKeysFromXml) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end">
+      <Key name="param_int" type="in" default_value="42" default_type="int" description="An integer"/>
+      <Key name="param_str" type="in" default_value="hello" default_type="str" description="A string"/>
+      <Key name="param_float" type="in" default_value="3.14" default_type="float"/>
+      <Key name="param_bool" type="in" default_value="true" default_type="bool"/>
+      <Key name="result" type="out" description="Output value"/>
+      <Key name="shared_key" type="in/out" default_value="5" default_type="int" description="Shared"/>
+      <State name="State1" type="cpp" class="yasmin_factory/TestSimpleState">
+        <Transition from="outcome1" to="State1"/>
+        <Transition from="outcome2" to="end"/>
+      </State>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  try {
+    auto sm = factory->create_sm(root);
+
+    ASSERT_NE(sm, nullptr);
+    auto input_keys = sm->get_input_keys();
+    auto output_keys = sm->get_output_keys();
+    EXPECT_EQ(input_keys.size(), 5);
+    EXPECT_EQ(output_keys.size(), 2);
+
+    bool found_int = false;
+    bool found_result = false;
+    for (const auto &key : input_keys) {
+      if (key.name == "param_int") {
+        found_int = true;
+        EXPECT_TRUE(key.has_default);
+        EXPECT_EQ(key.get_default_value<int>(), 42);
+        EXPECT_EQ(key.description, "An integer");
+      }
+    }
+    for (const auto &key : output_keys) {
+      if (key.name == "result") {
+        found_result = true;
+        EXPECT_EQ(key.description, "Output value");
+      }
+    }
+    EXPECT_TRUE(found_int);
+    EXPECT_TRUE(found_result);
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestNestedSmDescriptionAndGlobalKeys) {
+  std::string xml_content = R"(
+    <StateMachine outcomes="end" description="Root description">
+      <Key name="root_key" type="in" default_value="root_val" default_type="str" description="Root key"/>
+      <StateMachine name="Inner" outcomes="inner_done" description="Inner description">
+        <Key name="inner_key" type="in" default_value="10" default_type="int" description="Inner key"/>
+        <State name="S1" type="cpp" class="yasmin_factory/TestSimpleState">
+          <Transition from="outcome1" to="S1"/>
+          <Transition from="outcome2" to="inner_done"/>
+        </State>
+        <Transition from="inner_done" to="end"/>
+      </StateMachine>
+    </StateMachine>
+  )";
+
+  tinyxml2::XMLDocument doc;
+  doc.Parse(xml_content.c_str());
+  tinyxml2::XMLElement *root = doc.FirstChildElement("StateMachine");
+
+  ASSERT_NE(root, nullptr);
+
+  try {
+    auto sm = factory->create_sm(root);
+    auto inner_sm = factory->create_sm(root->FirstChildElement("StateMachine"));
+
+    ASSERT_NE(sm, nullptr);
+    ASSERT_NE(inner_sm, nullptr);
+    EXPECT_EQ(sm->get_description(), "Root description");
+    EXPECT_EQ(inner_sm->get_description(), "Inner description");
+
+    auto root_input_keys = sm->get_input_keys();
+    auto root_output_keys = sm->get_output_keys();
+    auto inner_input_keys = inner_sm->get_input_keys();
+    auto inner_output_keys = inner_sm->get_output_keys();
+
+    ASSERT_EQ(root_input_keys.size(), 1);
+    EXPECT_EQ(root_output_keys.size(), 0);
+    ASSERT_EQ(inner_input_keys.size(), 1);
+    EXPECT_EQ(inner_output_keys.size(), 0);
+
+    EXPECT_EQ(root_input_keys[0].name, "root_key");
+    EXPECT_EQ(inner_input_keys[0].name, "inner_key");
+    EXPECT_TRUE(inner_input_keys[0].has_default);
+    EXPECT_EQ(inner_input_keys[0].get_default_value<int>(), 10);
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "C++ plugin not available: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestFsmMetadataFromFile) {
+  std::string xml_file = test_dir + "/test_fsm_metadata.xml";
+
+  try {
+    auto sm = factory->create_sm_from_file(xml_file);
+
+    ASSERT_NE(sm, nullptr);
+    EXPECT_EQ(sm->get_name(), "TestFsmMetadata");
+    EXPECT_EQ(sm->get_description(), "Root SM description");
+    EXPECT_EQ(sm->get_outcome_description("end"), "Final outcome");
+
+    auto root_input_keys = sm->get_input_keys();
+    auto root_output_keys = sm->get_output_keys();
+    EXPECT_EQ(root_input_keys.size(), 4);
+    EXPECT_EQ(root_output_keys.size(), 2);
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+TEST_F(TestYasminFactory, TestCreateOrthogonalState) {
+  std::string xml_path = test_dir + "/test_orthogonal_sm.xml";
+  try {
+    auto sm = factory->create_sm_from_file(xml_path);
+    ASSERT_NE(sm, nullptr);
+    EXPECT_TRUE(sm->get_outcomes().find("done") != sm->get_outcomes().end());
+    EXPECT_TRUE(sm->get_outcomes().find("fail") != sm->get_outcomes().end());
+
+    auto bb = yasmin::Blackboard::make_shared();
+    std::string outcome = (*sm)(bb);
+    EXPECT_EQ(outcome, "done");
+  } catch (const std::exception &e) {
+    GTEST_SKIP() << "XML file not available or plugin missing: " << e.what();
+  }
+}
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

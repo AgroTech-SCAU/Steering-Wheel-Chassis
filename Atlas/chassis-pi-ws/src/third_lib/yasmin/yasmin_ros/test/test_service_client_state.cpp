@@ -1,0 +1,204 @@
+// Copyright (C) 2025 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <memory>
+#include <thread>
+
+#include <example_interfaces/srv/add_two_ints.hpp>
+
+#include "yasmin/types.hpp"
+#include "yasmin_ros/basic_outcomes.hpp"
+#include "yasmin_ros/ros_clients_cache.hpp"
+#include "yasmin_ros/ros_logs.hpp"
+#include "yasmin_ros/service_state.hpp"
+#include "yasmin_ros/yasmin_node.hpp"
+
+using namespace yasmin_ros;
+using namespace yasmin_ros::basic_outcomes;
+using namespace std::chrono_literals;
+
+class AuxNode : public rclcpp::Node {
+public:
+  using AddTwoInts = example_interfaces::srv::AddTwoInts;
+
+  AuxNode() : Node("test_node") {
+    // Service server
+    this->service_server_ = this->create_service<AddTwoInts>(
+        "test", std::bind(&AuxNode::handle_service, this, std::placeholders::_1,
+                          std::placeholders::_2));
+  }
+
+private:
+  rclcpp::Service<AddTwoInts>::SharedPtr service_server_;
+
+  void handle_service(const AddTwoInts::Request::SharedPtr request,
+                      AddTwoInts::Response::SharedPtr response) {
+    std::this_thread::sleep_for(5s);
+    response->sum = request->a + request->b;
+  }
+};
+
+class TestServiceClientState : public ::testing::Test {
+protected:
+  static std::shared_ptr<AuxNode> aux_node;
+  static std::shared_ptr<rclcpp::executors::MultiThreadedExecutor> executor;
+  static std::thread spin_thread;
+
+  static void SetUpTestCase() {
+    rclcpp::init(0, nullptr);
+    aux_node = std::make_shared<AuxNode>();
+    executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+    executor->add_node(aux_node);
+    spin_thread = std::thread([&]() { executor->spin(); });
+  }
+
+  static void TearDownTestCase() {
+    executor->cancel();
+    if (spin_thread.joinable()) {
+      spin_thread.join();
+    }
+    aux_node.reset();
+    executor.reset();
+    yasmin_ros::ROSClientsCache::clear_all();
+    yasmin_ros::YasminNode::destroy_instance();
+    rclcpp::shutdown();
+  }
+};
+
+std::shared_ptr<AuxNode> TestServiceClientState::aux_node = nullptr;
+std::shared_ptr<rclcpp::executors::MultiThreadedExecutor>
+    TestServiceClientState::executor = nullptr;
+std::thread TestServiceClientState::spin_thread;
+
+TEST_F(TestServiceClientState, TestServiceClient) {
+  auto blackboard = yasmin::Blackboard::make_shared();
+
+  auto state =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test",
+          [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          },
+          -1, -1, 3); // wait_timeout, response_timeout, maximum_retry
+
+  EXPECT_EQ((*state)(blackboard), std::string(SUCCEED));
+}
+
+TEST_F(TestServiceClientState, TestServiceClientCache) {
+  ROSClientsCache::clear_all();
+  EXPECT_EQ(ROSClientsCache::get_service_clients_count(), 0);
+
+  auto state1 =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test", [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          });
+  EXPECT_EQ(ROSClientsCache::get_service_clients_count(), 1);
+
+  auto state2 =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test", [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          });
+  EXPECT_EQ(ROSClientsCache::get_service_clients_count(), 1);
+
+  auto state3 =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test2", [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          });
+  EXPECT_EQ(ROSClientsCache::get_service_clients_count(), 2);
+}
+
+TEST_F(TestServiceClientState, TestServiceClientResponseHandler) {
+  auto blackboard = yasmin::Blackboard::make_shared();
+
+  auto state = std::make_shared<
+      ServiceState<example_interfaces::srv::AddTwoInts>>(
+      "test",
+      [](yasmin::Blackboard::SharedPtr blackboard) {
+        auto request =
+            std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+        request->a = 2;
+        request->b = 3;
+        return request;
+      },
+      std::set<std::string>{"new_outcome"},
+      [](yasmin::Blackboard::SharedPtr blackboard,
+         example_interfaces::srv::AddTwoInts::Response::SharedPtr response) {
+        return "new_outcome";
+      });
+
+  EXPECT_EQ((*state)(blackboard), "new_outcome");
+}
+
+TEST_F(TestServiceClientState, TestServiceClientRetryWaitTimeout) {
+  auto blackboard = yasmin::Blackboard::make_shared();
+
+  auto state =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test_retry",
+          [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          },
+          1, -1, 3); // wait_timeout=1, response_timeout=-1, maximum_retry=3
+
+  EXPECT_EQ((*state)(blackboard), std::string(TIMEOUT));
+}
+
+TEST_F(TestServiceClientState, TestServiceClientRetryResponseTimeout) {
+  auto blackboard = yasmin::Blackboard::make_shared();
+
+  auto state =
+      std::make_shared<ServiceState<example_interfaces::srv::AddTwoInts>>(
+          "test",
+          [](yasmin::Blackboard::SharedPtr blackboard) {
+            auto request = std::make_shared<
+                example_interfaces::srv::AddTwoInts::Request>();
+            request->a = 2;
+            request->b = 3;
+            return request;
+          },
+          -1, 1, 3); // wait_timeout=-1, response_timeout=1, maximum_retry=3
+
+  EXPECT_EQ((*state)(blackboard), std::string(TIMEOUT));
+}
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

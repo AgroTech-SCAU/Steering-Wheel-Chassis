@@ -1,0 +1,147 @@
+// Copyright (C) 2023 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <memory>
+#include <string>
+
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "yasmin/logs.hpp"
+#include "yasmin/state_machine.hpp"
+#include "yasmin_ros/basic_outcomes.hpp"
+#include "yasmin_ros/monitor_state.hpp"
+#include "yasmin_ros/ros_logs.hpp"
+#include "yasmin_ros/yasmin_node.hpp"
+#include "yasmin_viewer/yasmin_viewer_pub.hpp"
+
+using std::placeholders::_1;
+using std::placeholders::_2;
+
+/**
+ * @class PrintOdometryState
+ * @brief A state that monitors odometry data and transitions based on a
+ * specified count.
+ *
+ * This class inherits from yasmin_ros::MonitorState and listens to the "odom"
+ * topic for nav_msgs::msg::Odometry messages. The state transitions once a
+ * specified number of messages has been received and processed.
+ */
+class PrintOdometryState
+    : public yasmin_ros::MonitorState<nav_msgs::msg::Odometry> {
+
+public:
+  /// The number of times the state will process messages
+  int times;
+
+  /**
+   * @brief Constructor for the PrintOdometryState class.
+   */
+  PrintOdometryState()
+      : yasmin_ros::MonitorState<nav_msgs::msg::Odometry>(
+            "odom",                   // topic name
+            {"outcome1", "outcome2"}, // possible outcomes
+            std::bind(&PrintOdometryState::monitor_handler, this, _1,
+                      _2),           // monitor handler callback
+            rclcpp::SensorDataQoS(), // QoS for the topic subscription
+            10,                      // queue size for the callback
+            10                       // timeout for receiving messages
+        ) {
+    this->times = 5;
+    this->set_description("Monitors odometry messages from the 'odom' topic "
+                          "and logs the received positions.");
+    this->add_input_key(
+        "odom", "Odometry message received from the monitored ROS topic.");
+  };
+
+  /**
+   * @brief Handler for processing odometry data.
+   *
+   * This function logs the x, y, and z positions from the odometry message.
+   * After processing, it decreases the `times` counter. When the counter
+   * reaches zero, the state transitions to "outcome2"; otherwise, it remains in
+   * "outcome1".
+   *
+   * @param blackboard Shared pointer to the blackboard (unused in this
+   * implementation).
+   * @param msg Shared pointer to the received odometry message.
+   * @return A string representing the outcome: "outcome1" to stay in the state,
+   *         or "outcome2" to transition out of the state.
+   */
+  std::string monitor_handler(yasmin::Blackboard::SharedPtr blackboard,
+                              nav_msgs::msg::Odometry::SharedPtr msg) {
+
+    (void)blackboard; // blackboard is not used in this implementation
+
+    YASMIN_LOG_INFO("x: %f, y: %f, z: %f", msg->pose.pose.position.x,
+                    msg->pose.pose.position.y, msg->pose.pose.position.z);
+
+    this->times--;
+
+    // Transition based on remaining times
+    if (this->times <= 0) {
+      return "outcome2";
+    }
+
+    return "outcome1";
+  };
+};
+
+int main(int argc, char *argv[]) {
+  // Initialize ROS 2
+  rclcpp::init(argc, argv);
+
+  // Set up ROS 2 loggers
+  yasmin_ros::set_ros_loggers();
+  YASMIN_LOG_INFO("yasmin_monitor_demo");
+
+  // Create a state machine with a final outcome
+  auto sm = yasmin::StateMachine::make_shared(
+      std::initializer_list<std::string>{"outcome4"}, true);
+  sm->set_description(
+      "Continuously monitors the 'odom' topic and logs received odometry "
+      "messages until a fixed number of messages has been processed.");
+  sm->add_input_key("odom",
+                    "Odometry messages received from the monitored ROS topic.");
+
+  // Add states to the state machine
+  sm->add_state(
+      "PRINTING_ODOM", std::make_shared<PrintOdometryState>(),
+      {
+          {"outcome1",
+           "PRINTING_ODOM"},        // Transition back to itself on outcome1
+          {"outcome2", "outcome4"}, // Transition to outcome4 on outcome2
+          {yasmin_ros::basic_outcomes::TIMEOUT,
+           "outcome4"}, // Timeout transition
+          {yasmin_ros::basic_outcomes::CANCEL, "outcome4"}, // Cancel transition
+      });
+
+  {
+    // Publisher for visualizing the state machine's status
+    yasmin_viewer::YasminViewerPub yasmin_pub(sm, "YASMIN_MONITOR_DEMO");
+
+    // Execute the state machine
+    try {
+      std::string outcome = (*sm.get())();
+      YASMIN_LOG_INFO(outcome.c_str());
+    } catch (const std::exception &e) {
+      YASMIN_LOG_WARN(e.what());
+    }
+  }
+
+  yasmin_ros::YasminNode::destroy_instance();
+  rclcpp::shutdown();
+
+  return 0;
+}

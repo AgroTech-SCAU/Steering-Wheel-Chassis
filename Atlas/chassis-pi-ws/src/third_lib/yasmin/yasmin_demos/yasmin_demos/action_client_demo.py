@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+
+# Copyright (C) 2023 Miguel Ángel González Santamarta
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import rclpy
+from example_interfaces.action import Fibonacci
+from yasmin_ros.basic_outcomes import ABORT, CANCEL, SUCCEED
+
+import yasmin
+from yasmin import Blackboard, CbState, StateMachine
+from yasmin_ros import ActionState, set_ros_loggers
+from yasmin_ros.yasmin_node import YasminNode
+from yasmin_viewer import YasminViewerPub
+
+
+class FibonacciState(ActionState):
+    """
+    Class representing the state of the Fibonacci action.
+
+    Inherits from ActionState and implements methods to handle the
+    Fibonacci action in a finite state machine.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initializes the FibonacciState.
+
+        Sets up the action type and the action name for the Fibonacci
+        action. Initializes goal, response handler, and feedback
+        processing callbacks.
+        """
+        super().__init__(
+            Fibonacci,  # action type
+            "/fibonacci",  # action name
+            self.create_goal_handler,  # callback to create the goal
+            set(),  # outcomes. Includes (SUCCEED, ABORT, CANCEL)
+            self.response_handler,  # callback to process the response
+            self.print_feedback,  # callback to process the feedback
+        )
+        self.set_description(
+            "Calls the ROS2 Fibonacci action server and computes the Fibonacci sequence up to the requested order."
+        )
+        self.add_input_key("n", "Order of the Fibonacci sequence to compute.", 10)
+        self.add_output_key(
+            "fibo_res",
+            "Computed Fibonacci sequence returned by the action server.",
+        )
+
+    def create_goal_handler(self, blackboard: Blackboard) -> Fibonacci.Goal:
+        """
+        Creates the goal for the Fibonacci action.
+
+        This method retrieves the input value from the blackboard and
+        populates the Fibonacci goal.
+
+        Args:
+            blackboard (Blackboard): The blackboard containing the state
+            information.
+
+        Returns:
+            Fibonacci.Goal: The populated goal object for the Fibonacci action.
+
+        Raises:
+            KeyError: If the expected key is not present in the blackboard.
+        """
+        goal = Fibonacci.Goal()
+        goal.order = blackboard["n"]  # Retrieve the input value 'n' from the blackboard
+        return goal
+
+    def response_handler(self, blackboard: Blackboard, response: Fibonacci.Result) -> str:
+        """
+        Handles the response from the Fibonacci action.
+
+        This method processes the result of the Fibonacci action and
+        stores it in the blackboard.
+
+        Args:
+            blackboard (Blackboard): The blackboard to store the result.
+            response (Fibonacci.Result): The result object from the Fibonacci action.
+
+        Returns:
+            str: Outcome of the operation, typically SUCCEED.
+
+        Raises:
+            None
+        """
+        blackboard["fibo_res"] = (
+            response.sequence
+        )  # Store the result sequence in the blackboard
+        return SUCCEED
+
+    def print_feedback(
+        self, blackboard: Blackboard, feedback: Fibonacci.Feedback
+    ) -> None:
+        """
+        Prints feedback from the Fibonacci action.
+
+        This method logs the partial sequence received during the action.
+
+        Args:
+            blackboard (Blackboard): The blackboard (not used in this method).
+            feedback (Fibonacci.Feedback): The feedback object from the Fibonacci action.
+
+        Returns:
+            None
+
+        Raises:
+            None
+        """
+        yasmin.YASMIN_LOG_INFO(f"Received feedback: {list(feedback.sequence)}")
+
+
+def print_result(blackboard: Blackboard) -> str:
+    """
+    Prints the result of the Fibonacci action.
+
+    This function logs the final result stored in the blackboard.
+
+    Args:
+        blackboard (Blackboard): The blackboard containing the result.
+
+    Returns:
+        str: Outcome of the operation, typically SUCCEED.
+
+    Raises:
+        None
+    """
+    yasmin.YASMIN_LOG_INFO(f"Result: {blackboard['fibo_res']}")
+    return SUCCEED
+
+
+def main() -> None:
+    # Initialize ROS 2
+    rclpy.init()
+
+    # Set up ROS 2 logs
+    set_ros_loggers()
+    yasmin.YASMIN_LOG_INFO("yasmin_action_client_demo")
+
+    # Create a finite state machine (FSM)
+    sm = StateMachine(outcomes=["outcome4"], handle_sigint=True)
+    sm.set_description(
+        "Calls a Fibonacci action server, stores the resulting sequence in the blackboard, and prints the result."
+    )
+    sm.add_input_key("n", "Order of the Fibonacci sequence to compute.", 10)
+    sm.add_output_key(
+        "fibo_res",
+        "Computed Fibonacci sequence returned by the action server.",
+    )
+
+    printing_result_state = CbState([SUCCEED], print_result)
+    printing_result_state.set_description(
+        "Reads the computed Fibonacci sequence from the blackboard and logs it."
+    )
+    printing_result_state.add_input_key(
+        "fibo_res",
+        "Computed Fibonacci sequence returned by the action server.",
+    )
+
+    # Add states to the FSM
+    sm.add_state(
+        "CALLING_FIBONACCI",
+        FibonacciState(),
+        transitions={
+            SUCCEED: "PRINTING_RESULT",
+            CANCEL: "outcome4",
+            ABORT: "outcome4",
+        },
+    )
+    sm.add_state(
+        "PRINTING_RESULT",
+        printing_result_state,
+        transitions={
+            SUCCEED: "outcome4",
+        },
+    )
+
+    # Publish FSM information for visualization
+    pub = YasminViewerPub(sm, "YASMIN_ACTION_CLIENT_DEMO")
+
+    # Create an initial blackboard with the input value
+    blackboard = Blackboard()
+    blackboard["n"] = 10  # Set the Fibonacci order to 10
+
+    # Execute the FSM
+    try:
+        outcome = sm(blackboard)
+        yasmin.YASMIN_LOG_INFO(outcome)
+    except Exception as e:
+        yasmin.YASMIN_LOG_WARN(e)
+    finally:
+        pub.shutdown()
+
+    # Shutdown ROS 2 if it's running
+    YasminNode.destroy_instance()
+    if rclpy.ok():
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

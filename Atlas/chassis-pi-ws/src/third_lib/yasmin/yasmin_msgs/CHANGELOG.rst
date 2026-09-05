@@ -1,0 +1,144 @@
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Changelog for package yasmin_msgs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+6.1.0 (2026-07-26)
+------------------
+* YASMIN Factory Action Server (`#124 <https://github.com/uleroboticsgroup/yasmin/issues/124>`_)
+  * add yasmin_factory_action_server
+  * formatter cpp
+  * formatter py
+  * use ros2 run in tests
+  * add reliable wrapper cleanup
+  * use unique action name to prevent a newly started client from discovering the previous stale server endpoint.
+  * use isolated ROS contexts, DDS domains, and context-bound executors for each test.
+  * foxy support
+  Foxy does not support domain_id keyword in rclpy.init
+  * trigger ci
+  * trigger ci
+  * Split and document the factory action server
+  * add action server to README
+  * formatter
+  * added an action server section to yasmin_factory.html
+  ---------
+  Co-authored-by: Maik Knof <knofm@hs-weingarten.de>
+* Contributors: Maik
+
+6.0.0 (2026-07-07)
+------------------
+* relicense to Apache 2.0 (`#122 <https://github.com/uleroboticsgroup/yasmin/issues/122>`_)
+* refactor: update minimum CMake version to 3.10
+* Contributors: Miguel Ángel González Santamarta
+
+5.1.0 (2026-05-01)
+------------------
+
+5.0.0 (2026-01-14)
+------------------
+
+4.2.3 (2026-01-06)
+------------------
+
+4.2.2 (2025-12-28)
+------------------
+
+4.2.1 (2025-12-19)
+------------------
+
+4.2.0 (2025-12-17)
+------------------
+* removing C++ from msgs package
+* Contributors: Miguel Ángel González Santamarta
+
+4.1.0 (2025-12-07)
+------------------
+
+4.0.2 (2025-12-01)
+------------------
+
+4.0.1 (2025-11-25)
+------------------
+
+4.0.0 (2025-11-24)
+------------------
+* Merge pull request `#70 <https://github.com/uleroboticsgroup/yasmin/issues/70>`_ from uleroboticsgroup/pybinding
+  [New Great Version] Pybinding + Plugins + Editor
+* fixing license name in package.xml files
+* Contributors: Miguel Ángel González Santamarta
+
+3.5.1 (2025-10-23)
+------------------
+
+3.5.0 (2025-10-12)
+------------------
+
+3.4.0 (2025-08-25)
+------------------
+
+3.3.0 (2025-06-28)
+------------------
+
+3.2.0 (2025-04-11)
+------------------
+
+3.1.0 (2025-02-05)
+------------------
+
+3.0.3 (2024-12-17)
+------------------
+
+3.0.2 (2024-12-16)
+------------------
+* fixing msgs package.xml
+* Contributors: Miguel Ángel González Santamarta
+
+3.0.1 (2024-12-01)
+------------------
+
+3.0.0 (2024-11-24)
+------------------
+* fixing CMakeLists format
+* comments for msgs
+* Contributors: Miguel Ángel González Santamarta
+
+2.4.2 (2024-10-03)
+------------------
+
+2.4.1 (2024-08-09 15:27)
+------------------------
+
+2.4.0 (2024-08-09 13:22)
+------------------------
+
+2.3.1 (2024-07-22)
+------------------
+* package version added
+* Contributors: Miguel Ángel González Santamarta
+
+2.3.0 (2024-07-13)
+------------------
+
+2.2.0 (2024-06-30)
+------------------
+
+2.1.1 (2024-06-08)
+------------------
+
+2.1.0 (2024-06-05)
+------------------
+
+2.0.2 (2024-05-05)
+------------------
+
+2.0.1 (2024-04-16 13:57:56 +0200)
+---------------------------------
+
+2.0.0 (2024-04-16 13:57:56 +0200)
+---------------------------------
+
+1.0.0 (2023-12-06)
+------------------
+* license added to files
+* interfaces to msgs
+* Contributors: Miguel Ángel González Santamarta

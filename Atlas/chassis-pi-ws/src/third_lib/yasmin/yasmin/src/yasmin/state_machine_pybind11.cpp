@@ -1,0 +1,187 @@
+// Copyright (C) 2025 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <pybind11/functional.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+
+#include "yasmin/blackboard_pywrapper.hpp"
+#include "yasmin/pybind11_utils.hpp"
+#include "yasmin/state_machine.hpp"
+#include "yasmin/types.hpp"
+
+namespace py = pybind11;
+
+// Declare that BlackboardPyWrapper is defined in another module
+PYBIND11_MAKE_OPAQUE(yasmin::BlackboardPyWrapper);
+
+PYBIND11_MODULE(state_machine, m) {
+  m.doc() = "Python bindings for yasmin::StateMachine";
+
+  // Export StateMachine class - inherits from State
+  py::class_<yasmin::StateMachine,
+             yasmin::State, // Inherit from State
+             yasmin::StateMachine::SharedPtr /* Shared pointer */>
+      sm_class(m, "StateMachine");
+
+  sm_class
+      .def(py::init<yasmin::Outcomes>(), py::arg("outcomes"),
+           "Construct a StateMachine with a set of outcomes")
+      .def(py::init([](const std::vector<std::string> &outcomes,
+                       bool handle_sigint) {
+             return new yasmin::StateMachine(
+                 yasmin::Outcomes(outcomes.begin(), outcomes.end()),
+                 handle_sigint);
+           }),
+           py::arg("outcomes"), py::arg("handle_sigint") = false,
+           "Construct a StateMachine with outcomes as a list and an optional "
+           "SIGINT handler")
+      .def(py::init<const std::string &, const yasmin::Outcomes &, bool>(),
+           py::arg("name"), py::arg("outcomes"),
+           py::arg("handle_sigint") = false,
+           "Construct a named StateMachine with a set of outcomes")
+      .def(py::init([](const std::string &name,
+                       const std::vector<std::string> &outcomes,
+                       bool handle_sigint) {
+             return new yasmin::StateMachine(
+                 name, std::set<std::string>(outcomes.begin(), outcomes.end()),
+                 handle_sigint);
+           }),
+           py::arg("name"), py::arg("outcomes"),
+           py::arg("handle_sigint") = false,
+           "Construct a named StateMachine with outcomes as a list and an "
+           "optional SIGINT handler")
+      // Add state method with keep_alive to manage object lifetime
+      .def(
+          "add_state",
+          [](yasmin::StateMachine &self, const std::string &name,
+             yasmin::State::SharedPtr state,
+             const yasmin::Transitions &transitions,
+             const yasmin::Remappings &remappings,
+             const yasmin::ParameterMappings &parameter_mappings) {
+            self.add_state(name, state, transitions, remappings,
+                           parameter_mappings);
+          },
+          "Add a state to the state machine", py::arg("name"), py::arg("state"),
+          py::arg("transitions") = yasmin::Transitions(),
+          py::arg("remappings") = yasmin::Remappings(),
+          py::arg("parameter_mappings") = yasmin::ParameterMappings(),
+          py::keep_alive<1, 3>()) // Keep state (arg 3) alive as long as self
+                                  // (arg 1) is alive
+      // Setters and getters for name and start state
+      .def("set_name", &yasmin::StateMachine::set_name,
+           "Set the name of the state machine", py::arg("name"))
+      .def("get_name", &yasmin::StateMachine::get_name,
+           "Get the name of the state machine")
+      .def("set_start_state", &yasmin::StateMachine::set_start_state,
+           "Set the initial state for the state machine", py::arg("state_name"))
+      .def("get_start_state", &yasmin::StateMachine::get_start_state,
+           "Get the name of the start state")
+      // Methods to get states, transitions, current state
+      .def(
+          "get_states",
+          [](yasmin::StateMachine &self) {
+            // Return states in the old Python format for compatibility
+            // with yasmin_viewer: {name: {"state": state, "transitions":
+            // {...}}}
+            py::dict result;
+            const auto &states = self.get_states();
+            const auto &transitions = self.get_transitions();
+
+            for (const auto &[name, state] : states) {
+              py::dict state_dict;
+              state_dict["state"] = state;
+
+              auto trans_it = transitions.find(name);
+              if (trans_it != transitions.end()) {
+                state_dict["transitions"] = trans_it->second;
+              } else {
+                state_dict["transitions"] = py::dict();
+              }
+
+              result[py::str(name)] = state_dict;
+            }
+
+            return result;
+          },
+          "Get all states with their transitions (Python compatibility format)")
+      .def("_get_states_cpp", &yasmin::StateMachine::get_states,
+           "Get all states in the state machine (C++ format)",
+           py::return_value_policy::reference_internal)
+      .def("get_transitions", &yasmin::StateMachine::get_transitions,
+           "Get all transitions in the state machine",
+           py::return_value_policy::reference_internal)
+      .def("get_current_state", &yasmin::StateMachine::get_current_state,
+           "Get the name of the current state being executed")
+      // Callback registration methods
+      .def(
+          "add_start_cb",
+          [](yasmin::StateMachine &self, py::function cb) {
+            // Wrap Python callback using utility function
+            auto wrapped_cb = yasmin::pybind11_utils::wrap_blackboard_callback<
+                yasmin::StateMachine::StartCallbackType>(cb);
+            self.add_start_cb(wrapped_cb);
+          },
+          "Add a callback to be called when the state machine starts",
+          py::arg("cb"))
+      .def(
+          "add_transition_cb",
+          [](yasmin::StateMachine &self, py::function cb) {
+            // Wrap Python callback using utility function
+            auto wrapped_cb = yasmin::pybind11_utils::wrap_blackboard_callback<
+                yasmin::StateMachine::TransitionCallbackType>(cb);
+            self.add_transition_cb(wrapped_cb);
+          },
+          "Add a callback to be called during state transitions", py::arg("cb"))
+      .def(
+          "add_end_cb",
+          [](yasmin::StateMachine &self, py::function cb) {
+            // Wrap Python callback using utility function
+            auto wrapped_cb = yasmin::pybind11_utils::wrap_blackboard_callback<
+                yasmin::StateMachine::EndCallbackType>(cb);
+            self.add_end_cb(wrapped_cb);
+          },
+          "Add a callback to be called when the state machine ends",
+          py::arg("cb"))
+
+      .def("set_parameter_mappings",
+           &yasmin::StateMachine::set_parameter_mappings,
+           "Set parameter mappings for a child state", py::arg("state_name"),
+           py::arg("parameter_mappings"))
+      .def("get_parameter_mappings",
+           &yasmin::StateMachine::get_parameter_mappings,
+           "Get parameter mappings for all child states",
+           py::return_value_policy::reference_internal)
+      .def("configure", &yasmin::StateMachine::configure,
+           "Configure the state machine and all child states")
+      // Validation and cancellation methods
+      .def("validate", &yasmin::StateMachine::validate,
+           "Validate the state machine configuration",
+           py::arg("strict_mode") = false)
+      .def("cancel_state", &yasmin::StateMachine::cancel_state,
+           "Cancel the current state execution")
+      .def("cancel_state_machine", &yasmin::StateMachine::cancel_state_machine,
+           "Cancel the complete state machine execution")
+      .def("set_sigint_handler", &yasmin::StateMachine::set_sigint_handler,
+           "Set whether the state machine should handle SIGINT for cancel",
+           py::arg("handle") = true)
+      // String representation
+      .def("to_string", &yasmin::StateMachine::to_string,
+           "Convert the state machine to a string representation")
+      .def("__str__", &yasmin::StateMachine::to_string);
+
+  // Add the __call__ operator using the utility function
+  yasmin::pybind11_utils::add_call_operator<decltype(sm_class),
+                                            yasmin::StateMachine>(sm_class);
+}

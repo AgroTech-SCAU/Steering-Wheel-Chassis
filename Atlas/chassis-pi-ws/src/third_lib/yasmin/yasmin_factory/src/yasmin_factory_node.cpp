@@ -1,0 +1,77 @@
+// Copyright (C) 2025 Miguel Ángel González Santamarta
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <memory>
+#include <string>
+
+#include <rclcpp/rclcpp.hpp>
+
+#include "yasmin/state_machine.hpp"
+#include "yasmin_factory/yasmin_factory.hpp"
+#include "yasmin_ros/ros_logs.hpp"
+#include "yasmin_ros/yasmin_node.hpp"
+#include "yasmin_viewer/yasmin_viewer_pub.hpp"
+
+int main(int argc, char *argv[]) {
+  // Initialize ROS 2
+  rclcpp::init(argc, argv);
+
+  // Set up ROS 2 loggers
+  yasmin_ros::set_ros_loggers();
+  YASMIN_LOG_INFO("yasmin_factory_node");
+
+  // Get the state machine file parameter
+  auto node = yasmin_ros::YasminNode::get_instance();
+  node->declare_parameter("state_machine_file", "");
+  std::string sm_file = node->get_parameter("state_machine_file")
+                            .get_parameter_value()
+                            .get<std::string>();
+
+  if (sm_file.empty()) {
+    throw std::runtime_error("state_machine_file parameter must be non-empty");
+  }
+
+  // Get if enable viewer parameter
+  node->declare_parameter("enable_viewer_pub", true);
+  bool enable_viewer_pub = node->get_parameter("enable_viewer_pub")
+                               .get_parameter_value()
+                               .get<bool>();
+
+  // Create the factory in a scope
+  yasmin_factory::YasminFactory factory;
+
+  // Create the state machine from the XML file
+  auto sm = factory.create_sm_from_file(sm_file);
+  sm->set_sigint_handler(true);
+
+  // Publisher for visualizing the state machine
+  std::unique_ptr<yasmin_viewer::YasminViewerPub> yasmin_pub_ptr;
+  if (enable_viewer_pub) {
+    yasmin_pub_ptr = std::make_unique<yasmin_viewer::YasminViewerPub>(sm);
+  }
+
+  // Execute the state machine
+  try {
+    std::string outcome = (*sm.get())();
+    YASMIN_LOG_INFO(outcome.c_str());
+  } catch (const std::exception &e) {
+    YASMIN_LOG_WARN("State machine execution failed: %s", e.what());
+  }
+
+  yasmin_ros::YasminNode::destroy_instance();
+
+  // Shutdown ROS 2
+  rclcpp::shutdown();
+  return 0;
+}

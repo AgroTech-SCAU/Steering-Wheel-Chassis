@@ -1,0 +1,345 @@
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Changelog for package yasmin_viewer
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+6.1.0 (2026-07-26)
+------------------
+* feat(viewer): improve web server stability and session management
+  Enhance the robustness of the embedded web server and the viewer node
+  by implementing better session tracking, improved error handling, and
+  more secure path resolution.
+  Key changes:
+  - server: transitioned to `beast::tcp_stream` with timeout support to
+  prevent hanging connections.
+  - server: implemented `sessions_mutex\_` and a `sessions\_` list to
+  track and safely manage active HTTP session threads.
+  - security: refined `resolve_file_path` to prevent path traversal
+  attacks by enforcing stricter prefix matching.
+  - node: added exception handling in `main.cpp` during node
+  initialization to prevent ungraceful crashes.
+  - pub: added configurable publication rate and proper timer
+  cancellation in the destructor.
+  - pub: improved FSM name resolution logic to correctly identify the
+  root state.
+  - docs: updated header documentation with Doxygen-style comments.
+* Contributors: Miguel Ángel González Santamarta
+
+6.0.0 (2026-07-07)
+------------------
+* fix: remove deprecated RCLCPP version checks for package share path retrieval
+* relicense to Apache 2.0 (`#122 <https://github.com/uleroboticsgroup/yasmin/issues/122>`_)
+* fix: update RCLCPP version check to support compatibility with earlier versions
+* feat: update package share path retrieval for compatibility with rclcpp versioning
+* fix: correct current_state value in YasminViewerPub to -1
+* refactor: update minimum CMake version to 3.10 across multiple CMakeLists.txt files
+* Enhance documentation and improve code clarity across multiple modules
+  - Added detailed comments and descriptions for constructors, methods, and parameters in various classes, including `Concurrence`, `StateMachine`, and filter states in `yasmin_pcl`.
+  - Improved logging initialization comments in `logs.cpp` for better understanding of log level settings.
+  - Updated `blackboard_pybind11.cpp` to clarify the registration of `BlackboardPyWrapper`.
+  - Enhanced the `yasmin_demos` states with additional private member documentation for clarity on their purpose.
+  - Improved the `yasmin_factory` class documentation, particularly around blackboard key and parameter mappings.
+  - Added utility functions in `test_utils.hpp` for creating point clouds and temporary file paths with clear descriptions.
+  - Enhanced the `ros_clients_cache` and `supported_interface_serialization` classes with detailed comments on cache management and serialization callbacks.
+  - Improved the `YasminNode` and `YasminViewerNode` classes with comments on copy prevention and connection handling.
+  - General code cleanup and formatting improvements for better readability and maintainability.
+* refactor: improve file path resolution and error handling in yasmin_viewer_node
+* Refactor and enhance yasmin packages
+  - Removed unnecessary destructors from PclToRosPointCloud2State and RosToPclPointCloud2State classes.
+  - Added cancellation checks in SavePcdState and SavePlyState execute methods.
+  - Improved ActionState to notify when action is done and handle cancellation more effectively.
+  - Updated basic_outcomes to use inline constexpr for string constants.
+  - Enhanced MonitorState and ServiceState to include cancellation checks and improved locking mechanisms.
+  - Refactored ROSClientsCache to use per-map locks for thread safety.
+  - Updated get_parameters_state to handle int64_t instead of int for parameter declaration.
+  - Improved YasminViewerNode to manage active HTTP connections and handle server shutdown more gracefully.
+  - Refactored yasmin_viewer_pub to use unordered_map for better performance and added checks for rclpy state before publishing.
+* refactor: refactor and optimize yasmin code
+  - Removed unnecessary code and improved the formatting of plugin headers in discovery_node.py.
+  - Simplified metadata loading in plugin_info.py by introducing a safe_get method to handle exceptions.
+  - Enhanced plugin manager to streamline package retrieval and signature validation.
+  - Cleaned up ROS interface serialization by removing unused includes.
+  - Updated action client state to utilize a retry mechanism for server connections.
+  - Improved service state handling with a retry mechanism for service calls.
+  - Consolidated node resolution logic into a utility function for better code reuse.
+  - Refactored viewer node to enhance readability and maintainability.
+  - Updated tests to reflect changes in expected warning log counts.
+  - Added new utility functions for retry logic and node resolution in ros_state_utils.py.
+* Feature/orthogonal regions (`#121 <https://github.com/uleroboticsgroup/yasmin/issues/121>`_)
+  * feat: Add JoinState and OrthogonalState for concurrent state management
+  - Introduced JoinState for synchronization between states.
+  - Added OrthogonalState to allow parallel execution of multiple regions.
+  - Implemented WorkerState for counting iterations with configurable parameters.
+  - Created orthogonal_demo and orthogonal_sync_demo to demonstrate new features.
+  - Updated CMakeLists.txt to include new demos and worker_state library.
+  - Added XML state machine definitions for orthogonal and synchronized execution.
+  - Enhanced yasmin_demos package to include new worker_state functionality.
+  * refactor: Encapsulate state machine publisher and execution in a block across multiple demo files
+  * feat: Implement OrthogonalState support with XML parsing and testing
+  * feat: Introduce OrthogonalState model and integrate into editor
+  - Added OrthogonalState model to represent orthogonal state regions in the editor.
+  - Updated selection bundle operations to support OrthogonalState in paste and remove functionalities.
+  - Enhanced XML conversion to include OrthogonalState serialization and deserialization.
+  - Modified validation logic to accommodate OrthogonalState alongside Concurrence.
+  - Updated UI action specifications and toolbar configurations to include actions for OrthogonalState.
+  - Refactored various components to ensure compatibility with the new OrthogonalState model.
+  * feat: Add OrthogonalState support with demo and documentation
+  * Add orthogonal regions tutorials and update navigation links
+  - Introduced new tutorials for Orthogonal Regions and Orthogonal Regions with Sync in Python.
+  - Updated navigation links in various demo pages to include links to the new orthogonal regions tutorials.
+  - Enhanced the documentation structure to facilitate easier access to the new content.
+  * refactor: Improve readability of add_container and default_outcome methods
+  * refactor: Update documentation for clarity and consistency across multiple headers
+  * refactor: Update parameter descriptions in MonitorState and PublisherState for clarity
+  * refactor: Improve documentation and parameter naming for clarity across multiple files
+  * refactor: Remove redundant execution time explanations from orthogonal region tutorials
+* Contributors: Miguel Ángel González Santamarta
+
+5.1.0 (2026-05-01)
+------------------
+
+5.0.0 (2026-01-14)
+------------------
+* refactor: update package share path retrieval for compatibility with rclcpp version checks
+* refactor: replace get_package_share_path with get_package_share_directory for compatibility
+* refactor: update includes to support conditional package share path retrieval
+* refactor: reorganize include directives and refine code structure across packages
+  Reorganize include statements by grouping system and third-party headers at the top with angle brackets, relocate project headers appropriately, and eliminate redundant or unused includes. Additionally, streamline source files by repositioning self-include statements, adjust comment formatting, correct minor typos, and remove superfluous whitespace or blank lines for improved readability and consistency without altering functionality.
+* C++ Viewer (`#82 <https://github.com/uleroboticsgroup/yasmin/issues/82>`_)
+  * replace python web backend with C++ static viewer server and Mermaid FSM frontend
+  - add C++ HTTP server for yasmin_viewer using Boost.Beast
+  - serve static frontend assets from package share directory
+  - keep Python YasminViewerPub support in mixed C++/Python package
+  - restore browser-based FSM visualization with Mermaid state diagrams
+  - add active-state highlighting and outcome node rendering
+  - support FSM selection, nested FSM hiding, and active-only filtering
+  - reduce redraw flicker by rendering only on data/view changes
+  - smooth diagram updates with offscreen render and fade swap
+  - remove Mermaid init pseudo-state artifacts after render
+  - update CMake and package.xml for mixed package installation
+  - replace old list-style fallback viewer with graph-style web UI
+  * replace Mermaid viewer with static Cytoscape-based FSM frontend
+  * Revert "replace Mermaid viewer with static Cytoscape-based FSM frontend"
+  This reverts commit bbf77da46ed5a0fd8c19c28d3bacddf585ec164a.
+  * cache mermaid diagrams and add persistent pan/zoom interaction
+  * vendor offline mermaid
+  * add fit/center/zoom controls and remove edge label backgrounds
+  * add FSM grid layout and improve centered viewport controls
+  * add ament_cmake_target_dependencies for ROS 2 Rolling
+  * replace ament_target_dependencies with direct target linking
+  * add comments to yasmin_viewer_node header
+  ---------
+  Co-authored-by: Maik Knof <knofm@hs-weingarten.de>
+* Contributors: Maik, Miguel Ángel González Santamarta
+
+4.2.3 (2026-01-06)
+------------------
+* Setting C++ standard to 17
+* Fixing maintainer name in viewer package
+* Contributors: Miguel Ángel González Santamarta
+
+4.2.2 (2025-12-28)
+------------------
+* minor fix in C++ header guards
+* Contributors: Miguel Ángel González Santamarta
+
+4.2.1 (2025-12-19)
+------------------
+* minor fix in C++ header guards
+* Contributors: Miguel Ángel González Santamarta
+
+4.2.0 (2025-12-17)
+------------------
+* Add new type aliases and macros to types.hpp and sync documentation examples with demo code
+  - Add YASMIN_UNIQUE_PTR_ALIAS and YASMIN_WEAK_PTR_ALIAS macros
+  - Add alias for Outcomes, Transitions, Remappings and more
+  - Update README.md and tutorial docs to use Blackboard::SharedPtr instead of std::shared_ptr<Blackboard> to match actual demo implementations
+* using createUnmanagedInstance in pybind_bridge to allow Python mange the lifetime of objects
+* improving Python + cleaning Python viewer pub on shutdown
+* optimizing C++ code (adding const and noexcept)
+* minor fixes in Python comments and imports
+* removing cleanup from Python viewer publisher
+* Contributors: Miguel Ángel González Santamarta
+
+4.1.0 (2025-12-07)
+------------------
+* removing duplicated comments and setting generateUUID as inline
+* adding python-dev in deps and removing unused test deps for python
+* Contributors: Miguel Ángel González Santamarta
+
+4.0.2 (2025-12-01)
+------------------
+
+4.0.1 (2025-11-25)
+------------------
+
+4.0.0 (2025-11-24)
+------------------
+* adding destructor to state machine and cleanup to viewer pub
+* removing comments from main functions
+* Merge pull request `#70 <https://github.com/uleroboticsgroup/yasmin/issues/70>`_ from uleroboticsgroup/pybinding
+  [New Great Version] Pybinding + Plugins + Editor
+* replacing bare HTTP with socket.io in viewer
+* adding const&
+* adding const&
+* removing unused namespace yasmin
+* adding name to SM class for root SM
+* fixing license name in package.xml files
+* Contributors: Miguel Ángel González Santamarta
+
+3.5.1 (2025-10-23)
+------------------
+
+3.5.0 (2025-10-12)
+------------------
+* adding support for concurrence states in the viewer
+* Contributors: Miguel Ángel González Santamarta
+
+3.4.0 (2025-08-25)
+------------------
+
+3.3.0 (2025-06-28)
+------------------
+* fixing yasmin logs and using them in ros versions
+* Fix deprecation of ament_target_dependencies
+* Contributors: Miguel Ángel González Santamarta
+
+3.2.0 (2025-04-11)
+------------------
+* fixing c++ version in CMakeLists
+* Contributors: Miguel Ángel González Santamarta
+
+3.1.0 (2025-02-05)
+------------------
+* updating yasmin viewer dependencies
+* new viewer build
+* adding package-lock.json to gitignore
+* package-lock.json removed
+* adding layouts to toolbar
+* fixing license comments
+* Contributors: Miguel Ángel González Santamarta
+
+3.0.3 (2024-12-17)
+------------------
+* hpp ifndef guards fixed
+* Contributors: Miguel Ángel González Santamarta
+
+3.0.2 (2024-12-16)
+------------------
+* fixing dependencies in package.xml files
+* Contributors: Miguel Ángel González Santamarta
+
+3.0.1 (2024-12-01)
+------------------
+
+3.0.0 (2024-11-24)
+------------------
+* fixing C++ comments
+* started removed from viewer node
+* setting black formatter line length to 90
+* comments for Python attributes moved to __init__
+* fixing documentation
+* improving Python comments for Doxygen
+* comments added to C++ files for Doxygen
+* check nodes and edges before building graph in viewer
+* converting outcomes from list to set
+* validating state machine before publishing
+* set_loggers to change yasmin logs
+* zoom feature added to yasmin_viewer
+* black formatter applied to python files
+* fix(viewer): graceful shutdown (`#37 <https://github.com/uleroboticsgroup/yasmin/issues/37>`_)
+* feat(viewer): print http:// link (`#35 <https://github.com/uleroboticsgroup/yasmin/issues/35>`_)
+  So that it is clickable from console
+* fix(viewer): added missing rosdeps (`#36 <https://github.com/uleroboticsgroup/yasmin/issues/36>`_)
+* Contributors: Miguel Ángel González Santamarta, Rein Appeldoorn
+
+2.4.2 (2024-10-03)
+------------------
+* minor style fixes
+* Merge pull request `#23 <https://github.com/uleroboticsgroup/yasmin/issues/23>`_ from CihatAltiparmak/fix/convert_to_ros_node_shared_ptr
+  Converted rclcpp::Node& to rclcpp::Node::SharedPtr
+* Converted some node parameters to const ref
+* Converted rlccpp::Node& to rclcpp::Node::SharedPtr
+* Contributors: CihatAltiparmak, Miguel Ángel González Santamarta
+
+2.4.1 (2024-08-09 15:27)
+------------------------
+* current_hidden_fsm fixed in viewer
+* Contributors: Miguel Ángel González Santamarta
+
+2.4.0 (2024-08-09 13:22)
+------------------------
+* new viewer build
+* hidden fsm represented as octagon in viewer
+* show only active FSMs added to viewer
+* Contributors: Miguel Ángel González Santamarta
+
+2.3.1 (2024-07-22)
+------------------
+* package version added
+* Contributors: Miguel Ángel González Santamarta
+
+2.3.0 (2024-07-13)
+------------------
+
+2.2.0 (2024-06-30)
+------------------
+
+2.1.1 (2024-06-08)
+------------------
+
+2.1.0 (2024-06-05)
+------------------
+* viewer app bar + hide nested fsm
+* Contributors: Miguel Ángel González Santamarta
+
+2.0.2 (2024-05-05)
+------------------
+
+2.0.1 (2024-04-16 13:57:56 +0200)
+---------------------------------
+
+2.0.0 (2024-04-16 13:57:56 +0200)
+---------------------------------
+* Merge pull request `#15 <https://github.com/uleroboticsgroup/yasmin/issues/15>`_ from uleroboticsgroup/no_simple_node
+  No simple node
+* no simple_node C++ version
+* python free of simple_node
+* Contributors: Miguel Ángel González Santamarta
+
+1.0.0 (2023-12-06)
+------------------
+* Merge pull request `#11 <https://github.com/uleroboticsgroup/yasmin/issues/11>`_ from aminballoon/add-ros-args-yasmin-viewer-node
+  Add ros args yasmin viewer node for custom host and port
+* change type param port str->int
+* add ros args
+* self loop edges fixed
+* typing fixes
+* license added to files
+* interfaces to msgs
+* upper calls removed
+* new yasmin viewer information
+  more fsm nested can be view
+  now state machines are arrays of states
+  the first element is the fsm
+* nodes size adjusted in viewer
+  Former-commit-id: 1f1bccef16d40c329637b4e9c72626ff44d48c58
+* SM final outcomes shape fixed in viewer
+  Former-commit-id: f5c4d849e9e8f39f79ea5a31d6f12cdf4b53ea39
+* yasmin_viewer updated
+  Former-commit-id: 9a88fb0d1a0ca9b78fc6b8a74c3af7a81582331f
+* yasmin tests
+  Former-commit-id: f069c2a613c0dfbc08f950cb9f095b5a6473cc50
+* yasmin iterfaces fixed
+  Former-commit-id: 95dd4cfd21b430afdc8497e8d51a69ee2bbf4573
+* viewer fixed
+  Former-commit-id: ba248d977e1e5c6da11d882e07ed053f2f20cd39
+* C++ version created
+  Former-commit-id: 9d02daf711aaaf25d36b0b58284c2e9dc5f053e0
+* ' replaced by "
+  Former-commit-id: 63c642bbfc6975a63c4e742c3573d8db901e40ac
+* viewer named changed + rebuild
+  Former-commit-id: caa80be23dab6b29a986e62f7544a07991e978f3
+* 1 version of yasmin
+  Former-commit-id: a17c6a35baaa77099292a87ed2dd65587fe4e01b
+* Contributors: Miguel Ángel González Santamarta, PannapatC
