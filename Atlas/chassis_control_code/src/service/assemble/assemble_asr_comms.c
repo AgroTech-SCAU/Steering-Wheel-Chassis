@@ -25,8 +25,8 @@ SystemStatus assemble_asr_comms(void) {
         return SYSTEM_STATUS_ERROR;
     }
 
-    uart_register_rx_complete_callback(&huart8, assemble_asr_comms_on_rx_complete);
-    uart_register_error_callback(&huart8, assemble_asr_comms_on_error);
+    uart_register_rx_complete_callback(&huart10, assemble_asr_comms_on_rx_complete);
+    uart_register_error_callback(&huart10, assemble_asr_comms_on_error);
     assemble_asr_comms_start_receive();
     log_info("ASR_COMMS init done");
     return SYSTEM_STATUS_OK;
@@ -35,7 +35,7 @@ SystemStatus assemble_asr_comms(void) {
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static bool assemble_asr_comms_write(const char* data, uint32_t len) {
-    return uart8_write_blocking(data, len);
+    return uart10_write_blocking(data, len);
 }
 
 static void assemble_asr_comms_on_rx_complete(void) {
@@ -48,5 +48,5 @@ static void assemble_asr_comms_on_error(void) {
 }
 
 static void assemble_asr_comms_start_receive(void) {
-    (void)uart_receive_it(&huart8, &s_asr_comms_rx_byte, 1u);
+    (void)uart_receive_it(&huart10, &s_asr_comms_rx_byte, 1u);
 }

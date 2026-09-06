@@ -2,7 +2,7 @@
 
 // ! ========================= 变 量 声 明 ========================= ! //
 
-static PiTxHalResult s_uart10_last_tx_result = PI_TX_HAL_OK;
+static PiTxHalResult s_uart8_last_tx_result = PI_TX_HAL_OK;
 
 static void (*uart1_tx_complete_callback)(void) = NULL;
 static void (*uart1_rx_complete_callback)(void) = NULL;
@@ -47,44 +47,44 @@ bool uart7_write_blocking(const char* data, uint32_t len) {
 }
 
 bool uart8_write_blocking(const char* data, uint32_t len) {
-    if(data == NULL || len == 0u || len > UINT16_MAX) {
-        return false;
-    }
-
-    return HAL_UART_Transmit(&huart8, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
-}
-
-bool uart10_write_blocking(const char* data, uint32_t len) {
     HAL_StatusTypeDef status;
 
     if(data == NULL || len == 0u || len > UINT16_MAX) {
-        s_uart10_last_tx_result = PI_TX_HAL_ERROR;
+        s_uart8_last_tx_result = PI_TX_HAL_ERROR;
         return false;
     }
 
-    status = HAL_UART_Transmit(&huart10, (uint8_t*)data, (uint16_t)len, 10);
+    status = HAL_UART_Transmit(&huart8, (uint8_t*)data, (uint16_t)len, 10);
     switch(status) {
         case HAL_OK:
-            s_uart10_last_tx_result = PI_TX_HAL_OK;
+            s_uart8_last_tx_result = PI_TX_HAL_OK;
             return true;
 
         case HAL_BUSY:
-            s_uart10_last_tx_result = PI_TX_HAL_BUSY;
+            s_uart8_last_tx_result = PI_TX_HAL_BUSY;
             return false;
 
         case HAL_TIMEOUT:
-            s_uart10_last_tx_result = PI_TX_HAL_TIMEOUT;
+            s_uart8_last_tx_result = PI_TX_HAL_TIMEOUT;
             return false;
 
         case HAL_ERROR:
         default:
-            s_uart10_last_tx_result = PI_TX_HAL_ERROR;
+            s_uart8_last_tx_result = PI_TX_HAL_ERROR;
             return false;
     }
 }
 
-PiTxHalResult uart10_get_last_tx_result(void) {
-    return s_uart10_last_tx_result;
+PiTxHalResult uart8_get_last_tx_result(void) {
+    return s_uart8_last_tx_result;
+}
+
+bool uart10_write_blocking(const char* data, uint32_t len) {
+    if(data == NULL || len == 0u || len > UINT16_MAX) {
+        return false;
+    }
+
+    return HAL_UART_Transmit(&huart10, (uint8_t*)data, (uint16_t)len, 10) == HAL_OK;
 }
 
 bool uart_receive_it(UART_HandleTypeDef* huart, uint8_t* data, uint16_t len) {
