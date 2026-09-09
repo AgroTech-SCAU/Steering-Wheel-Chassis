@@ -1,7 +1,12 @@
 # Atlas 智械争锋顶层比赛配置
 #
+# 导航组 A 半场实测地图与标点已接入
+# 当前联调阶段只完成 A 半场，为先跑通整套任务流程，B 半场暂时复用 A 半场
+# 的地图、pbstream 和 pickup / park_1 / park_2 三个 waypoint 作为占位
+# 后续完成 B 半场实测后，必须用 B 半场真实地图和标点替换下方 B 配置
+#
 # 只改这一份文件即可把实测地图、语义点、视觉观察位和放置位姿接入整栈
-# 默认值保持 fail-safe：未实测字段必须保持 configured/enabled=false 或空路径
+# 默认值保持 fail-safe：未实测的视觉/机械臂字段继续保持 configured/enabled=false
 
 competition:
   backend_name: nav2_competition
@@ -38,19 +43,25 @@ competition:
     stack_ready_timeout_s: 30.0
     arenas:
       A:
-        map: ""
-        pbstream: ""
+        # 当前真实测试半场：导航组实测数据
+        map: "maps/test/ruikang.yaml"
+        pbstream: "maps/test/ruikang.pbstream"
         waypoints:
-          pickup: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
-          park_1: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
-          park_2: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          # 货物区 q=(0,0,0,1) -> yaw=0 rad
+          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
+          # 园区一 qz=0.87 qw=-0.48；归一化后 yaw=-2.133260731 rad
+          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
+          # 园区二 qz=0.48 qw=0.88；归一化后 yaw=0.998693443 rad
+          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
       B:
-        map: ""
-        pbstream: ""
+        # 临时占位：B 半场尚未实测，先完整复用 A 半场以跑通流程
+        # 完成 B 半场建图/标点后必须替换本段，不能作为正式双半场参数使用
+        map: "maps/test/ruikang.yaml"
+        pbstream: "maps/test/ruikang.pbstream"
         waypoints:
-          pickup: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
-          park_1: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
-          park_2: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
+          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
+          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
 
   manipulation:
     placement:
