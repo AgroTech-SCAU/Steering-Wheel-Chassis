@@ -255,6 +255,20 @@ class NavigationCalibration(Node):
             "configured": True,
         }
 
+    def _show_origin_deviation(self) -> None:
+        pose = self._sample_pose()
+        x = float(pose["x"])
+        y = float(pose["y"])
+        yaw = float(pose["yaw"])
+        distance = math.hypot(x, y)
+        print("\n地图原点检查（仅显示，不自动移动底盘）")
+        print(
+            f"当前相对地图原点偏差: dx={x:+.4f} m  dy={y:+.4f} m  "
+            f"distance={distance:.4f} m  yaw={yaw:+.4f} rad "
+            f"({math.degrees(yaw):+.2f} deg)"
+        )
+        print("导航点位标定继续由用户遥控；这里不会自动回到 (0,0,0)")
+
     def _capture_waypoint(self, waypoint: str, label: str) -> dict[str, float | bool]:
         while True:
             terminal_input(
@@ -319,6 +333,7 @@ class NavigationCalibration(Node):
         status = statuses[arena]
         self._start_localization(status.pbstream_path)
         self._wait_localization_ready()
+        self._show_origin_deviation()
 
         waypoints = {}
         for waypoint, label in (

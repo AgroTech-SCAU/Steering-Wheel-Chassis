@@ -22,8 +22,8 @@ def _launch_file(package: str, relpath: str) -> str:
 def generate_launch_description():
     competition_config = LaunchConfiguration("competition_config")
     no_preview = LaunchConfiguration("no_preview")
-    full_nav_config = os.path.join(
-        get_package_share_directory("atlas_nav_full_backend"), "config", "full_nav.yaml"
+    direct_nav_config = os.path.join(
+        get_package_share_directory("atlas_nav_direct_backend"), "config", "direct_nav.yaml"
     )
     default_competition_config = os.path.join(
         get_package_share_directory("atlas_competition_bringup"), "config", "competition.yaml"
@@ -66,15 +66,15 @@ def generate_launch_description():
             launch_arguments={"output": "log", "log_level": "fatal"}.items(),
         ),
         Node(
-            package="atlas_nav_full_backend",
-            executable="full_nav_backend",
-            name="atlas_nav_full_backend",
+            package="atlas_nav_direct_backend",
+            executable="direct_nav_backend",
+            name="atlas_nav_direct_backend",
             output="log",
             ros_arguments=["--log-level", "fatal"],
             parameters=[
-                full_nav_config,
+                direct_nav_config,
                 {
-                    "backend_name": "nav2_competition",
+                    "backend_name": "direct_odom_competition",
                     "competition_config": competition_config,
                 },
             ],

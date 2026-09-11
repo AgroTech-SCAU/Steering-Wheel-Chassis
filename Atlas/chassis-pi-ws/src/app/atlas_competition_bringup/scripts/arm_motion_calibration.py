@@ -118,7 +118,7 @@ class ArmMotionCalibration(Node):
     def __init__(self) -> None:
         super().__init__("atlas_arm_motion_calibration")
         self.declare_parameter("competition_config", "")
-        self.declare_parameter("navigation_backend", "nav2_competition")
+        self.declare_parameter("navigation_backend", "direct_odom_competition")
         self.declare_parameter("navigation_timeout_s", 90.0)
         self.declare_parameter("navigation_start_timeout_s", 40.0)
         self.declare_parameter("feedback_timeout_s", 2.0)
@@ -308,6 +308,69 @@ class ArmMotionCalibration(Node):
             self.motor_pub.publish(zero)
             time.sleep(0.02)
 
+    def _align_and_return_origin(self, arena: str) -> None:
+        print("\n[底盘原点对齐]")
+        print(f"将使用 {arena} 区已标定地图做一次激光定位；定位完成后 Cartographer 会退出")
+        print("若底盘当前偏离地图原点，将仅靠冻结后的 field↔odom 和 MCU /odom 自动回 (0,0,0)")
+        answer = terminal_input(
+            "确认机械臂已经收拢且底盘周围安全，可以自动回原点 [y/N] > "
+        ).strip().lower()
+        if answer != "y":
+            raise RuntimeError("用户取消底盘原点对齐")
+        if not self.nav_client.wait_for_service(timeout_sec=5.0):
+            raise RuntimeError("/atlas/navigation/start 服务不可用")
+
+        request = StartNavigation.Request()
+        request.backend = self.navigation_backend
+        request.arena = arena
+        request.waypoint_id = "origin"
+        request.x_m = 0.0
+        request.y_m = 0.0
+        request.yaw_rad = 0.0
+        request.reset_origin = False
+        request.timeout_s = self.navigation_timeout_s
+
+        with self._nav_cv:
+            self._latest_nav_status = None
+            self._nav_active = True
+        self._call_brake(False)
+        future = self.nav_client.call_async(request)
+        deadline = time.monotonic() + self.navigation_start_timeout_s
+        while time.monotonic() < deadline and not future.done():
+            time.sleep(0.02)
+        if not future.done() or future.result() is None or not future.result().success:
+            with self._nav_cv:
+                self._nav_active = False
+            self._publish_zero()
+            self._call_brake(True)
+            message = "原点对齐请求超时" if not future.done() else future.result().message
+            raise RuntimeError(message)
+
+        print("正在进行一次激光对齐并回到地图原点 (0,0,0)")
+        terminal = {
+            NavigationStatus.STATE_SUCCEEDED,
+            NavigationStatus.STATE_FAILED,
+            NavigationStatus.STATE_CANCELLED,
+        }
+        nav_deadline = time.monotonic() + self.navigation_timeout_s + 10.0
+        result_state = None
+        result_message = ""
+        with self._nav_cv:
+            while time.monotonic() < nav_deadline:
+                status = self._latest_nav_status
+                if status is not None and status.waypoint_id == "origin" and status.state in terminal:
+                    result_state = int(status.state)
+                    result_message = str(status.message)
+                    break
+                self._nav_cv.wait(timeout=0.1)
+            self._nav_active = False
+
+        self._publish_zero()
+        self._call_brake(True)
+        if result_state != NavigationStatus.STATE_SUCCEEDED:
+            raise RuntimeError(result_message or "一次激光对齐/回原点失败或超时")
+        print("底盘已完成一次激光对齐并稳定到达地图原点，后续标定导航仅使用 /odom 直达")
+
     def _navigate(self, arena: str, waypoint: str, safe_pose: dict) -> None:
         value = terminal_input(f"\n是否导航到 {waypoint} [y/N] > ").strip().lower()
         if value != "y":
@@ -332,9 +395,8 @@ class ArmMotionCalibration(Node):
             self._nav_active = True
         self._call_brake(False)
         future = self.nav_client.call_async(request)
-        # The first request may need to launch and activate the complete Nav2
-        # stack (configured for up to 30 s). Do not report failure while that
-        # same request can still complete and make the chassis move.
+        # The direct backend service accepts quickly; keep a generous start
+        # timeout so transient ROS startup delays are not reported as failures.
         deadline = time.monotonic() + self.navigation_start_timeout_s
         while time.monotonic() < deadline and not future.done():
             time.sleep(0.02)
@@ -437,6 +499,7 @@ class ArmMotionCalibration(Node):
         print("\nAtlas 智械争锋机械臂运动标定")
         print("起始条件  机器人位于中转区  机械臂允许人工拖拽")
         arena = self._select_arena()
+        self._align_and_return_origin(arena)
         if not self.no_preview:
             self._start_camera()
 

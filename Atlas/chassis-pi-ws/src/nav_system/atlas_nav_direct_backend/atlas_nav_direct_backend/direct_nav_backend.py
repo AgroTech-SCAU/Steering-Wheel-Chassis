@@ -214,7 +214,7 @@ class DirectNavBackend(Node):
         if waypoint_id == "origin":
             self.target_map = Pose2D(0.0, 0.0, 0.0)
             if self.frozen_map_to_odom is None:
-                if not self.begin_startup_localization():
+                if not self.begin_startup_localization(str(request.arena or "").strip().upper()):
                     response.success = False
                     response.message = self.message
                     return response
@@ -261,7 +261,12 @@ class DirectNavBackend(Node):
         response.message = reason
         return response
 
-    def begin_startup_localization(self) -> bool:
+    def begin_startup_localization(self, arena: str = "") -> bool:
+        self.localization_candidates = localization_candidates(
+            self.competition.navigation,
+            self.competition.source_path,
+            arena=arena,
+        )
         existing = [
             c for c in self.localization_candidates
             if Path(c.map_path).is_file() and Path(c.pbstream_path).is_file()

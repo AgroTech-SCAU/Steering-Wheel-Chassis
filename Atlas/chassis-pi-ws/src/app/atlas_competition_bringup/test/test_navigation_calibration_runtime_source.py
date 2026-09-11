@@ -64,3 +64,13 @@ def test_bringup_installs_navigation_calibration_and_declares_tf2_dependency():
     assert "navigation_calibration_model_test" in cmake
     assert "navigation_calibration_runtime_source_test" in cmake
     assert "<exec_depend>tf2_ros</exec_depend>" in package
+
+
+def test_navigation_calibration_displays_current_offset_from_map_origin_before_waypoints():
+    text = _read(SCRIPT)
+    run = text[text.index("    def run_interactive"):text.index("    def cleanup", text.index("    def run_interactive"))]
+    assert "def _show_origin_deviation" in text
+    assert "当前相对地图原点偏差" in text
+    assert "distance=" in text
+    assert run.index("self._wait_localization_ready()") < run.index("self._show_origin_deviation()")
+    assert run.index("self._show_origin_deviation()") < run.index("for waypoint, label in (")

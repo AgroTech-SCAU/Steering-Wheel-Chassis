@@ -33,14 +33,17 @@ def _resolve_path(value: str, source_path: str | os.PathLike[str] | None) -> str
 def localization_candidates(
     navigation: Mapping[str, object],
     source_path: str | os.PathLike[str] | None,
+    arena: str = "",
 ) -> list[LocalizationCandidate]:
     arenas = navigation.get("arenas", {})
     if not isinstance(arenas, Mapping):
         return []
     result: list[LocalizationCandidate] = []
     seen: set[tuple[str, str]] = set()
-    for arena in ("A", "B"):
-        raw = arenas.get(arena, {})
+    selected = str(arena or "").strip().upper()
+    labels = (selected,) if selected in {"A", "B"} else ("A", "B")
+    for label in labels:
+        raw = arenas.get(label, {})
         if not isinstance(raw, Mapping):
             continue
         map_path = _resolve_path(str(raw.get("map", "") or ""), source_path)
@@ -49,7 +52,7 @@ def localization_candidates(
         if not map_path or not pbstream_path or key in seen:
             continue
         seen.add(key)
-        result.append(LocalizationCandidate(arena, map_path, pbstream_path))
+        result.append(LocalizationCandidate(label, map_path, pbstream_path))
     return result
 
 

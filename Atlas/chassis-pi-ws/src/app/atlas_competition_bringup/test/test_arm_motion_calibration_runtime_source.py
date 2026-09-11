@@ -94,3 +94,28 @@ def test_selected_arena_captures_only_its_sorting_scan_pose():
     assert 'fixed["sorting_scan_b"] = self._capture_pose' not in run
     assert '"1/8 zero"' in run
     assert '"3/8 navigation_safe"' in run
+
+
+def test_arm_calibration_uses_direct_backend_and_returns_to_origin_before_arm_pose_capture():
+    launch_text = (BRINGUP / "launch" / "arm_motion_calibration.launch.py").read_text(encoding="utf-8")
+    script_text = (BRINGUP / "scripts" / "arm_motion_calibration.py").read_text(encoding="utf-8")
+    run = script_text[script_text.index("    def run_interactive"):script_text.index("    def cleanup", script_text.index("    def run_interactive"))]
+
+    assert 'package="atlas_nav_direct_backend"' in launch_text
+    assert 'executable="direct_nav_backend"' in launch_text
+    assert 'direct_nav.yaml' in launch_text
+    assert 'atlas_nav_full_backend' not in launch_text
+    assert 'self.declare_parameter("navigation_backend", "direct_odom_competition")' in script_text
+    assert "def _align_and_return_origin" in script_text
+    assert 'request.waypoint_id = "origin"' in script_text
+    assert "request.arena = arena" in script_text
+    assert "确认机械臂已经收拢" in script_text
+    assert run.index("self._align_and_return_origin(arena)") < run.index('fixed["zero"] = self._capture_pose')
+
+
+def test_arm_calibration_origin_alignment_happens_before_camera_and_scan_capture():
+    script_text = (BRINGUP / "scripts" / "arm_motion_calibration.py").read_text(encoding="utf-8")
+    run = script_text[script_text.index("    def run_interactive"):script_text.index("    def cleanup", script_text.index("    def run_interactive"))]
+
+    assert run.index("self._align_and_return_origin(arena)") < run.index("if not self.no_preview:")
+    assert run.index("self._align_and_return_origin(arena)") < run.index('scan_key = f"sorting_scan_{arena.lower()}"')

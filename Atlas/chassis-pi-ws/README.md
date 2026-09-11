@@ -155,7 +155,7 @@ ros2 launch atlas_competition_bringup navigation_calibration.launch.py \
   competition_config:=/path/to/competition.yaml
 ```
 
-程序会先核对 map YAML、地图图片和 pbstream 是否存在，再询问标定 A/B；随后仅启动 Cartographer 纯定位，用户依次遥控到底盘的货物区、园区一、园区二最终位姿并确认，程序记录 `map -> base_link` 的 x/y/yaw 到所选半场 waypoint
+程序会先核对 map YAML、地图图片和 pbstream 是否存在，再询问标定 A/B；随后仅启动 Cartographer 纯定位；定位稳定后会先显示当前底盘相对地图原点 `(0,0,0)` 的 `dx / dy / distance / yaw` 偏差用于核对，但**导航标定不会自动回原点**；用户继续手动遥控到底盘的货物区、园区一、园区二最终位姿并确认，程序记录 `map -> base_link` 的 x/y/yaw 到所选半场 waypoint
 
 机械臂标定：
 
@@ -164,7 +164,7 @@ ros2 launch atlas_competition_bringup arm_motion_calibration.launch.py \
   competition_config:=/path/to/competition.yaml
 ```
 
-选择 A 时只标定 `sorting_scan_a`，选择 B 时只标定 `sorting_scan_b`；另一侧已有 scan 位姿会原样保留
+选择 A 时只标定 `sorting_scan_a`，选择 B 时只标定 `sorting_scan_b`；另一侧已有 scan 位姿会原样保留；机械臂标定启动后会先按所选 A/B 地图执行方案 A：Cartographer 只做一次激光绝对对齐，冻结 `map(field) -> odom` 后立即退出；如果底盘不在地图原点，则由 direct odom 控制自动回到 `(0,0,0)`，确认到达后才开始原来的 `zero -> sorting_scan_a/b -> navigation_safe -> pickup -> park_1 -> park_2` 机械臂标定流程；由于回原点发生在正式记录机械臂位姿之前，启动时必须先人工确认机械臂已经收拢且底盘周围安全
 
 ### 6. 完成配置后编译
 
