@@ -20,8 +20,7 @@ atlas_competition_vision_backend:
       chilun: gear
       luosi: t_bolt
 
+    # Standalone default remains disabled; competition.yaml can enable it.
+    # Decoding rule: smaller image u = park_1, larger image u = park_2.
     sorting_rule:
       enabled: false
-      # ROI format: [x_min, y_min, x_max, y_max] in source image pixels.
-      park_1_roi: [0, 0, 0, 0]
-      park_2_roi: [0, 0, 0, 0]

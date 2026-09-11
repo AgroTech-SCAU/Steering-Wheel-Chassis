@@ -14,16 +14,12 @@ def _config(enabled=True):
     return BackendConfig.from_dict(
         {
             "class_aliases": {"chilun": "gear", "luosi": "t_bolt"},
-            "sorting_rule": {
-                "enabled": enabled,
-                "park_1_roi": [0, 0, 100, 100],
-                "park_2_roi": [100, 0, 200, 100],
-            },
+            "sorting_rule": {"enabled": enabled},
         }
     )
 
 
-def test_sorting_rule_roi_disabled_fails_safe():
+def test_sorting_rule_disabled_fails_safe():
     result = resolve_sorting_rule(
         [
             Detection("chilun", 25.0, 25.0, 0.9),
@@ -35,15 +31,15 @@ def test_sorting_rule_roi_disabled_fails_safe():
     assert not result.success
 
 
-def test_sorting_rule_decodes_both_park_mappings_from_roi():
-    gear_to_park_1 = resolve_sorting_rule(
+def test_sorting_rule_maps_image_left_to_park_1_and_right_to_park_2():
+    gear_on_left = resolve_sorting_rule(
         [
             Detection("chilun", 25.0, 25.0, 0.9),
             Detection("luosi", 125.0, 25.0, 0.9),
         ],
         _config(),
     )
-    gear_to_park_2 = resolve_sorting_rule(
+    t_bolt_on_left = resolve_sorting_rule(
         [
             Detection("luosi", 25.0, 25.0, 0.9),
             Detection("chilun", 125.0, 25.0, 0.9),
@@ -51,12 +47,53 @@ def test_sorting_rule_decodes_both_park_mappings_from_roi():
         _config(),
     )
 
-    assert gear_to_park_1.success
-    assert gear_to_park_1.park_1_cargo == "gear"
-    assert gear_to_park_1.park_2_cargo == "t_bolt"
-    assert gear_to_park_2.success
-    assert gear_to_park_2.park_1_cargo == "t_bolt"
-    assert gear_to_park_2.park_2_cargo == "gear"
+    assert gear_on_left.success
+    assert gear_on_left.park_1_cargo == "gear"
+    assert gear_on_left.park_2_cargo == "t_bolt"
+    assert t_bolt_on_left.success
+    assert t_bolt_on_left.park_1_cargo == "t_bolt"
+    assert t_bolt_on_left.park_2_cargo == "gear"
+
+
+def test_sorting_rule_uses_best_detection_per_cargo_class_before_left_right_ordering():
+    result = resolve_sorting_rule(
+        [
+            Detection("chilun", 15.0, 40.0, 0.2),
+            Detection("chilun", 140.0, 40.0, 0.95),
+            Detection("luosi", 60.0, 40.0, 0.90),
+        ],
+        _config(),
+    )
+
+    assert result.success
+    assert result.park_1_cargo == "t_bolt"
+    assert result.park_2_cargo == "gear"
+
+
+def test_sorting_rule_requires_both_cargo_classes():
+    result = resolve_sorting_rule(
+        [
+            Detection("chilun", 25.0, 25.0, 0.9),
+            Detection("chilun", 125.0, 25.0, 0.8),
+        ],
+        _config(),
+    )
+
+    assert not result.success
+    assert "both" in result.message
+
+
+def test_sorting_rule_rejects_equal_horizontal_centers_as_ambiguous():
+    result = resolve_sorting_rule(
+        [
+            Detection("chilun", 80.0, 25.0, 0.9),
+            Detection("luosi", 80.0, 75.0, 0.9),
+        ],
+        _config(),
+    )
+
+    assert not result.success
+    assert "ambiguous" in result.message
 
 
 def test_scan_a_success_still_checks_scan_b_and_returns_a_when_unique():
@@ -140,8 +177,7 @@ def test_detect_camera_target_selects_each_slot_by_corner_index():
     ] == ["gear", "t_bolt", "gear", "t_bolt"]
 
 
-def test_load_yaml_config_accepts_top_level_competition_vision_section(tmp_path):
-    """Catches the backend ignoring competition.vision in the single top-level YAML."""
+def test_load_yaml_config_accepts_left_right_sorting_without_roi(tmp_path):
     config_path = tmp_path / "competition.yaml"
     config_path.write_text(
         """
@@ -152,8 +188,6 @@ competition:
       luosi: t_bolt
     sorting_rule:
       enabled: true
-      park_1_roi: [10, 20, 110, 120]
-      park_2_roi: [130, 20, 230, 120]
 """,
         encoding="utf-8",
     )
@@ -161,5 +195,5 @@ competition:
     config = load_yaml_config(str(config_path))
 
     assert config.sorting_enabled is True
-    assert config.park_1_roi == (10.0, 20.0, 110.0, 120.0)
-    assert config.park_2_roi == (130.0, 20.0, 230.0, 120.0)
+    assert not hasattr(config, "park_1_roi")
+    assert not hasattr(config, "park_2_roi")

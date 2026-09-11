@@ -116,8 +116,6 @@ def test_vision_and_manipulation_sections_override_existing_ros_parameters(
                     "class_aliases": {"chilun": "gear", "luosi": "t_bolt"},
                     "sorting_rule": {
                         "enabled": True,
-                        "park_1_roi": [10, 20, 110, 120],
-                        "park_2_roi": [130, 20, 230, 120],
                     },
                 },
                 "manipulation": {
@@ -163,7 +161,6 @@ def test_vision_and_manipulation_sections_override_existing_ros_parameters(
     )
 
     assert vision["sorting_rule"]["enabled"] is True
-    assert vision["sorting_rule"]["park_1_roi"] == [10, 20, 110, 120]
     assert vision["class_aliases"] == {"chilun": "gear", "luosi": "t_bolt"}
     assert placement["placement"]["enabled"] is True
     assert placement["placement"]["park_1"]["x_m"] == 0.31

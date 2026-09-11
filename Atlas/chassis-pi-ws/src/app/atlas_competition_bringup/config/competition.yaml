@@ -6,10 +6,9 @@ competition:
   backend_name: nav2_competition
 
   vision:
+    # 智能分拣区按相机画面左右关系解码：左侧=园区一(park_1)，右侧=园区二(park_2)
     sorting_rule:
-      enabled: false
-      park_1_roi: [0, 0, 0, 0]
-      park_2_roi: [0, 0, 0, 0]
+      enabled: true
 
     class_aliases:
       chilun: gear

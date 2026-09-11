@@ -51,8 +51,6 @@ class Detection:
 class BackendConfig:
     class_aliases: dict[str, str] = field(default_factory=dict)
     sorting_enabled: bool = False
-    park_1_roi: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
-    park_2_roi: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
 
     @classmethod
     def from_dict(cls, data: dict) -> "BackendConfig":
@@ -62,8 +60,6 @@ class BackendConfig:
                 str(k): str(v) for k, v in data.get("class_aliases", {}).items()
             },
             sorting_enabled=bool(rule.get("enabled", False)),
-            park_1_roi=_parse_roi(rule.get("park_1_roi", [0, 0, 0, 0])),
-            park_2_roi=_parse_roi(rule.get("park_2_roi", [0, 0, 0, 0])),
         )
 
 
@@ -86,41 +82,24 @@ class DetectTargetResult:
     target_count: int = 0
 
 
-def _parse_roi(value: Iterable[float]) -> tuple[float, float, float, float]:
-    values = tuple(float(x) for x in value)
-    if len(values) != 4:
-        return (0.0, 0.0, 0.0, 0.0)
-    return values
-
-
-def _roi_valid(roi: tuple[float, float, float, float]) -> bool:
-    x_min, y_min, x_max, y_max = roi
-    return x_max > x_min and y_max > y_min
-
-
-def _inside_roi(detection: Detection, roi: tuple[float, float, float, float]) -> bool:
-    x_min, y_min, x_max, y_max = roi
-    return x_min <= detection.u <= x_max and y_min <= detection.v <= y_max
-
-
 def _canonical_class(cls_name: str, aliases: dict[str, str]) -> Optional[str]:
     cargo = aliases.get(cls_name, cls_name)
     return cargo if cargo in {"gear", "t_bolt"} else None
 
 
-def _best_in_roi(
+def _best_detection_by_cargo(
     detections: Iterable[Detection],
-    roi: tuple[float, float, float, float],
     aliases: dict[str, str],
-) -> Optional[str]:
-    candidates = [
-        detection for detection in detections
-        if _inside_roi(detection, roi)
-    ]
-    if not candidates:
-        return None
-    best = max(candidates, key=lambda detection: detection.conf)
-    return _canonical_class(best.cls_name, aliases)
+) -> dict[str, Detection]:
+    best: dict[str, Detection] = {}
+    for detection in detections:
+        cargo = _canonical_class(detection.cls_name, aliases)
+        if cargo is None:
+            continue
+        current = best.get(cargo)
+        if current is None or detection.conf > current.conf:
+            best[cargo] = detection
+    return best
 
 
 def resolve_sorting_rule(
@@ -129,21 +108,32 @@ def resolve_sorting_rule(
 ) -> SortingRuleResult:
     if not config.sorting_enabled:
         return SortingRuleResult(False, message="sorting_rule.enabled=false")
-    if not _roi_valid(config.park_1_roi) or not _roi_valid(config.park_2_roi):
-        return SortingRuleResult(False, message="sorting ROI is not configured")
 
-    detections = list(detections)
-    park_1_cargo = _best_in_roi(detections, config.park_1_roi, config.class_aliases)
-    park_2_cargo = _best_in_roi(detections, config.park_2_roi, config.class_aliases)
-    if park_1_cargo is None or park_2_cargo is None:
-        return SortingRuleResult(False, message="missing cargo marker in sorting ROI")
-    if {park_1_cargo, park_2_cargo} != {"gear", "t_bolt"}:
-        return SortingRuleResult(False, message="sorting rule is not one-to-one")
+    best = _best_detection_by_cargo(detections, config.class_aliases)
+    if "gear" not in best or "t_bolt" not in best:
+        return SortingRuleResult(
+            False,
+            message="sorting view must contain both gear and t_bolt",
+        )
+
+    gear = best["gear"]
+    t_bolt = best["t_bolt"]
+    if gear.u == t_bolt.u:
+        return SortingRuleResult(
+            False,
+            message="sorting left/right order is ambiguous",
+        )
+
+    if gear.u < t_bolt.u:
+        park_1_cargo, park_2_cargo = "gear", "t_bolt"
+    else:
+        park_1_cargo, park_2_cargo = "t_bolt", "gear"
+
     return SortingRuleResult(
         True,
         park_1_cargo=park_1_cargo,
         park_2_cargo=park_2_cargo,
-        message="sorting rule decoded",
+        message="sorting rule decoded by image left/right order",
     )
 
 
@@ -243,8 +233,6 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("class_aliases.chilun", "gear")
         self.declare_parameter("class_aliases.luosi", "t_bolt")
         self.declare_parameter("sorting_rule.enabled", False)
-        self.declare_parameter("sorting_rule.park_1_roi", [0, 0, 0, 0])
-        self.declare_parameter("sorting_rule.park_2_roi", [0, 0, 0, 0])
 
         self._config = self._load_config()
         self._vision_pose_ready = False
@@ -306,8 +294,6 @@ class CompetitionVisionBackend(Node):
             },
             "sorting_rule": {
                 "enabled": bool(self.get_parameter("sorting_rule.enabled").value),
-                "park_1_roi": list(self.get_parameter("sorting_rule.park_1_roi").value),
-                "park_2_roi": list(self.get_parameter("sorting_rule.park_2_roi").value),
             },
         }
         competition = load_optional_competition_config(
@@ -406,11 +392,7 @@ class CompetitionVisionBackend(Node):
         return list(self._latest_centers)
 
     def _on_classify_sorting(self, _request, response):
-        if (
-            not self._config.sorting_enabled
-            or not _roi_valid(self._config.park_1_roi)
-            or not _roi_valid(self._config.park_2_roi)
-        ):
+        if not self._config.sorting_enabled:
             result = resolve_sorting_rule([], self._config)
         else:
             result = classify_with_scan_sequence(self._scan_view, self._config)
