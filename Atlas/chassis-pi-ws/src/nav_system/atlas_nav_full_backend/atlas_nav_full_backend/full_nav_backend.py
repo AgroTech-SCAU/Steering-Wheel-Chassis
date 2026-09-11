@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from typing import Optional, Tuple
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.time import Time
 
@@ -83,6 +88,8 @@ class FullNavBackend(Node):
             'nav2_params_file', self._default_nav2_params_file()).value)
         self.nav_cmd_vel_output = str(self.declare_parameter(
             'nav_cmd_vel_output', '/atlas/navigation/cmd_vel').value)
+        self.bt_navigator_node = str(self.declare_parameter(
+            'bt_navigator_node', '/bt_navigator').value).rstrip('/')
 
         self.competition_config = load_optional_competition_config(self.competition_config_path)
         self.navigation_config = {}
@@ -99,11 +106,35 @@ class FullNavBackend(Node):
             self.stack_ready_timeout_s = float(
                 self.navigation_config.get('stack_ready_timeout_s', self.stack_ready_timeout_s))
 
+        # on_start waits for lifecycle service replies. A reentrant group plus a
+        # multithreaded executor lets those replies be processed while the
+        # service callback is waiting.
+        self.callback_group = ReentrantCallbackGroup()
         self.status_pub = self.create_publisher(NavigationStatus, self.status_topic, 10)
-        self.start_srv = self.create_service(StartNavigation, self.start_service, self.on_start)
-        self.cancel_srv = self.create_service(CancelNavigation, self.cancel_service, self.on_cancel)
+        self.start_srv = self.create_service(
+            StartNavigation,
+            self.start_service,
+            self.on_start,
+            callback_group=self.callback_group,
+        )
+        self.cancel_srv = self.create_service(
+            CancelNavigation,
+            self.cancel_service,
+            self.on_cancel,
+            callback_group=self.callback_group,
+        )
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
-        self.nav_action = ActionClient(self, NavigateToPose, self.action_name)
+        self.nav_action = ActionClient(
+            self,
+            NavigateToPose,
+            self.action_name,
+            callback_group=self.callback_group,
+        )
+        self.bt_state_client = self.create_client(
+            GetState,
+            f'{self.bt_navigator_node}/get_state',
+            callback_group=self.callback_group,
+        )
         self.status_timer = self.create_timer(1.0 / max(1.0, self.status_publish_rate_hz), self.on_status_timer)
 
         self.latest_odom: Optional[Odometry] = None
@@ -276,21 +307,46 @@ class FullNavBackend(Node):
         return response
 
     def _ensure_nav_stack(self, goal: NavigationGoal) -> None:
-        if self.launched_arena == goal.arena:
-            return
-        for label, path in (('map', goal.map_path), ('pbstream', goal.pbstream_path)):
-            if not os.path.exists(path):
+        if self.launched_arena != goal.arena:
+            for label, path in (('map', goal.map_path), ('pbstream', goal.pbstream_path)):
+                if not os.path.exists(path):
+                    raise CompetitionConfigError(
+                        f'arena {goal.arena} {label} file does not exist: {path}'
+                    )
+            if not self.nav2_params_file or not os.path.exists(self.nav2_params_file):
                 raise CompetitionConfigError(
-                    f'arena {goal.arena} {label} file does not exist: {path}'
+                    f'Nav2 params file does not exist: {self.nav2_params_file}'
                 )
-        if not self.nav2_params_file or not os.path.exists(self.nav2_params_file):
-            raise CompetitionConfigError(
-                f'Nav2 params file does not exist: {self.nav2_params_file}'
+            self.stack_launcher.start(goal.map_path, goal.pbstream_path)
+            self.launched_arena = goal.arena
+            self.get_logger().info(
+                f'已启动 arena {goal.arena} 导航栈 map={goal.map_path} pbstream={goal.pbstream_path}'
             )
-        self.stack_launcher.start(goal.map_path, goal.pbstream_path)
-        self.launched_arena = goal.arena
-        self.get_logger().info(
-            f'已启动 arena {goal.arena} 导航栈 map={goal.map_path} pbstream={goal.pbstream_path}'
+        self._wait_for_nav2_active(self.stack_ready_timeout_s)
+
+    def _wait_for_nav2_active(self, timeout_s: float) -> None:
+        """Wait for bt_navigator ACTIVE, not merely for its action name."""
+        deadline = time.monotonic() + max(0.1, float(timeout_s))
+        last_state = 'service unavailable'
+        while rclpy.ok() and time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if not self.bt_state_client.wait_for_service(timeout_sec=min(0.5, remaining)):
+                continue
+            future = self.bt_state_client.call_async(GetState.Request())
+            reply_deadline = min(deadline, time.monotonic() + 1.0)
+            while rclpy.ok() and not future.done() and time.monotonic() < reply_deadline:
+                time.sleep(0.02)
+            if future.done():
+                try:
+                    state = future.result().current_state
+                    last_state = f'{state.label}({state.id})'
+                    if int(state.id) == int(State.PRIMARY_STATE_ACTIVE):
+                        return
+                except Exception as exc:  # noqa: BLE001
+                    last_state = f'query failed: {exc}'
+            time.sleep(0.1)
+        raise CompetitionConfigError(
+            f'Nav2 bt_navigator 未进入 active，当前状态: {last_state}'
         )
 
     def on_cancel(self, request: CancelNavigation.Request, response: CancelNavigation.Response):
@@ -387,7 +443,7 @@ class FullNavBackend(Node):
         msg.target_y_m = float(self.active_target_y_m)
         msg.target_yaw_rad = float(self.active_target_yaw_rad)
         msg.distance_error_m = float(self.distance_error_m)
-        msg.angle_error_rad = float(self.angle_error_rad)
+        msg.yaw_error_rad = float(self.angle_error_rad)
         msg.error_code = int(self.error_code)
         msg.message = self.message
         self.status_pub.publish(msg)
@@ -400,11 +456,24 @@ class FullNavBackend(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = FullNavBackend()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
+    except KeyboardInterrupt:
+        # ros2 launch 发送 SIGINT 是正常退出，不应向标定终端输出 traceback。
+        pass
     finally:
+        try:
+            executor.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
         node.destroy_node()
-        rclpy.shutdown()
+        # SIGINT may already have shut down the default context.  Calling
+        # shutdown() again raises RCLError on ROS 2 Humble and makes a normal
+        # Ctrl-C look like a node crash.
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

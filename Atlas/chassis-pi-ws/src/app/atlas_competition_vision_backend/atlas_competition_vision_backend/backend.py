@@ -151,16 +151,26 @@ def classify_with_scan_sequence(
     scan: Callable[[str], Iterable[Detection]],
     config: BackendConfig,
 ) -> SortingRuleResult:
+    results: list[tuple[str, str, SortingRuleResult]] = []
     for arena, scan_name in (("A", "sorting_scan_a"), ("B", "sorting_scan_b")):
         result = resolve_sorting_rule(scan(scan_name), config)
         if result.success:
-            return SortingRuleResult(
-                True,
-                arena=arena,
-                park_1_cargo=result.park_1_cargo,
-                park_2_cargo=result.park_2_cargo,
-                message=f"{scan_name} decoded sorting rule",
-            )
+            results.append((arena, scan_name, result))
+
+    if len(results) == 1:
+        arena, scan_name, result = results[0]
+        return SortingRuleResult(
+            True,
+            arena=arena,
+            park_1_cargo=result.park_1_cargo,
+            park_2_cargo=result.park_2_cargo,
+            message=f"{scan_name} decoded sorting rule",
+        )
+    if len(results) > 1:
+        return SortingRuleResult(
+            False,
+            message="ambiguous arena: both sorting_scan_a and sorting_scan_b decoded a valid rule",
+        )
     return SortingRuleResult(False, message="no valid sorting rule in scan_A or scan_B")
 
 
@@ -227,8 +237,8 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("services.classify_sorting", "/atlas/vision/classify_sorting_rule")
         self.declare_parameter("services.detect_target", "/atlas/vision/detect_target")
         self.declare_parameter("services.vision_detect", "/vision_detect")
-        self.declare_parameter("services.move_to_sorting_scan_a", "/move_to_sorting_scan_a")
-        self.declare_parameter("services.move_to_sorting_scan_b", "/move_to_sorting_scan_b")
+        self.declare_parameter("services.move_to_sorting_scan_a", "/atlas/manipulation/move_to_sorting_scan_a")
+        self.declare_parameter("services.move_to_sorting_scan_b", "/atlas/manipulation/move_to_sorting_scan_b")
         self.declare_parameter("competition_config", "")
         self.declare_parameter("class_aliases.chilun", "gear")
         self.declare_parameter("class_aliases.luosi", "t_bolt")

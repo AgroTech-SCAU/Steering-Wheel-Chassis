@@ -222,10 +222,13 @@ def test_mission_mock_acceptance(scenario):
 def assert_normal_completion(harness):
     harness.wait_for_state("WAIT_RESET")
 
+    assert "ARM_ZERO" in harness.states
     assert "INSPECT_SORT_ZONE" in harness.states
+    assert "ARM_NAV_SAFE" in harness.states
     assert "OBSERVE_PICKUP" in harness.states
     assert "PICK" in harness.states
-    assert "OBSERVE_PARK" in harness.states
+    assert "RETURN_PICKUP_OBSERVE" in harness.states
+    assert "PARK_PREPARE" in harness.states
     assert "PLACE" in harness.states
     assert "CHECK_DONE" in harness.states
     assert "REPORT_DONE" in harness.states
@@ -246,6 +249,9 @@ def assert_normal_completion(harness):
     assert ("sorting", "pre_recognition") not in manip_actions
     assert sum(task == "pick" for _, task in manip_actions) == 8
     assert sum(task == "place" for _, task in manip_actions) == 8
+    assert sum(task == "navigation_safe" for _, task in manip_actions) >= 9
+    assert sum(task == "pickup_observe" for _, task in manip_actions) == 8
+    assert sum(task == "park_prepare" for _, task in manip_actions) == 16
 
     assert all(
         waypoint in {"pickup", "park_1", "park_2"}

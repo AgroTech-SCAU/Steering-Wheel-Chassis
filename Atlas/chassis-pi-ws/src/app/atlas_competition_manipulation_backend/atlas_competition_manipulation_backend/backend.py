@@ -14,11 +14,15 @@ import yaml
 from atlas_competition_config.config import (
     apply_manipulation_placement_overrides,
     load_optional_competition_config,
+    resolve_arm_pose,
+    resolve_pickup_layer_z,
+    resolve_placement_reference,
 )
 
 try:
     import rclpy
     from geometry_msgs.msg import PoseStamped
+    from sensor_msgs.msg import JointState
     from rclpy.node import Node
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -27,11 +31,12 @@ try:
 
     from atlas_mission_interfaces.msg import ManipulationStatus
     from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
-    from mcu_comm_bridge.srv import SetArmPosition
+    from mcu_comm_bridge.srv import SetArmJoints, SetArmPosition
     from vison_topic_interfaces.msg import PickTarget
 except ImportError:  # Unit tests exercise pure config helpers without ROS.
     rclpy = None
     PoseStamped = None
+    JointState = None
     Node = object
     MultiThreadedExecutor = None
     DurabilityPolicy = None
@@ -43,6 +48,7 @@ except ImportError:  # Unit tests exercise pure config helpers without ROS.
     ManipulationStatus = None
     CancelManipulation = None
     StartManipulation = None
+    SetArmJoints = None
     SetArmPosition = None
     PickTarget = None
 
@@ -59,6 +65,49 @@ class XYZ:
             + (self.y - other.y) ** 2
             + (self.z - other.z) ** 2
         )
+
+
+def pickup_target_spec(arm_motion: dict, arena: str, layer: int) -> dict[str, float]:
+    observe = resolve_arm_pose(arm_motion, "pickup_observe", arena=arena)
+    return {
+        "target_z_m": resolve_pickup_layer_z(arm_motion, arena, layer),
+        "pitch_rad": float(observe["pitch_rad"]),
+        "yaw_rad": float(observe["yaw_rad"]),
+    }
+
+
+def compute_placement_target(
+    arm_motion: dict,
+    placement: dict,
+    arena: str,
+    park: str,
+    slot: int,
+    existing_layer: int,
+) -> XYZ:
+    if not bool(placement.get("enabled", False)):
+        raise RuntimeError(
+            "placement.enabled=false：请先完成园区放置标定，再开启自动放置"
+        )
+    if slot not in (0, 1, 2, 3):
+        raise ValueError(f"park slot 非法: {slot}")
+    if existing_layer < 0:
+        raise ValueError(f"existing layer 非法: {existing_layer}")
+    offsets = list(placement.get("slot_offsets_xy_m", []) or [])
+    if len(offsets) != 8:
+        raise ValueError("placement.slot_offsets_xy_m 必须正好包含 8 个数")
+    reference = resolve_placement_reference(arm_motion, arena, park)
+    dx = float(offsets[slot * 2])
+    dy = float(offsets[slot * 2 + 1])
+    step = float(placement.get("layer_step_m", 0.050))
+    return XYZ(
+        reference["x_m"] + dx,
+        reference["y_m"] + dy,
+        reference["first_layer_z_m"] + float(existing_layer) * step,
+    )
+
+
+def compute_pick_contact_target(above: XYZ, target_z_m: float) -> XYZ:
+    return XYZ(above.x, above.y, float(target_z_m))
 
 
 class CompetitionManipulationBackend(Node):
@@ -89,6 +138,12 @@ class CompetitionManipulationBackend(Node):
         self.arm_pose_topic = str(
             self.declare_parameter("arm_pose_topic", "/arm/pose").value
         )
+        self.arm_joint_state_topic = str(
+            self.declare_parameter("arm_joint_state_topic", "/arm/joint_states").value
+        )
+        self.arm_joints_service = str(
+            self.declare_parameter("arm_joints_service", "/mcu/set_arm_joints").value
+        )
         self.arm_position_service = str(
             self.declare_parameter("arm_position_service", "/mcu/set_arm_position").value
         )
@@ -113,13 +168,20 @@ class CompetitionManipulationBackend(Node):
         self.pick_target_settle_s = float(
             self.declare_parameter("pick_target_settle_s", 0.25).value
         )
-        self.pick_descent_m = float(self.declare_parameter("pick_descent_m", 0.050).value)
-        self.pick_lift_m = float(self.declare_parameter("pick_lift_m", 0.055).value)
+        self.pick_approach_m = float(
+            self.declare_parameter("pick_approach_m", 0.050).value
+        )
         self.suction_settle_s = float(
             self.declare_parameter("suction_settle_s", 0.45).value
         )
         self.default_speed_rad_s = float(
             self.declare_parameter("default_speed_rad_s", 0.8).value
+        )
+        self.joint_tolerance_rad = float(
+            self.declare_parameter("joint_tolerance_rad", 0.06).value
+        )
+        self.pose_validation_tolerance_m = float(
+            self.declare_parameter("pose_validation_tolerance_m", 0.08).value
         )
 
         self.view_scan_enabled = bool(
@@ -135,32 +197,21 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("view_scan.dz_m", 0.0).value
         )
 
-        placement_config = self._load_placement_config()
+        self.competition = load_optional_competition_config(
+            str(self.get_parameter("competition_config").value)
+        )
+        self.arm_motion = {} if self.competition is None else self.competition.arm_motion
+        placement_config = self._load_placement_config(self.competition)
+        self.placement_config = placement_config
         self.place_enabled = bool(placement_config["enabled"])
         self.place_approach_m = float(placement_config["approach_m"])
-        self.place_layer_step_m = float(placement_config["layer_step_m"])
-        self.park1_base = XYZ(
-            float(placement_config["park_1"]["x_m"]),
-            float(placement_config["park_1"]["y_m"]),
-            float(placement_config["park_1"]["first_layer_z_m"]),
-        )
-        self.park2_base = XYZ(
-            float(placement_config["park_2"]["x_m"]),
-            float(placement_config["park_2"]["y_m"]),
-            float(placement_config["park_2"]["first_layer_z_m"]),
-        )
-        raw_offsets = list(placement_config["slot_offsets_xy_m"])
-        if len(raw_offsets) != 8:
-            raise ValueError("placement.slot_offsets_xy_m 必须正好包含 8 个数（4 组 x/y）")
-        self.slot_offsets = [
-            (float(raw_offsets[i]), float(raw_offsets[i + 1]))
-            for i in range(0, 8, 2)
-        ]
 
         self._state_lock = threading.Lock()
         self._pose_cv = threading.Condition()
+        self._joint_cv = threading.Condition()
         self._initial_cv = threading.Condition()
         self._latest_pose: Optional[XYZ] = None
+        self._latest_joints: Optional[list[float]] = None
         self._latest_pose_time = 0.0
         self._initial_ready = False
         self._worker: Optional[threading.Thread] = None
@@ -186,11 +237,21 @@ class CompetitionManipulationBackend(Node):
         self.pose_sub = self.create_subscription(
             PoseStamped, self.arm_pose_topic, self._on_arm_pose, 20
         )
+        self.joint_sub = self.create_subscription(
+            JointState, self.arm_joint_state_topic, self._on_joint_state, 20
+        )
         self.pick_target_pub = self.create_publisher(PickTarget, self.pick_target_topic, 10)
 
         self.initial_pose_client = self.create_client(Trigger, self.initial_pose_service)
+        self.arm_joints_client = self.create_client(SetArmJoints, self.arm_joints_service)
         self.arm_position_client = self.create_client(SetArmPosition, self.arm_position_service)
         self.suction_client = self.create_client(SetBool, self.suction_service)
+        self.sorting_scan_a_srv = self.create_service(
+            Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a
+        )
+        self.sorting_scan_b_srv = self.create_service(
+            Trigger, "/atlas/manipulation/move_to_sorting_scan_b", self._on_sorting_scan_b
+        )
 
         self.status_timer = self.create_timer(0.2, self._publish_status)
         self.get_logger().info(
@@ -198,7 +259,7 @@ class CompetitionManipulationBackend(Node):
             f"place_enabled={self.place_enabled}; view_scan_enabled={self.view_scan_enabled}"
         )
 
-    def _load_placement_config(self) -> dict:
+    def _load_placement_config(self, competition=None) -> dict:
         base = {
             "placement": {
                 "enabled": bool(self.declare_parameter("placement.enabled", False).value),
@@ -232,9 +293,10 @@ class CompetitionManipulationBackend(Node):
                 ),
             }
         }
-        competition = load_optional_competition_config(
-            str(self.get_parameter("competition_config").value)
-        )
+        if competition is None:
+            competition = load_optional_competition_config(
+                str(self.get_parameter("competition_config").value)
+            )
         if competition is not None:
             base = apply_manipulation_placement_overrides(base, competition.manipulation)
         return base["placement"]
@@ -252,6 +314,14 @@ class CompetitionManipulationBackend(Node):
             self._latest_pose = xyz
             self._latest_pose_time = time.monotonic()
             self._pose_cv.notify_all()
+
+    def _on_joint_state(self, msg: JointState) -> None:
+        values = [float(v) for v in list(msg.position)[:5]]
+        if len(values) != 5:
+            return
+        with self._joint_cv:
+            self._latest_joints = values
+            self._joint_cv.notify_all()
 
     def _set_status(
         self,
@@ -315,6 +385,8 @@ class CompetitionManipulationBackend(Node):
         self._cancel_event.clear()
         request_copy = StartManipulation.Request()
         request_copy.backend = request.backend
+        if hasattr(request_copy, "arena"):
+            request_copy.arena = getattr(request, "arena", "")
         request_copy.waypoint_id = request.waypoint_id
         request_copy.prepare_action = request.prepare_action
         request_copy.arrival_task = request.arrival_task
@@ -433,18 +505,86 @@ class CompetitionManipulationBackend(Node):
             return False
         return self._wait_pose_target(target, self.motion_timeout_s)
 
+    def _wait_joint_target(self, target: list[float], timeout_s: float) -> bool:
+        deadline = time.monotonic() + timeout_s
+        stable = 0
+        with self._joint_cv:
+            while time.monotonic() < deadline:
+                if self._cancelled():
+                    return False
+                if self._latest_joints is not None:
+                    error = max(abs(a - b) for a, b in zip(self._latest_joints, target))
+                    if error <= self.joint_tolerance_rad:
+                        stable += 1
+                        if stable >= max(1, self.stable_samples):
+                            return True
+                    else:
+                        stable = 0
+                self._joint_cv.wait(timeout=0.05)
+        return False
+
+    def _move_named_pose(self, pose_name: str, arena: str = "", area: str = "") -> bool:
+        pose = resolve_arm_pose(
+            self.arm_motion, pose_name, arena=arena or None, area=area or None
+        )
+        req = SetArmJoints.Request()
+        req.joints_rad = [float(v) for v in pose["joints_rad"]]
+        req.speed_rad_s = float(pose["speed_rad_s"])
+        req.suction_valid = False
+        req.suction_enable = False
+        result = self._call_service(self.arm_joints_client, req)
+        if result is None or not result.success:
+            return False
+        if not self._wait_joint_target(req.joints_rad, self.motion_timeout_s):
+            return False
+        current = self._current_pose()
+        expected = XYZ(float(pose["x_m"]), float(pose["y_m"]), float(pose["z_m"]))
+        if current is not None and current.distance(expected) > self.pose_validation_tolerance_m:
+            self.get_logger().error(
+                f"{pose_name} 关节已到位但 TCP 偏差 {current.distance(expected):.3f} m 超限"
+            )
+            return False
+        return True
+
+    def _on_sorting_scan_a(self, _request, response):
+        try:
+            response.success = self._move_named_pose("sorting_scan_a")
+            response.message = "sorting_scan_a 到位" if response.success else "sorting_scan_a 到位失败"
+        except Exception as exc:  # noqa: BLE001
+            response.success = False
+            response.message = str(exc)
+        return response
+
+    def _on_sorting_scan_b(self, _request, response):
+        try:
+            response.success = self._move_named_pose("sorting_scan_b")
+            response.message = "sorting_scan_b 到位" if response.success else "sorting_scan_b 到位失败"
+        except Exception as exc:  # noqa: BLE001
+            response.success = False
+            response.message = str(exc)
+        return response
+
     # ---------------- 比赛动作 ----------------
     def _run_task(self, request: StartManipulation.Request) -> None:
         task = (request.arrival_task or request.prepare_action or "").strip()
         try:
+            arena = str(getattr(request, "arena", "") or "").strip().upper()
             if task == "pre_recognition":
-                ok = self._do_pre_recognition()
+                ok = self._do_pre_recognition(arena, request.waypoint_id)
             elif task == "view_scan":
-                ok = self._do_view_scan()
+                ok = self._do_view_scan(arena, request.waypoint_id)
+            elif task in {"zero", "sorting_scan_a", "sorting_scan_b", "navigation_safe"}:
+                ok = self._move_named_pose(task)
+            elif task == "pickup_observe":
+                ok = self._move_named_pose("pickup_observe", arena=arena)
+            elif task == "park_prepare":
+                ok = self._move_named_pose("park_prepare", arena=arena, area=request.waypoint_id)
             elif task == "pick":
-                ok = self._do_pick(int(request.slot), int(request.layer))
+                ok = self._do_pick(arena, int(request.slot), int(request.layer))
             elif task == "place":
-                ok = self._do_place(request.waypoint_id, int(request.slot), int(request.layer))
+                ok = self._do_place(
+                    arena, request.waypoint_id, int(request.slot), int(request.layer)
+                )
             else:
                 raise ValueError(f"不支持的机械臂任务: {task}")
 
@@ -479,28 +619,26 @@ class CompetitionManipulationBackend(Node):
                     message=str(exc),
                 )
 
-    def _do_pre_recognition(self) -> bool:
+    def _do_pre_recognition(self, arena: str, area: str) -> bool:
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
-            step="move_to_initial_pose",
-            message="回固定观察位",
+            step="move_to_observe_pose",
+            message=f"移动到 {area} 固定观察或预备位",
         )
-        if self._initial_ready:
-            return True
-        req = Trigger.Request()
-        result = self._call_service(self.initial_pose_client, req, self.service_timeout_s)
-        if result is None or not result.success:
-            return False
-        return self._wait_initial_ready(self.initial_pose_timeout_s)
+        if area == "pickup":
+            return self._move_named_pose("pickup_observe", arena=arena)
+        if area in {"park_1", "park_2"}:
+            return self._move_named_pose("park_prepare", arena=arena, area=area)
+        raise ValueError(f"pre_recognition 不支持区域: {area}")
 
-    def _do_view_scan(self) -> bool:
+    def _do_view_scan(self, arena: str, area: str) -> bool:
         if not self.view_scan_enabled:
             self._set_status(
                 ManipulationStatus.STATE_RUNNING,
                 step="view_scan_fallback",
-                message="view_scan 未标定，退化为重新回观察位",
+                message="view_scan 未标定，退化为重新回固定观察位",
             )
-            return self._do_pre_recognition()
+            return self._do_pre_recognition(arena, area)
 
         start = self._current_pose()
         if start is None:
@@ -517,7 +655,7 @@ class CompetitionManipulationBackend(Node):
         )
         return self._move_position(target, suction_valid=False, suction_enable=False)
 
-    def _do_pick(self, slot: int, layer: int) -> bool:
+    def _do_pick(self, arena: str, slot: int, layer: int) -> bool:
         if slot not in (0, 1, 2, 3):
             raise ValueError(f"pickup slot 非法: {slot}")
         if layer not in (1, 2, 3):
@@ -532,9 +670,20 @@ class CompetitionManipulationBackend(Node):
             step="select_pick_target",
             message=f"选择角点 slot={slot}, layer={layer}",
         )
+        spec = pickup_target_spec(self.arm_motion, arena, layer)
         msg = PickTarget()
         msg.corner_index = int(slot)
         msg.layer = int(layer)
+        if hasattr(msg, "use_target_z"):
+            msg.use_target_z = True
+            msg.target_z_m = float(spec["target_z_m"])
+        if hasattr(msg, "use_orientation"):
+            msg.use_orientation = True
+            msg.pitch_rad = float(spec["pitch_rad"])
+            msg.yaw_rad = float(spec["yaw_rad"])
+        if hasattr(msg, "use_approach"):
+            msg.use_approach = True
+            msg.approach_m = float(self.pick_approach_m)
         self.pick_target_pub.publish(msg)
         time.sleep(max(0.0, self.pick_target_settle_s))
 
@@ -543,45 +692,34 @@ class CompetitionManipulationBackend(Node):
             self.get_logger().error("/pick_target 后机械臂未检测到有效移动并稳定")
             return False
 
-        down = XYZ(above.x, above.y, above.z - self.pick_descent_m)
+        contact = compute_pick_contact_target(above, spec["target_z_m"])
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="pick_descend",
-            message=f"下探 {self.pick_descent_m:.3f} m 并打开吸盘",
+            message=f"下降到标定吸取高度 z={contact.z:.3f} m 并打开吸盘",
         )
-        if not self._move_position(down, suction_valid=True, suction_enable=True):
+        if not self._move_position(contact, suction_valid=True, suction_enable=True):
             return False
 
         time.sleep(max(0.0, self.suction_settle_s))
-        lift = XYZ(down.x, down.y, down.z + self.pick_lift_m)
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="pick_lift",
-            message=f"吸附后抬起 {self.pick_lift_m:.3f} m",
+            message=f"吸附后回到抓取接近位 z={above.z:.3f} m",
         )
-        return self._move_position(lift, suction_valid=True, suction_enable=True)
+        return self._move_position(above, suction_valid=True, suction_enable=True)
 
-    def _place_target(self, park: str, slot: int, existing_layer: int) -> XYZ:
-        if not self.place_enabled:
-            raise RuntimeError(
-                "placement.enabled=false：请先实测园区固定放置位姿，再开启自动放置"
-            )
-        if park not in ("park_1", "park_2"):
-            raise ValueError(f"未知园区: {park}")
-        if slot not in (0, 1, 2, 3):
-            raise ValueError(f"park slot 非法: {slot}")
-        if existing_layer < 0:
-            raise ValueError(f"existing layer 非法: {existing_layer}")
-        base = self.park1_base if park == "park_1" else self.park2_base
-        dx, dy = self.slot_offsets[slot]
-        return XYZ(
-            base.x + dx,
-            base.y + dy,
-            base.z + existing_layer * self.place_layer_step_m,
+    def _place_target(
+        self, arena: str, park: str, slot: int, existing_layer: int
+    ) -> XYZ:
+        return compute_placement_target(
+            self.arm_motion, self.placement_config, arena, park, slot, existing_layer
         )
 
-    def _do_place(self, park: str, slot: int, existing_layer: int) -> bool:
-        target = self._place_target(park, slot, existing_layer)
+    def _do_place(
+        self, arena: str, park: str, slot: int, existing_layer: int
+    ) -> bool:
+        target = self._place_target(arena, park, slot, existing_layer)
         above = XYZ(target.x, target.y, target.z + self.place_approach_m)
 
         self._set_status(

@@ -30,6 +30,7 @@ class CompetitionConfig:
     vision: dict[str, Any] = field(default_factory=dict)
     navigation: dict[str, Any] = field(default_factory=dict)
     manipulation: dict[str, Any] = field(default_factory=dict)
+    arm_motion: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
 
 
@@ -66,11 +67,17 @@ def load_competition_config(path: str | os.PathLike[str]) -> CompetitionConfig:
 
     navigation = dict(competition.get("navigation", {}) or {})
     navigation["_source_path"] = str(config_path)
+    arm_motion = dict(competition.get("arm_motion", {}) or {})
+    vision = _vision_with_arm_motion_compatibility(
+        dict(competition.get("vision", {}) or {}),
+        arm_motion,
+    )
     return CompetitionConfig(
         backend_name=str(competition.get("backend_name", "nav2_competition")),
-        vision=dict(competition.get("vision", {}) or {}),
+        vision=vision,
         navigation=navigation,
         manipulation=dict(competition.get("manipulation", {}) or {}),
+        arm_motion=arm_motion,
         source_path=config_path,
     )
 
@@ -146,6 +153,110 @@ def resolve_navigation_waypoint(
         arena=normalized_arena,
         waypoint_id=waypoint,
     )
+
+
+def resolve_arm_pose(
+    arm_motion: Mapping[str, Any],
+    pose_name: str,
+    *,
+    arena: str | None = None,
+    area: str | None = None,
+) -> dict[str, Any]:
+    name = str(pose_name or "").strip()
+    if name in {"zero", "sorting_scan_a", "sorting_scan_b", "navigation_safe"}:
+        pose = _mapping(_mapping(arm_motion.get("fixed_poses", {})).get(name))
+    elif name == "pickup_observe":
+        normalized_arena = _normalize_arena(arena or "")
+        arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
+        pose = _mapping(_mapping(arena_cfg.get("pickup", {})).get("observe"))
+    elif name == "park_prepare":
+        normalized_arena = _normalize_arena(arena or "")
+        park = str(area or "").strip()
+        if park not in {"park_1", "park_2"}:
+            raise CompetitionConfigError("park_prepare area must be park_1 or park_2")
+        arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
+        pose = _mapping(_mapping(arena_cfg.get(park, {})).get("prepare"))
+    else:
+        raise CompetitionConfigError(f"unknown arm pose: {name}")
+
+    if not pose:
+        raise CompetitionConfigError(f"arm pose {name} is not configured")
+    if not bool(pose.get("configured", False)):
+        raise CompetitionConfigError(f"arm pose {name} configured=false")
+    joints = list(pose.get("joints_rad", []) or [])
+    if len(joints) != 5:
+        raise CompetitionConfigError(f"arm pose {name} joints_rad must contain 5 values")
+    required = ("x_m", "y_m", "z_m", "pitch_rad", "yaw_rad", "speed_rad_s")
+    missing = [key for key in required if key not in pose]
+    if missing:
+        raise CompetitionConfigError(
+            f"arm pose {name} missing fields: {', '.join(missing)}"
+        )
+    result = copy.deepcopy(dict(pose))
+    result["joints_rad"] = [float(v) for v in joints]
+    for key in required:
+        result[key] = float(result[key])
+    return result
+
+
+def resolve_pickup_layer_z(
+    arm_motion: Mapping[str, Any], arena: str, layer: int
+) -> float:
+    normalized_arena = _normalize_arena(arena)
+    if int(layer) not in (1, 2, 3):
+        raise CompetitionConfigError("pickup layer must be 1, 2 or 3")
+    arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
+    pickup = _mapping(arena_cfg.get("pickup", {}))
+    if not bool(pickup.get("layer_z_configured", False)):
+        raise CompetitionConfigError(
+            f"arena {normalized_arena} pickup.layer_z_configured=false"
+        )
+    values = list(pickup.get("layer_z_m", []) or [])
+    if len(values) != 3:
+        raise CompetitionConfigError(
+            f"arena {normalized_arena} pickup.layer_z_m must contain 3 values"
+        )
+    return float(values[int(layer) - 1])
+
+
+def resolve_placement_reference(
+    arm_motion: Mapping[str, Any], arena: str, park: str
+) -> dict[str, float]:
+    normalized_arena = _normalize_arena(arena)
+    park_name = str(park or "").strip()
+    if park_name not in {"park_1", "park_2"}:
+        raise CompetitionConfigError("park must be park_1 or park_2")
+    arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
+    reference = _mapping(_mapping(arena_cfg.get(park_name, {})).get("placement_reference"))
+    required = ("x_m", "y_m", "first_layer_z_m")
+    if not reference or any(key not in reference for key in required):
+        raise CompetitionConfigError(
+            f"arena {normalized_arena} {park_name}.placement_reference is not configured"
+        )
+    if not bool(reference.get("configured", False)):
+        raise CompetitionConfigError(
+            f"arena {normalized_arena} {park_name}.placement_reference configured=false"
+        )
+    return {key: float(reference[key]) for key in required}
+
+
+def _vision_with_arm_motion_compatibility(
+    vision: Mapping[str, Any], arm_motion: Mapping[str, Any]
+) -> dict[str, Any]:
+    merged = copy.deepcopy(dict(vision))
+    fixed = _mapping(arm_motion.get("fixed_poses", {}))
+    for key in ("sorting_scan_a", "sorting_scan_b"):
+        pose = fixed.get(key)
+        if isinstance(pose, Mapping):
+            merged[key] = {
+                field: copy.deepcopy(pose[field])
+                for field in (
+                    "configured", "x_m", "y_m", "z_m",
+                    "pitch_rad", "yaw_rad", "speed_rad_s",
+                )
+                if field in pose
+            }
+    return merged
 
 
 def apply_vision_backend_overrides(

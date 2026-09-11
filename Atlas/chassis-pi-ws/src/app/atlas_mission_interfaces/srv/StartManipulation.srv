@@ -1,4 +1,6 @@
 string backend
+# A 或 B，用于选择对应半场机械臂标定参数
+string arena
 # sorting / pickup / park_1 / park_2
 string waypoint_id
 # pre_recognition / view_scan / pick / place

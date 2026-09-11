@@ -748,6 +748,7 @@ ActionResult Runtime::run_manipulation_request(
 
   auto request = std::make_shared<atlas_mission_interfaces::srv::StartManipulation::Request>();
   request->backend = plan_.manipulation_backend;
+  request->arena = model_.arena();
   request->waypoint_id = area;
   request->prepare_action = task == "pre_recognition" ? "pre_recognition" : "";
   request->arrival_task = task;

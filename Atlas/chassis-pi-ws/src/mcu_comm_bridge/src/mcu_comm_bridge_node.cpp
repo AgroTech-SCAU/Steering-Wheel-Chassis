@@ -409,7 +409,9 @@ public:
         dispatch_thread_ = std::thread(&McuCommBridgeNode::dispatch_loop, this);
 
         heartbeat_timer_ = create_rate_timer(heartbeat_rate_hz_, [this]() { send_heartbeat(); });
-        stats_timer_ = create_rate_timer(stats_rate_hz_, [this]() { print_stats(); });
+        if(stats_enabled_) {
+            stats_timer_ = create_rate_timer(stats_rate_hz_, [this]() { print_stats(); });
+        }
         control_timer_ = create_rate_timer(control_rate_hz_, [this]() { control_timer_callback(); });
         imu_publish_timer_ = create_rate_timer(imu_publish_rate_hz_, [this]() { imu_publish_timer_callback(); });
         odom_publish_timer_ = create_rate_timer(odom_publish_rate_hz_, [this]() { odom_publish_timer_callback(); });
@@ -440,6 +442,7 @@ private:
         baudrate_ = declare_parameter<int>("baudrate", 1000000);
         heartbeat_rate_hz_ = declare_parameter<double>("heartbeat_rate_hz", 1.0);
         stats_rate_hz_ = declare_parameter<double>("stats_rate_hz", 1.0);
+        stats_enabled_ = declare_parameter<bool>("stats_enabled", true);
         control_rate_hz_ = declare_parameter<double>("control_rate_hz", 50.0);
 
         imu_publish_rate_hz_ = read_positive_rate("imu_publish_rate_hz", 100.0);
@@ -2014,6 +2017,7 @@ private:
     size_t parser_raw_buffer_capacity_ = 4096u;
     size_t frame_queue_capacity_ = 512u;
     bool auto_ack_start_sensor_event_ = true;
+    bool stats_enabled_ = true;
     bool log_latest_sample_ = false;
     ReusedMessageStampMode reused_message_stamp_mode_ = ReusedMessageStampMode::PreserveSource;
 

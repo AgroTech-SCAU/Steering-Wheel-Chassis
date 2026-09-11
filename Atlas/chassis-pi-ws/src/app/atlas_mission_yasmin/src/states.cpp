@@ -174,6 +174,74 @@ std::string StartRunState::execute(yasmin::Blackboard::SharedPtr blackboard)
   return outcomes::kOk;
 }
 
+ArmZeroState::ArmZeroState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ArmZeroState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  (void)blackboard;
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "ARM_ZERO", "");
+  return action_outcome(runtime_->manipulate("sorting", "zero", 0, 0));
+}
+
+ArmNavigationSafeState::ArmNavigationSafeState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ArmNavigationSafeState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  (void)blackboard;
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "ARM_NAV_SAFE", "");
+  return action_outcome(runtime_->manipulate("", "navigation_safe", 0, 0));
+}
+
+ReturnPickupObserveState::ReturnPickupObserveState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ReturnPickupObserveState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "RETURN_PICKUP_OBSERVE", "");
+  const auto slot = get_slot(blackboard, "pickup_slot");
+  const auto cargo = blackboard->contains("cargo") ?
+    blackboard->get<std::string>("cargo") : std::string();
+  return action_outcome(runtime_->manipulate("pickup", "pickup_observe", slot, 0, cargo));
+}
+
+ParkPrepareState::ParkPrepareState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string ParkPrepareState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "PARK_PREPARE", "");
+  if (!blackboard->contains("destination")) {
+    return outcomes::kFailed;
+  }
+  const auto park = blackboard->get<std::string>("destination");
+  const auto slot = get_slot(blackboard, "park_slot");
+  const auto cargo = blackboard->contains("cargo") ?
+    blackboard->get<std::string>("cargo") : std::string();
+  return action_outcome(runtime_->manipulate(park, "park_prepare", slot, 0, cargo));
+}
+
 InspectSortZoneState::InspectSortZoneState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),

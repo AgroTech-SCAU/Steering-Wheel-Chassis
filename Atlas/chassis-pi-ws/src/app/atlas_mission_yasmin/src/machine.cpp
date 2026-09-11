@@ -1,25 +1,32 @@
 // Copyright 2026 yangxuan
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the Apache License, Version 2.0
 
 #include "atlas_mission_yasmin/machine.hpp"
 
 #include <memory>
+#include <string>
 
 #include "atlas_mission_yasmin/states.hpp"
 
 namespace atlas_mission_yasmin
 {
+
+namespace
+{
+using TransitionMap = yasmin::Transitions;
+
+TransitionMap action_transitions(const std::string & ok_target)
+{
+  return {
+    {outcomes::kOk, ok_target},
+    {outcomes::kFailed, outcomes::kFailed},
+    {outcomes::kReset, outcomes::kReset},
+    {outcomes::kRecovery, outcomes::kRecovery},
+    {outcomes::kShutdown, outcomes::kShutdown},
+  };
+}
+}  // namespace
 
 yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPtr & runtime)
 {
@@ -35,14 +42,16 @@ yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPt
     false);
 
   machine->add_state(
+    "ARM_ZERO", std::make_shared<ArmZeroState>(runtime),
+    action_transitions("INSPECT_SORT_ZONE"));
+
+  machine->add_state(
     "INSPECT_SORT_ZONE", std::make_shared<InspectSortZoneState>(runtime),
-    {
-      {outcomes::kOk, "NAV_PICKUP"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    action_transitions("ARM_NAV_SAFE_INITIAL"));
+
+  machine->add_state(
+    "ARM_NAV_SAFE_INITIAL", std::make_shared<ArmNavigationSafeState>(runtime),
+    action_transitions("NAV_PICKUP"));
 
   machine->add_state(
     "NAV_PICKUP", std::make_shared<NavPickupState>(runtime),
@@ -57,53 +66,39 @@ yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPt
 
   machine->add_state(
     "OBSERVE_PICKUP", std::make_shared<ObservePickupState>(runtime),
-    {
-      {outcomes::kOk, "PICK"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    action_transitions("PICK"));
 
   machine->add_state(
     "PICK", std::make_shared<PickState>(runtime),
-    {
-      {outcomes::kOk, "NAV_PARK"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    action_transitions("RETURN_PICKUP_OBSERVE"));
+
+  machine->add_state(
+    "RETURN_PICKUP_OBSERVE", std::make_shared<ReturnPickupObserveState>(runtime),
+    action_transitions("ARM_NAV_SAFE_TO_PARK"));
+
+  machine->add_state(
+    "ARM_NAV_SAFE_TO_PARK", std::make_shared<ArmNavigationSafeState>(runtime),
+    action_transitions("NAV_PARK"));
 
   machine->add_state(
     "NAV_PARK", std::make_shared<NavParkState>(runtime),
-    {
-      {outcomes::kOk, "OBSERVE_PARK"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    action_transitions("PARK_PREPARE"));
 
   machine->add_state(
-    "OBSERVE_PARK", std::make_shared<ObserveParkState>(runtime),
-    {
-      {outcomes::kOk, "PLACE"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    "PARK_PREPARE", std::make_shared<ParkPrepareState>(runtime),
+    action_transitions("PLACE"));
 
   machine->add_state(
     "PLACE", std::make_shared<PlaceState>(runtime),
-    {
-      {outcomes::kOk, "CHECK_DONE"},
-      {outcomes::kFailed, outcomes::kFailed},
-      {outcomes::kReset, outcomes::kReset},
-      {outcomes::kRecovery, outcomes::kRecovery},
-      {outcomes::kShutdown, outcomes::kShutdown},
-    });
+    action_transitions("RETURN_PARK_PREPARE"));
+
+  machine->add_state(
+    "RETURN_PARK_PREPARE", std::make_shared<ParkPrepareState>(runtime),
+    action_transitions("ARM_NAV_SAFE_TO_PICKUP"));
+
+  machine->add_state(
+    "ARM_NAV_SAFE_TO_PICKUP", std::make_shared<ArmNavigationSafeState>(runtime),
+    action_transitions("CHECK_DONE"));
 
   machine->add_state(
     "CHECK_DONE", std::make_shared<CheckDoneState>(runtime),

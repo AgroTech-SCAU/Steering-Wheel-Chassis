@@ -1,16 +1,5 @@
 // Copyright 2026 yangxuan
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the Apache License, Version 2.0
 
 #include <gtest/gtest.h>
 
@@ -40,20 +29,31 @@ protected:
 };
 }  // namespace
 
-TEST_F(MachineUnitTest, AutonomousMachineHasCompetitionTopology)
+TEST_F(MachineUnitTest, AutonomousMachineUsesSafeArmKeyframeTopology)
 {
   auto machine = atlas_mission_yasmin::build_autonomous_machine(runtime);
   ASSERT_NO_THROW(machine->validate(true));
-  EXPECT_EQ(machine->get_start_state(), "INSPECT_SORT_ZONE");
+  EXPECT_EQ(machine->get_start_state(), "ARM_ZERO");
 
   const auto & states = machine->get_states();
-  EXPECT_EQ(states.size(), 8U);
+  EXPECT_EQ(states.size(), 14U);
   for (const auto * name : {
-    "INSPECT_SORT_ZONE", "NAV_PICKUP", "OBSERVE_PICKUP", "PICK",
-    "NAV_PARK", "OBSERVE_PARK", "PLACE", "CHECK_DONE"})
+    "ARM_ZERO", "INSPECT_SORT_ZONE", "ARM_NAV_SAFE_INITIAL", "NAV_PICKUP",
+    "OBSERVE_PICKUP", "PICK", "RETURN_PICKUP_OBSERVE", "ARM_NAV_SAFE_TO_PARK",
+    "NAV_PARK", "PARK_PREPARE", "PLACE", "RETURN_PARK_PREPARE",
+    "ARM_NAV_SAFE_TO_PICKUP", "CHECK_DONE"})
   {
     EXPECT_TRUE(states.find(name) != states.end()) << name;
   }
+
+  const auto & transitions = machine->get_transitions();
+  EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "INSPECT_SORT_ZONE");
+  EXPECT_EQ(transitions.at("INSPECT_SORT_ZONE").at("ok"), "ARM_NAV_SAFE_INITIAL");
+  EXPECT_EQ(transitions.at("PICK").at("ok"), "RETURN_PICKUP_OBSERVE");
+  EXPECT_EQ(transitions.at("RETURN_PICKUP_OBSERVE").at("ok"), "ARM_NAV_SAFE_TO_PARK");
+  EXPECT_EQ(transitions.at("NAV_PARK").at("ok"), "PARK_PREPARE");
+  EXPECT_EQ(transitions.at("PLACE").at("ok"), "RETURN_PARK_PREPARE");
+  EXPECT_EQ(transitions.at("RETURN_PARK_PREPARE").at("ok"), "ARM_NAV_SAFE_TO_PICKUP");
 }
 
 TEST_F(MachineUnitTest, RootWaitsForMcuAutoBeforeAutonomousMission)

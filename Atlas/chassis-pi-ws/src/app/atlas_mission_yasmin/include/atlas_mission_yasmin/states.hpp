@@ -80,6 +80,34 @@ public:
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
+class ArmZeroState final : public RuntimeState
+{
+public:
+  explicit ArmZeroState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class ArmNavigationSafeState final : public RuntimeState
+{
+public:
+  explicit ArmNavigationSafeState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class ReturnPickupObserveState final : public RuntimeState
+{
+public:
+  explicit ReturnPickupObserveState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
+class ParkPrepareState final : public RuntimeState
+{
+public:
+  explicit ParkPrepareState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
 class InspectSortZoneState final : public RuntimeState
 {
 public:

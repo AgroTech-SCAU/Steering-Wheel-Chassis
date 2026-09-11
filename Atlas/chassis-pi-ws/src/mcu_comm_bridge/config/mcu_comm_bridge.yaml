@@ -152,6 +152,10 @@ mcu_comm_bridge_node:
     # 通信统计日志频率
     stats_rate_hz: 1.0
 
+    # 是否输出 RAW/PARSER/RX/ARM_STATE/PUB/TX 周期统计
+    # 标定启动文件会覆盖为 false，避免干扰交互终端
+    stats_enabled: true
+
     # 是否自动确认 MCU_START_SENSOR_EVENT
     # 当前遥控器启动不依赖该消息，该字段主要为未来传感器启动预留
     auto_ack_start_sensor_event: true

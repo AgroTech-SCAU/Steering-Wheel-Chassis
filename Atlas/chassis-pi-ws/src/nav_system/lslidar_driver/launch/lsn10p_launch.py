@@ -1,14 +1,18 @@
 import os
 import subprocess
 from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode
 from launch_ros.actions import Node
-from launch import LaunchDescription
 
 
 def generate_launch_description():
-    driver_config = os.path.join(get_package_share_directory('lslidar_driver'),'config','lslidar_n10p_uart.yaml')
-    rviz_config = os.path.join(get_package_share_directory('lslidar_driver'),'rviz','lslidar_x10.rviz')
+    driver_config = os.path.join(get_package_share_directory('lslidar_driver'), 'config', 'lslidar_n10p_uart.yaml')
+    rviz_config = os.path.join(get_package_share_directory('lslidar_driver'), 'rviz', 'lslidar_x10.rviz')
+    output = LaunchConfiguration("output")
+    log_level = LaunchConfiguration("log_level")
 
     p = subprocess.Popen("echo $ROS_DISTRO", stdout=subprocess.PIPE, shell=True)
     driver_node = ""
@@ -19,8 +23,9 @@ def generate_launch_description():
         driver_node = LifecycleNode(package='lslidar_driver',
                                     node_executable='lslidar_driver_node',
                                     node_name='lslidar_driver_node',
-                                    node_namespace='x10', # 与对应yaml文件中命名空间一致
-                                    output='screen',
+                                    node_namespace='x10',
+                                    output=output,
+                                    ros_arguments=['--log-level', log_level],
                                     parameters=[driver_config],
                                     )
         rviz_node = Node(
@@ -29,23 +34,26 @@ def generate_launch_description():
             node_name='rviz2',
             node_namespace='cx',
             arguments=['-d', rviz_config],
-            output='screen')
+            output=output)
     else:
         driver_node = LifecycleNode(package='lslidar_driver',
                                     executable='lslidar_driver_node',
                                     name='lslidar_driver_node',
-                                    namespace='x10', # 与对应yaml文件中命名空间一致
+                                    namespace='x10',
                                     parameters=[driver_config],
-                                    output='screen'
+                                    output=output,
+                                    ros_arguments=['--log-level', log_level]
                                     )
         rviz_node = Node(
             package='rviz2',
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz_config],
-            output='screen'
+            output=output
         )
 
     return LaunchDescription([
+        DeclareLaunchArgument("output", default_value="screen"),
+        DeclareLaunchArgument("log_level", default_value="info"),
         driver_node
     ])

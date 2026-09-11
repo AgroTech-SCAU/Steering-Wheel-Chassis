@@ -49,7 +49,7 @@
 
 ```
 at_nav2/
-├── CMakeLists.txt                        # 构建配置，安装 launch/config/maps/rviz2 到 share
+├── CMakeLists.txt                        # 构建配置，安装实际存在的资源目录到 share
 ├── package.xml                           # 包依赖声明
 ├── README.md                             # 本文档
 ├── config/
@@ -62,8 +62,10 @@ at_nav2/
 │   ├── ruikang.yaml                      # 地图描述（分辨率 0.02m）
 │   ├── ruikang.pgm                       # 占据栅格地图
 │   └── ruikang.pbstream                  # Cartographer pbstream 地图
-└── rviz2/                                # RViz2 可视化配置（预留）
 ```
+
+`rviz2/` 是可选目录；如需自定义 RViz2 布局，创建该目录并放入 `.rviz`
+文件即可随包安装。目录不存在时不会导致构建失败。
 
 ---
 

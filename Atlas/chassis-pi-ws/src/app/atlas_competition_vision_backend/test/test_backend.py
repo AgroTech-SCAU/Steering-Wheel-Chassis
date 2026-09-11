@@ -59,11 +59,13 @@ def test_sorting_rule_decodes_both_park_mappings_from_roi():
     assert gear_to_park_2.park_2_cargo == "gear"
 
 
-def test_scan_a_success_returns_a_without_scan_b():
+def test_scan_a_success_still_checks_scan_b_and_returns_a_when_unique():
     calls = []
 
     def scan(name):
         calls.append(name)
+        if name == "sorting_scan_b":
+            return []
         return [
             Detection("chilun", 25.0, 25.0, 0.9),
             Detection("luosi", 125.0, 25.0, 0.9),
@@ -73,7 +75,7 @@ def test_scan_a_success_returns_a_without_scan_b():
 
     assert result.success
     assert result.arena == "A"
-    assert calls == ["sorting_scan_a"]
+    assert calls == ["sorting_scan_a", "sorting_scan_b"]
 
 
 def test_scan_a_failure_then_scan_b_success_returns_b():
@@ -92,6 +94,24 @@ def test_scan_a_failure_then_scan_b_success_returns_b():
 
     assert result.success
     assert result.arena == "B"
+    assert calls == ["sorting_scan_a", "sorting_scan_b"]
+
+
+def test_scan_a_and_scan_b_both_valid_is_rejected_as_ambiguous():
+    calls = []
+
+    def scan(name):
+        calls.append(name)
+        return [
+            Detection("chilun", 25.0, 25.0, 0.9),
+            Detection("luosi", 125.0, 25.0, 0.9),
+        ]
+
+    result = classify_with_scan_sequence(scan, _config())
+
+    assert not result.success
+    assert result.arena == ""
+    assert "ambiguous" in result.message
     assert calls == ["sorting_scan_a", "sorting_scan_b"]
 
 

@@ -10,6 +10,8 @@ atlas_competition_manipulation_backend:
     initial_pose_ready_topic: "/initial_pose_ready"
     pick_target_topic: "/pick_target"
     arm_pose_topic: "/arm/pose"
+    arm_joint_state_topic: "/arm/joint_states"
+    arm_joints_service: "/mcu/set_arm_joints"
     arm_position_service: "/mcu/set_arm_position"
     suction_service: "/mcu/set_suction"
 
@@ -20,15 +22,15 @@ atlas_competition_manipulation_backend:
     stable_delta_m: 0.004
     stable_samples: 5
 
-    # /pick_target 会由 handeye_bridge 先把末端送到目标上方
-    # 这里再相对当前稳定位置向下抓取并抬起
-    # 首次实车必须低速空载确认，必要时按真实 target_z_offset 调整
+    # /pick_target 使用标定层高计算 XY 并先到达吸取点上方
+    # 随后下降到标定层高吸取并原路抬回接近位
     min_pick_target_motion_m: 0.005
     pick_target_settle_s: 0.25
-    pick_descent_m: 0.050
-    pick_lift_m: 0.055
+    pick_approach_m: 0.050
     suction_settle_s: 0.45
     default_speed_rad_s: 0.8
+    joint_tolerance_rad: 0.06
+    pose_validation_tolerance_m: 0.08
 
     # 视觉恢复的机械臂换视角；默认关闭，不允许未标定就自动偏移
     # false 时 view_scan 只重新回固定观察位，属于安全退化模式
@@ -38,21 +40,10 @@ atlas_competition_manipulation_backend:
       dy_m: 0.025
       dz_m: 0.0
 
-    # 园区自动放置必须现场实测后才能开启
-    # x/y/z 均为“底盘已经导航到园区语义点后”的 arm_base 坐标系目标
-    # first_layer_z_m 表示第一层货物释放位置；YASMIN 传入 layer=当前已有层数，
-    # 后端按 first_layer_z + layer * layer_step 计算下一层释放高度
+    # 园区放置基准点由 competition.yaml 的 arm_motion.arenas.* 提供
     placement:
       enabled: false
       approach_m: 0.060
       layer_step_m: 0.050
-      park_1:
-        x_m: 0.0
-        y_m: 0.0
-        first_layer_z_m: 0.0
-      park_2:
-        x_m: 0.0
-        y_m: 0.0
-        first_layer_z_m: 0.0
       # 四个园区槽位相对 park base 的 xy 偏移: [x0,y0,x1,y1,x2,y2,x3,y3]
       slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]

@@ -10,6 +10,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 import os
 from ament_index_python.packages import get_package_share_directory
 
@@ -23,6 +24,8 @@ def generate_launch_description():
                               description='关闭 OpenCV 预览窗口'),
         DeclareLaunchArgument('competition_config', default_value='',
                               description='顶层比赛 YAML；为空时使用 handeye_bridge 默认配置'),
+        DeclareLaunchArgument('auto_move_to_initial_on_start', default_value='true',
+                              description='启动后是否自动移动到 legacy initial pose'),
     ])
 
     # ── 视觉检测 ──
@@ -52,7 +55,14 @@ def generate_launch_description():
     ld.add_action(Node(
         package='handeye_bridge', executable='bridge_node',
         name='handeye_bridge', output='screen',
-        parameters=[config_file, {'competition_config': LaunchConfiguration('competition_config')}],
+        parameters=[
+            config_file,
+            {
+                'competition_config': LaunchConfiguration('competition_config'),
+                'auto_move_to_initial_on_start': ParameterValue(
+                    LaunchConfiguration('auto_move_to_initial_on_start'), value_type=bool),
+            },
+        ],
         respawn=True, respawn_delay=2.0,
     ))
 

@@ -1020,6 +1020,9 @@ def main() -> None:
     parser.add_argument(
         "--allow-unprepared", action="store_true",
         help="仅相机/算法调试：允许机械臂未到初始位置时检测，完整应用禁止使用")
+    parser.add_argument(
+        "--auto-start", action="store_true",
+        help="启动后立即连续检测；仅供标定预览，必须同时使用 --allow-unprepared")
     args, _ = parser.parse_known_args()
 
     # 命令行只覆盖运行时需要经常调整的参数，模型路径和类别仍按包内资源查找。
@@ -1037,8 +1040,12 @@ def main() -> None:
         CONFIG["service"]["topic_name"] = args.topic_name
     if args.allow_unprepared:
         CONFIG["vision_pose_gate"]["required"] = False
+    if args.auto_start and not args.allow_unprepared:
+        parser.error("--auto-start 必须与 --allow-unprepared 同时使用")
 
     server = VisionDetectServer(camera_id=args.camera)
+    if args.auto_start:
+        server._start_detection()
     server.spin()
 
 

@@ -85,6 +85,7 @@ def generate_launch_description():
             launch_arguments={
                 'no_preview': no_preview,
                 'competition_config': competition_config,
+                'auto_move_to_initial_on_start': 'false',
             }.items(),
             condition=IfCondition(enable_vision),
         ),

@@ -1,144 +1,182 @@
 # Atlas 智械争锋顶层比赛配置
-#
-# A 半场已接入实测地图和导航点
-# B 半场当前临时复用 A 半场数据，正式比赛前必须重新实测替换
-#
-# 坐标说明
-# navigation waypoint 为 map 坐标系下的底盘导航位姿
-# sorting_scan 为机械臂基座坐标系下的视觉观察位姿
-# sorting_rule ROI 为图像像素区域 [u_min, v_min, u_max, v_max]
-# manipulation placement 为机械臂基座坐标系下的放置位姿
-#
-# 未完成实测的参数保持 configured=false 或 enabled=false
+# 未完成实测的机械臂关键位姿保持 configured=false
+# 固定关键位姿优先按 joints_rad 执行 末端位姿用于标定复核
 
 competition:
-  # 导航后端名称，需与 mission_route.yaml 保持一致
   backend_name: nav2_competition
 
   vision:
-    # A 半场分拣标识机械臂观察位姿，单位 m 和 rad
-    sorting_scan_a:
-      configured: false
-      x_m: 0.0
-      y_m: 0.0
-      z_m: 0.0
-      pitch_rad: 0.0
-      yaw_rad: 0.0
-      speed_rad_s: 0.5
-
-    # B 半场分拣标识机械臂观察位姿，单位 m 和 rad
-    sorting_scan_b:
-      configured: false
-      x_m: 0.0
-      y_m: 0.0
-      z_m: 0.0
-      pitch_rad: 0.0
-      yaw_rad: 0.0
-      speed_rad_s: 0.5
-
-    # 两个园区标识在图像中的 ROI
-    # 格式为 [u_min, v_min, u_max, v_max]
     sorting_rule:
       enabled: false
       park_1_roi: [0, 0, 0, 0]
       park_2_roi: [0, 0, 0, 0]
 
-    # 模型类别名到系统标准类别名的映射
     class_aliases:
       chilun: gear
       luosi: t_bolt
 
   navigation:
-    # 语义点使用 map 坐标系下的绝对位姿
     coordinate_mode: absolute_map
-
-    # Nav2 NavigateToPose action
     action_name: navigate_to_pose
-
-    # 等待 Nav2 action server 的超时时间
-    action_server_timeout_s: 20.0
-
-    # 首次启动对应半场导航栈的等待时间
+    action_server_timeout_s: 10.0
     stack_ready_timeout_s: 30.0
 
     arenas:
       A:
-        # A 半场实测地图
         map: "maps/test/ruikang.yaml"
         pbstream: "maps/test/ruikang.pbstream"
-
-        # 底盘导航停车点，x y 单位 m，yaw 单位 rad
         waypoints:
-          # 货物区
-          pickup:
-            x: 1.19
-            y: 0.14
-            yaw: 0.0
-            configured: true
-
-          # 园区一
-          park_1:
-            x: 0.70
-            y: -0.38
-            yaw: -2.133260731
-            configured: true
-
-          # 园区二
-          park_2:
-            x: 0.53
-            y: 0.48
-            yaw: 0.998693443
-            configured: true
+          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
+          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
+          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
 
       B:
-        # 临时复用 A 半场，仅用于联调
-        # 正式比赛前必须替换为 B 半场真实地图和导航点
+        # 临时复用 A 半场 正式比赛前必须替换
         map: "maps/test/ruikang.yaml"
         pbstream: "maps/test/ruikang.pbstream"
-
         waypoints:
-          pickup:
-            x: 1.19
-            y: 0.14
-            yaw: 0.0
-            configured: true
+          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
+          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
+          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
 
-          park_1:
-            x: 0.70
-            y: -0.38
-            yaw: -2.133260731
-            configured: true
+  arm_motion:
+    fixed_poses:
+      zero:
+        configured: false
+        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+        x_m: 0.0
+        y_m: 0.0
+        z_m: 0.0
+        pitch_rad: 0.0
+        yaw_rad: 0.0
+        speed_rad_s: 0.5
 
-          park_2:
-            x: 0.53
-            y: 0.48
-            yaw: 0.998693443
-            configured: true
+      sorting_scan_a:
+        configured: false
+        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+        x_m: 0.0
+        y_m: 0.0
+        z_m: 0.0
+        pitch_rad: 0.0
+        yaw_rad: 0.0
+        speed_rad_s: 0.5
+
+      sorting_scan_b:
+        configured: false
+        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+        x_m: 0.0
+        y_m: 0.0
+        z_m: 0.0
+        pitch_rad: 0.0
+        yaw_rad: 0.0
+        speed_rad_s: 0.5
+
+      navigation_safe:
+        configured: false
+        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+        x_m: 0.0
+        y_m: 0.0
+        z_m: 0.0
+        pitch_rad: 0.0
+        yaw_rad: 0.0
+        speed_rad_s: 0.5
+
+    arenas:
+      A:
+        pickup:
+          observe:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          layer_z_configured: false
+          layer_z_m: [0.0, 0.0, 0.0]
+
+        park_1:
+          prepare:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          placement_reference:
+            configured: false
+            x_m: 0.0
+            y_m: 0.0
+            first_layer_z_m: 0.0
+
+        park_2:
+          prepare:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          placement_reference:
+            configured: false
+            x_m: 0.0
+            y_m: 0.0
+            first_layer_z_m: 0.0
+
+      B:
+        pickup:
+          observe:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          layer_z_configured: false
+          layer_z_m: [0.0, 0.0, 0.0]
+
+        park_1:
+          prepare:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          placement_reference:
+            configured: false
+            x_m: 0.0
+            y_m: 0.0
+            first_layer_z_m: 0.0
+
+        park_2:
+          prepare:
+            configured: false
+            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            x_m: 0.0
+            y_m: 0.0
+            z_m: 0.0
+            pitch_rad: 0.0
+            yaw_rad: 0.0
+            speed_rad_s: 0.5
+          placement_reference:
+            configured: false
+            x_m: 0.0
+            y_m: 0.0
+            first_layer_z_m: 0.0
 
   manipulation:
     placement:
-      # 自动放置总开关，未完成实测前保持 false
       enabled: false
-
-      # 放置点上方的接近和撤离高度
       approach_m: 0.060
-
-      # 每增加一层的 Z 高度
-      # target_z = first_layer_z_m + existing_layer * layer_step_m
       layer_step_m: 0.050
-
-      # 底盘到达 park_1 后的机械臂放置基准点
-      park_1:
-        x_m: 0.0
-        y_m: 0.0
-        first_layer_z_m: 0.0
-
-      # 底盘到达 park_2 后的机械臂放置基准点
-      park_2:
-        x_m: 0.0
-        y_m: 0.0
-        first_layer_z_m: 0.0
-
-      # 四个放置槽位相对 park 基准点的 XY 偏移
-      # 格式为 [x0, y0, x1, y1, x2, y2, x3, y3]
       slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]

@@ -40,8 +40,12 @@ from atlas_competition_config.config import (
 
 try:
     from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
+    from .pick_target_config import pick_command_z, resolve_pick_target_parameters
+    from .competition_pose_targets import pickup_vision_pose_targets
 except ImportError:  # 兼容直接运行源码文件
     from vision_pose_gate import VisionPoseTarget, vision_pose_for_position
+    from pick_target_config import pick_command_z, resolve_pick_target_parameters
+    from competition_pose_targets import pickup_vision_pose_targets
 
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
 _SetArmPose = None
@@ -172,6 +176,7 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("workspace_z_max_m", 0.50)
         self.declare_parameter("initial_pose_departure_tolerance_m", 0.03)
         self._sorting_scan_overrides = self._load_sorting_scan_overrides()
+        self._competition_pickup_vision_targets = self._load_pickup_vision_targets()
 
         # ── 深度模式 ──
         # "manual": 使用 planeX_z_m 固定高度 (默认, 兼容旧配置)
@@ -335,6 +340,14 @@ class HandEyeBridgeNode(Node):
         if competition is None:
             return {}
         return apply_handeye_scan_overrides({}, competition.vision)
+
+    def _load_pickup_vision_targets(self) -> list[tuple[str, tuple[float, float, float]]]:
+        competition = load_optional_competition_config(
+            str(self.get_parameter("competition_config").value)
+        )
+        if competition is None:
+            return []
+        return pickup_vision_pose_targets(competition.arm_motion)
 
     def _scan_value(self, key: str, field: str):
         section = self._sorting_scan_overrides.get(key, {})
@@ -762,7 +775,11 @@ class HandEyeBridgeNode(Node):
 
     def _vision_pose_targets(self) -> list[VisionPoseTarget]:
         targets = []
-        if self._initial_pose_configured():
+        if self._competition_pickup_vision_targets:
+            for name, xyz in self._competition_pickup_vision_targets:
+                targets.append(VisionPoseTarget(
+                    name, True, np.array(xyz, dtype=np.float64)))
+        elif self._initial_pose_configured():
             try:
                 init_x, init_y, init_z, _pitch, _yaw, _speed = self._initial_pose_command()
                 targets.append(VisionPoseTarget(
@@ -919,7 +936,12 @@ class HandEyeBridgeNode(Node):
                 layer = 1
             self.get_logger().warn(f"无效 layer={msg.layer}, 回退到 layer={layer}")
 
-        plane_z = float(self.get_parameter(f"plane{layer}_z_m").value)
+        default_plane_z = float(self.get_parameter(f"plane{layer}_z_m").value)
+        default_pitch = float(self.get_parameter("initial_pitch_rad").value)
+        default_yaw = float(self.get_parameter("initial_yaw_rad").value)
+        plane_z, target_pitch, target_yaw, explicit_target_z = resolve_pick_target_parameters(
+            msg, default_plane_z, default_pitch, default_yaw
+        )
 
         if self._latest_detections is None or len(self._latest_detections.detections) == 0:
             self.get_logger().warn("尚无检测数据 (/detection_centers)")
@@ -1020,7 +1042,8 @@ class HandEyeBridgeNode(Node):
             x, y, z_pnp = (float(p_target_base[0]),
                            float(p_target_base[1]),
                            float(p_target_base[2]))
-            z = z_pnp + z_offset  # 加 Z 偏移避免碰撞
+            target_plane_z = plane_z if explicit_target_z else z_pnp
+            z = pick_command_z(msg, target_plane_z, z_offset)
 
         else:
             # ═══ 手动深度模式 (默认): 射线-平面求交 ═══
@@ -1030,12 +1053,13 @@ class HandEyeBridgeNode(Node):
                 return
 
             x, y = float(P_base[0]), float(P_base[1])
-            z = float(plane_z + z_offset)  # Z 直接用 yaml 高度 + 偏移
+            z = pick_command_z(msg, plane_z, z_offset)
 
         # 手动偏置 (补偿系统误差，通常标定后微调用)
         x += float(self.get_parameter("manual_offset_x_m").value)
         y += float(self.get_parameter("manual_offset_y_m").value)
-        z += float(self.get_parameter("manual_offset_z_m").value)
+        if not explicit_target_z:
+            z += float(self.get_parameter("manual_offset_z_m").value)
 
         corner_names = {0: "左上", 1: "右上", 2: "右下", 3: "左下"}
         cn = corner_names.get(corner, f"角{corner}")
@@ -1072,13 +1096,17 @@ class HandEyeBridgeNode(Node):
             return
 
         if auto_send:
-            if depth_mode == "manual" and not bool(self.get_parameter("plane_heights_configured").value):
+            if (
+                depth_mode == "manual"
+                and not explicit_target_z
+                and not bool(self.get_parameter("plane_heights_configured").value)
+            ):
                 self.get_logger().error(
                     "plane_heights_configured=false，平面高度尚未确认，拒绝自动发送")
             else:
-                pitch = float(self.get_parameter("initial_pitch_rad").value)
-                yaw = float(self.get_parameter("initial_yaw_rad").value)
-                self._send_pose(x, y, z, speed, pitch=pitch, yaw=yaw)
+                self._send_pose(
+                    x, y, z, speed, pitch=target_pitch, yaw=target_yaw
+                )
 
     # ── 射线-平面求交 ──
 
