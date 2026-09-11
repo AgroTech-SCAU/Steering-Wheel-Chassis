@@ -1,9 +1,13 @@
 mission:
-  navigation_backend: nav2_competition
+  navigation_backend: direct_odom_competition
   manipulation_backend: vision_arm
 
   # A/B 半图和实际坐标由导航后端维护；YASMIN 只使用语义点位
   waypoints:
+    # 先做一次激光绝对对齐；若切自动时偏离中转区最优位姿，则用 odom 直达回到原点
+    origin:
+      id: origin
+      timeout_s: 20.0
     pickup:
       id: pickup
       timeout_s: 30.0

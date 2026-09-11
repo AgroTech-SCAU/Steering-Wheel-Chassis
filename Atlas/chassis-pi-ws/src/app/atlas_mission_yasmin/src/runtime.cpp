@@ -119,12 +119,13 @@ Plan Runtime::load_plan(const std::string & path)
     throw std::runtime_error("mission.waypoints must be a map");
   }
 
+  plan.origin = parse_waypoint(waypoints["origin"], "origin");
   plan.pickup = parse_waypoint(waypoints["pickup"], "pickup");
   plan.park_1 = parse_waypoint(waypoints["park_1"], "park_1");
   plan.park_2 = parse_waypoint(waypoints["park_2"], "park_2");
 
-  if (plan.pickup.id.empty() || plan.park_1.id.empty() || plan.park_2.id.empty()) {
-    throw std::runtime_error("pickup, park_1 and park_2 waypoint ids are required");
+  if (plan.origin.id.empty() || plan.pickup.id.empty() || plan.park_1.id.empty() || plan.park_2.id.empty()) {
+    throw std::runtime_error("origin, pickup, park_1 and park_2 waypoint ids are required");
   }
   return plan;
 }
@@ -136,6 +137,9 @@ const Plan & Runtime::plan() const
 
 const Waypoint * Runtime::waypoint(const std::string & id) const
 {
+  if (id == "origin") {
+    return &plan_.origin;
+  }
   if (id == "pickup") {
     return &plan_.pickup;
   }
@@ -558,7 +562,8 @@ SortingResult Runtime::inspect_sorting_zone()
 
 ActionResult Runtime::navigate(const std::string & waypoint_id)
 {
-  if (model_.arena() != "A" && model_.arena() != "B") {
+  // origin is intentionally executed before vision determines arena A/B.
+  if (waypoint_id != "origin" && model_.arena() != "A" && model_.arena() != "B") {
     return ActionResult::kFailed;
   }
   const auto * target = waypoint(waypoint_id);

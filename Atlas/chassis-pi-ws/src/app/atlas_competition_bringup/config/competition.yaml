@@ -3,7 +3,7 @@
 # 固定关键位姿优先按 joints_rad 执行 末端位姿用于标定复核
 
 competition:
-  backend_name: nav2_competition
+  backend_name: direct_odom_competition
 
   vision:
     # 智能分拣区按相机画面左右关系解码：左侧=园区一(park_1)，右侧=园区二(park_2)
@@ -21,6 +21,31 @@ competition:
     action_name: navigate_to_pose
     action_server_timeout_s: 10.0
     stack_ready_timeout_s: 30.0
+
+    # 激光只在全自主任务开头做一次绝对对齐
+    # A/B 地图都必须以中转区最优位姿/朝向作为 (0,0,0)；若 A/B 指向同一地图会自动去重
+    startup_localization:
+      warmup_s: 1.0
+      candidate_timeout_s: 5.0
+      sample_count: 20
+      max_origin_offset_m: 0.60
+      max_origin_yaw_rad: 0.50
+      stability_xy_m: 0.030
+      stability_yaw_rad: 0.040
+
+    # 定位冻结后，所有底盘点位仅靠 MCU 融合 /odom 直达，不再使用 Nav2/DWB 控制
+    direct_control:
+      kp_xy: 1.20
+      kp_yaw: 1.50
+      max_linear_speed_m_s: 0.45
+      max_angular_speed_rad_s: 0.60
+      max_linear_accel_m_s2: 0.50
+      max_angular_accel_rad_s2: 1.00
+      slowdown_distance_m: 0.30
+      position_tolerance_m: 0.025
+      yaw_tolerance_rad: 0.060
+      require_yaw_reached: true
+      brake_hold_s: 0.30
 
     arenas:
       A:

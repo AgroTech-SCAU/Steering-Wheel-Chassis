@@ -80,6 +80,13 @@ public:
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
+class NavOriginState final : public RuntimeState
+{
+public:
+  explicit NavOriginState(Runtime::SharedPtr runtime);
+  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
+};
+
 class ArmZeroState final : public RuntimeState
 {
 public:

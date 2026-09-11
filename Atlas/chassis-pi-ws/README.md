@@ -1,5 +1,10 @@
 # Atlas Pi Workspace
 
+## 当前比赛导航
+
+全自主任务默认使用 `atlas_nav_direct_backend`：开局用激光/Cartographer 只做一次 field-map 与 MCU odom 的绝对对齐，若切自动时不在中转区最优原点则先 odom 闭环回原点；随后进入原机械臂零位与智能分拣扫描流程，之后所有底盘点位均由 MCU 融合 `/odom` 直达；完整 Nav2 后端保留但不作为默认比赛控制器
+
+
 `chassis-pi-ws` 是 Atlas 机器人 Pi 端比赛工作区；当前主线是“智械争锋全自主区”：MCU 触发自动任务，Pi 端运行 YASMIN 任务状态机，完成 A/B 场地识别、语义导航、视觉抓取、园区放置和结果上报
 
 系统的正式配置入口是一份顶层 YAML：

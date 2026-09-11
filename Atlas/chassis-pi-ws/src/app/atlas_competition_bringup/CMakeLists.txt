@@ -34,6 +34,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(navigation_calibration_runtime_source_test
     test/test_navigation_calibration_runtime_source.py
   )
+  ament_add_pytest_test(direct_navigation_integration_test
+    test/test_direct_navigation_integration.py
+  )
 endif()
 
 ament_package()

@@ -82,6 +82,7 @@ struct Plan
 {
   std::string navigation_backend;
   std::string manipulation_backend;
+  Waypoint origin;
   Waypoint pickup;
   Waypoint park_1;
   Waypoint park_2;

@@ -25,8 +25,8 @@ def generate_launch_description():
     nav_backend_name = LaunchConfiguration('navigation_backend_name')
     competition_config = LaunchConfiguration('competition_config')
 
-    full_nav_config = os.path.join(
-        get_package_share_directory('atlas_nav_full_backend'), 'config', 'full_nav.yaml')
+    direct_nav_config = os.path.join(
+        get_package_share_directory('atlas_nav_direct_backend'), 'config', 'direct_nav.yaml')
     default_competition_config = os.path.join(
         get_package_share_directory('atlas_competition_bringup'), 'config', 'competition.yaml')
 
@@ -39,7 +39,7 @@ def generate_launch_description():
         DeclareLaunchArgument('no_preview', default_value='true'),
         DeclareLaunchArgument(
             'navigation_backend_name',
-            default_value='nav2_competition',
+            default_value='direct_odom_competition',
             description='必须与 atlas_mission_yasmin/config/mission_route.yaml 一致'),
         DeclareLaunchArgument(
             'competition_config',
@@ -63,12 +63,12 @@ def generate_launch_description():
         ),
 
         Node(
-            package='atlas_nav_full_backend',
-            executable='full_nav_backend',
-            name='atlas_nav_full_backend',
+            package='atlas_nav_direct_backend',
+            executable='direct_nav_backend',
+            name='atlas_nav_direct_backend',
             output='screen',
             parameters=[
-                full_nav_config,
+                direct_nav_config,
                 {
                     'backend_name': nav_backend_name,
                     'competition_config': competition_config,

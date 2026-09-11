@@ -36,3 +36,9 @@ def test_backend_waits_for_bt_navigator_active_before_sending_goal():
     assert "State.PRIMARY_STATE_ACTIVE" in ensure_text
     assert "MultiThreadedExecutor(num_threads=4)" in backend_text
     assert "ReentrantCallbackGroup()" in backend_text
+
+
+def test_explicit_backend_parameter_is_not_overwritten_by_competition_yaml():
+    backend_text = (PACKAGE_ROOT / "atlas_nav_full_backend" / "full_nav_backend.py").read_text(encoding="utf-8")
+    assert "backend_name_is_explicit" in backend_text
+    assert "if not backend_name_is_explicit:" in backend_text

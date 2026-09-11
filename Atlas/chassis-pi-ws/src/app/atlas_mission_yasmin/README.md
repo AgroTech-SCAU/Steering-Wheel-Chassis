@@ -4,7 +4,7 @@
 
 主流程：
 
-`WAIT_AUTO -> INSPECT_SORT_ZONE -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> NAV_PARK -> OBSERVE_PARK -> PLACE -> CHECK_DONE`
+`WAIT_AUTO -> ARM_ZERO -> NAV_ORIGIN -> INSPECT_SORT_ZONE -> ARM_NAV_SAFE_INITIAL -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> ...`
 
 规则：智能分拣区在车前进方向左侧判为 B 区，右侧判为 A 区；同一次识别返回 gear/t_bolt 的园区映射；导航后端根据 `arena=A/B` 选择对应半图
 

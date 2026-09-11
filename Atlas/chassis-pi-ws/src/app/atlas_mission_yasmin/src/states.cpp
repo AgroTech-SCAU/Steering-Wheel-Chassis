@@ -174,6 +174,21 @@ std::string StartRunState::execute(yasmin::Blackboard::SharedPtr blackboard)
   return outcomes::kOk;
 }
 
+NavOriginState::NavOriginState(Runtime::SharedPtr runtime)
+: RuntimeState(
+    std::move(runtime),
+    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+      outcomes::kShutdown})
+{
+}
+
+std::string NavOriginState::execute(yasmin::Blackboard::SharedPtr blackboard)
+{
+  (void)blackboard;
+  runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_ORIGIN", "startup lidar alignment and origin correction");
+  return action_outcome(runtime_->navigate("origin"));
+}
+
 ArmZeroState::ArmZeroState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),

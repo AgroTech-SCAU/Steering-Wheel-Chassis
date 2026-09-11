@@ -1,0 +1,38 @@
+atlas_nav_direct_backend:
+  ros__parameters:
+    backend_name: direct_odom_competition
+    competition_config: ""
+    odom_topic: /odom
+    cmd_vel_topic: /atlas/navigation/cmd_vel
+    status_topic: /atlas/navigation/status
+    start_service: /atlas/navigation/start
+    cancel_service: /atlas/navigation/cancel
+
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    control_rate_hz: 50.0
+    odom_timeout_s: 0.30
+    default_waypoint_timeout_s: 30.0
+
+    startup_localization:
+      warmup_s: 1.0
+      candidate_timeout_s: 5.0
+      sample_count: 20
+      max_origin_offset_m: 0.60
+      max_origin_yaw_rad: 0.50
+      stability_xy_m: 0.030
+      stability_yaw_rad: 0.040
+
+    control:
+      kp_xy: 1.20
+      kp_yaw: 1.50
+      max_linear_speed_m_s: 0.45
+      max_angular_speed_rad_s: 0.60
+      max_linear_accel_m_s2: 0.50
+      max_angular_accel_rad_s2: 1.00
+      slowdown_distance_m: 0.30
+      position_tolerance_m: 0.025
+      yaw_tolerance_rad: 0.060
+      require_yaw_reached: true
+      brake_hold_s: 0.30

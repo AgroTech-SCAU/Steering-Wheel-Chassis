@@ -36,9 +36,9 @@ TEST_F(MachineUnitTest, AutonomousMachineUsesSafeArmKeyframeTopology)
   EXPECT_EQ(machine->get_start_state(), "ARM_ZERO");
 
   const auto & states = machine->get_states();
-  EXPECT_EQ(states.size(), 14U);
+  EXPECT_EQ(states.size(), 15U);
   for (const auto * name : {
-    "ARM_ZERO", "INSPECT_SORT_ZONE", "ARM_NAV_SAFE_INITIAL", "NAV_PICKUP",
+    "NAV_ORIGIN", "ARM_ZERO", "INSPECT_SORT_ZONE", "ARM_NAV_SAFE_INITIAL", "NAV_PICKUP",
     "OBSERVE_PICKUP", "PICK", "RETURN_PICKUP_OBSERVE", "ARM_NAV_SAFE_TO_PARK",
     "NAV_PARK", "PARK_PREPARE", "PLACE", "RETURN_PARK_PREPARE",
     "ARM_NAV_SAFE_TO_PICKUP", "CHECK_DONE"})
@@ -47,7 +47,8 @@ TEST_F(MachineUnitTest, AutonomousMachineUsesSafeArmKeyframeTopology)
   }
 
   const auto & transitions = machine->get_transitions();
-  EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "INSPECT_SORT_ZONE");
+  EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "NAV_ORIGIN");
+  EXPECT_EQ(transitions.at("NAV_ORIGIN").at("ok"), "INSPECT_SORT_ZONE");
   EXPECT_EQ(transitions.at("INSPECT_SORT_ZONE").at("ok"), "ARM_NAV_SAFE_INITIAL");
   EXPECT_EQ(transitions.at("PICK").at("ok"), "RETURN_PICKUP_OBSERVE");
   EXPECT_EQ(transitions.at("RETURN_PICKUP_OBSERVE").at("ok"), "ARM_NAV_SAFE_TO_PARK");

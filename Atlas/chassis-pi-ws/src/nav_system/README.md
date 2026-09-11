@@ -1,33 +1,36 @@
+# Atlas ：一次激光对齐 + Odom 直达
+
+正式比赛默认使用 `atlas_nav_direct_backend`。进入全自主后，第一次 `origin` 导航会临时启动 Cartographer 纯定位，通过已标定地图确认机器人相对中转区最优位姿（地图原点）的真实偏差；定位稳定后冻结 `map -> odom` 并关闭临时定位进程。若存在偏差，底盘先仅靠 MCU 融合 `/odom` 回到 `(0,0,0)`，成功后才开始原有智能分拣扫描。后续 `pickup / park_1 / park_2` 全部使用冻结坐标关系和 `/odom` 直接闭环，不再让 Navfn、DWB、costmap 或 BT Navigator 参与控制。
+
+速度输出仍为 `/atlas/navigation/cmd_vel`，由 YASMIN 安全门控后转发到 `/motor_cmd_vel`。原 `atlas_nav_full_backend + at_nav2` 完整 Nav2 链路仍保留在仓库中作为备用和调试方案。
+
+---
+
 
 
 ---
 
 ## Atlas 任务系统集成说明
 
-当前导航目录同时保留两类后端：
+当前导航目录保留三类后端：
 
 | 后端 | 包 | 用途 |
 | --- | --- | --- |
-| `full` | `atlas_nav_full_backend` + `at_nav2` | 通过 Nav2 `NavigateToPose` 执行完整导航。 |
-| `pseudo` | `atlas_nav_pseudo_backend` | 不依赖地图和定位，用 `/odom` 做相对位移联调。 |
+| `direct` | `atlas_nav_direct_backend` + `at_nav2` 启动定位 | **正式比赛默认**；开局一次激光对齐，随后全部 `/odom` 直达。 |
+| `full` | `atlas_nav_full_backend` + `at_nav2` | 备用；通过 Nav2 `NavigateToPose` 执行完整导航。 |
+| `pseudo` | `atlas_nav_pseudo_backend` | 仅联调；不依赖地图，用 `/odom` 做相对位移。 |
 
-完整任务栈默认使用：
-
-```bash
-ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=full
-```
-
-安全联调时可切换为：
+正式比赛统一入口：
 
 ```bash
-ros2 launch atlas_mission_manager mission_stack.launch.py navigation_backend:=pseudo
+ros2 launch atlas_competition_bringup competition_stack.launch.py
 ```
 
-注意：Nav2 原始 `/cmd_vel` 已在 `at_nav2/launch/at_nav.launch.py` 中 remap 到 `/atlas/navigation/cmd_vel`。最终到底层 MCU 的 `/motor_cmd_vel` 仍由 `atlas_mission_manager` 根据 AutoPi、任务阶段、Fault/EStop/Manual 等条件门控后发布。
+其中 direct 后端输出 `/atlas/navigation/cmd_vel`；最终到底层 MCU 的 `/motor_cmd_vel` 仍由 `atlas_mission_yasmin` 根据 AutoPi、任务阶段、Fault/EStop/Manual 等条件门控后发布。完整 Nav2 后端保留用于备用调试，不参与默认比赛链路。
 
 # navigation_system — AGT 比赛轮式机器人导航系统
 
-> **基于 ROS2 Humble、Nav2 和 Cartographer 的全栈导航系统**，覆盖从传感器驱动、SLAM 建图、路径规划到底层控制的完整机器人导航栈。
+> **ROS2 Humble 比赛导航系统**：正式比赛采用一次 Cartographer 对齐 + odom 直达；同时保留完整 Nav2 链路用于备用调试。
 
 本系统面向 AGT 比赛场景，采用 **ROS2 Humble** 作为中间件框架，**Cartographer 2D 纯定位** 提供全局位姿估计，**Nav2（Navfn + DWB）** 负责全局规划与局部运动控制，**LSLIDAR N10P** 单线激光雷达为感知输入。
 

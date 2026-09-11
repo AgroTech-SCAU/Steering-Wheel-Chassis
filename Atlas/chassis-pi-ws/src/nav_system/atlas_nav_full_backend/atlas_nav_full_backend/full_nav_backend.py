@@ -69,6 +69,7 @@ class FullNavBackend(Node):
         super().__init__('atlas_nav_full_backend')
 
         self.backend_name = str(self.declare_parameter('backend_name', 'full').value)
+        backend_name_is_explicit = self.backend_name not in {'', 'full'}
         self.status_topic = str(self.declare_parameter('status_topic', '/atlas/navigation/status').value)
         self.start_service = str(self.declare_parameter('start_service', '/atlas/navigation/start').value)
         self.cancel_service = str(self.declare_parameter('cancel_service', '/atlas/navigation/cancel').value)
@@ -95,7 +96,8 @@ class FullNavBackend(Node):
         self.navigation_config = {}
         self.semantic_navigation_enabled = self.competition_config is not None
         if self.competition_config is not None:
-            self.backend_name = self.competition_config.backend_name
+            if not backend_name_is_explicit:
+                self.backend_name = self.competition_config.backend_name
             self.navigation_config = self.competition_config.navigation
             self.action_name = str(self.navigation_config.get('action_name', self.action_name))
             self.coordinate_mode = str(
