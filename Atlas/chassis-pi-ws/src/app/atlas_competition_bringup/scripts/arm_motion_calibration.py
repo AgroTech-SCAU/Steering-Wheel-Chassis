@@ -441,20 +441,18 @@ class ArmMotionCalibration(Node):
             self._start_camera()
 
         fixed = {}
-        fixed["zero"] = self._capture_pose("1/9 zero", "确认机械臂处于零位")
-        fixed["sorting_scan_a"] = self._capture_pose(
-            "2/9 sorting_scan_a", "拖动机械臂到 A 区分拣观察位"
-        )
-        fixed["sorting_scan_b"] = self._capture_pose(
-            "3/9 sorting_scan_b", "拖动机械臂到 B 区分拣观察位"
+        fixed["zero"] = self._capture_pose("1/8 zero", "确认机械臂处于零位")
+        scan_key = f"sorting_scan_{arena.lower()}"
+        fixed[scan_key] = self._capture_pose(
+            f"2/8 {scan_key}", f"拖动机械臂到 {arena} 区分拣观察位"
         )
         fixed["navigation_safe"] = self._capture_pose(
-            "4/9 navigation_safe", "拖动机械臂到安全运输位"
+            "3/8 navigation_safe", "拖动机械臂到安全运输位"
         )
 
         self._navigate(arena, "pickup", fixed["navigation_safe"])
         pickup_observe = self._capture_pose(
-            "5/9 pickup.observe", "拖动机械臂到货物区固定观察位"
+            "4/8 pickup.observe", "拖动机械臂到货物区固定观察位"
         )
         layer_z = [
             self._capture_z(f"pickup 第 {layer} 层基准高度")
@@ -465,17 +463,17 @@ class ArmMotionCalibration(Node):
 
         self._navigate(arena, "park_1", fixed["navigation_safe"])
         park1_prepare = self._capture_pose(
-            "6/9 park_1.prepare", "拖动机械臂到园区一预备位"
+            "5/8 park_1.prepare", "拖动机械臂到园区一预备位"
         )
-        park1_reference = self._capture_reference("7/9 park_1.placement_reference")
+        park1_reference = self._capture_reference("6/8 park_1.placement_reference")
         self._require_recorded_pose(park1_prepare, "park_1.prepare")
         self._require_navigation_safe(fixed["navigation_safe"])
 
         self._navigate(arena, "park_2", fixed["navigation_safe"])
         park2_prepare = self._capture_pose(
-            "8/9 park_2.prepare", "拖动机械臂到园区二预备位"
+            "7/8 park_2.prepare", "拖动机械臂到园区二预备位"
         )
-        park2_reference = self._capture_reference("9/9 park_2.placement_reference")
+        park2_reference = self._capture_reference("8/8 park_2.placement_reference")
         self._require_recorded_pose(park2_prepare, "park_2.prepare")
         self._require_navigation_safe(fixed["navigation_safe"])
 

@@ -33,6 +33,9 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
                 "sorting_rule": {"enabled": False},
             },
             "arm_motion": {
+                "fixed_poses": {
+                    "sorting_scan_b": _pose(8.0),
+                },
                 "arenas": {
                     "B": {
                         "pickup": {"observe": {"configured": True, "x_m": 9.0}}
@@ -55,7 +58,6 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
         "fixed_poses": {
             "zero": _pose(0.0),
             "sorting_scan_a": _pose(1.0),
-            "sorting_scan_b": _pose(2.0),
             "navigation_safe": _pose(3.0),
         },
         "pickup": {
@@ -77,6 +79,8 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
     competition = merged["competition"]
 
     assert competition["arm_motion"]["fixed_poses"]["navigation_safe"]["joints_rad"][0] == 3.0
+    assert competition["arm_motion"]["fixed_poses"]["sorting_scan_a"]["joints_rad"][0] == 1.0
+    assert competition["arm_motion"]["fixed_poses"]["sorting_scan_b"]["joints_rad"][0] == 8.0
     assert competition["arm_motion"]["arenas"]["A"]["pickup"]["layer_z_m"] == [0.03, 0.08, 0.13]
     assert competition["arm_motion"]["arenas"]["B"]["pickup"]["observe"]["x_m"] == 9.0
     assert "sorting_scan_a" not in competition["vision"]

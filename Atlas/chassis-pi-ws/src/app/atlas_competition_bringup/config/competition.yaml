@@ -14,6 +14,8 @@ competition:
       chilun: gear
       luosi: t_bolt
 
+  # 地图要求：导航组必须在中转区最优位姿/朝向开始建图，该位姿定义地图原点
+  # 同一底盘基准位姿也用于机械臂 sorting_scan_a / sorting_scan_b 标定
   navigation:
     coordinate_mode: absolute_map
     action_name: navigate_to_pose

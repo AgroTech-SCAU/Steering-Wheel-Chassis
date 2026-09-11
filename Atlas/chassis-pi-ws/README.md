@@ -8,7 +8,7 @@
 src/app/atlas_competition_bringup/config/competition.yaml
 ```
 
-实车标定资产准备完成后，正常情况下只需要改这份 YAML，就能把 A/B 半场地图、导航点、视觉扫描位姿、分拣 ROI 和放置位姿接入整场任务
+实车标定资产准备完成后，正常情况下只需要改这份 YAML，就能把 A/B 半场地图、导航点、视觉扫描位姿、左右分拣规则和放置位姿接入整场任务
 
 ## Quick Start
 
@@ -90,7 +90,7 @@ arena_B.pbstream
 
 ### 4. 确认视觉和手眼标定资产
 
-顶层 `competition.yaml` 管比赛场地、导航点、视觉扫描位姿、分拣 ROI 和放置位姿；相机内参和手眼矩阵属于标定资产，当前由 `handeye_bridge` 单独加载：
+顶层 `competition.yaml` 管比赛场地、导航点、视觉扫描位姿、左右分拣规则和放置位姿；相机内参和手眼矩阵属于标定资产，当前由 `handeye_bridge` 单独加载：
 
 ```text
 src/vision_system/handeye_bridge/config/camera_intrinsics.yaml
@@ -128,8 +128,8 @@ src/app/atlas_competition_bringup/config/competition.yaml
 |---|---|
 | `competition.navigation.arenas.A` | A 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
 | `competition.navigation.arenas.B` | B 半场 `map`、`pbstream`、`pickup / park_1 / park_2` 坐标 |
-| `competition.vision.sorting_scan_a/b` | 机械臂用于判断 A/B 的两个视觉扫描位姿 |
-| `competition.vision.sorting_rule` | `park_1_roi`、`park_2_roi` 分拣标识 ROI |
+| `competition.arm_motion.fixed_poses.sorting_scan_a/b` | A/B 区各自的机械臂分拣观察位；标定 A 只更新 scan_a，标定 B 只更新 scan_b |
+| `competition.vision.sorting_rule` | 启用后直接按相机画面左右关系判定：左=园区一，右=园区二，无需 ROI |
 | `competition.manipulation.placement` | `park_1 / park_2` 放置基准位姿、层高、slot 偏移 |
 
 所有未实测字段保持：
@@ -139,7 +139,27 @@ configured: false
 enabled: false
 ```
 
-地图路径为空、waypoint 未配置、扫描位姿未配置、ROI 未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
+地图路径为空、waypoint 未配置、扫描位姿未配置、分拣规则未启用或放置未启用时，backend 会拒绝执行，不会把 0 默认值当作真实目标
+
+### 5.1 导航与机械臂标定入口
+
+导航地图必须在中转区最优位姿和最优朝向开始建图，该底盘位姿作为地图原点，同时也是后续 `sorting_scan_a / sorting_scan_b` 的底盘基准位姿；先把所选半场的 `map` 与 `pbstream` 路径写入 `competition.yaml`，再运行导航标定：
+
+```bash
+ros2 launch atlas_competition_bringup navigation_calibration.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+程序会先核对 map YAML、地图图片和 pbstream 是否存在，再询问标定 A/B；随后仅启动 Cartographer 纯定位，用户依次遥控到底盘的货物区、园区一、园区二最终位姿并确认，程序记录 `map -> base_link` 的 x/y/yaw 到所选半场 waypoint
+
+机械臂标定：
+
+```bash
+ros2 launch atlas_competition_bringup arm_motion_calibration.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+选择 A 时只标定 `sorting_scan_a`，选择 B 时只标定 `sorting_scan_b`；另一侧已有 scan 位姿会原样保留
 
 ### 6. 完成配置后编译
 

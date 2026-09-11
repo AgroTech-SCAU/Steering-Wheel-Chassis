@@ -19,7 +19,11 @@ def merge_calibration(
         raise ValueError("competition must be a mapping")
 
     arm_motion = competition.setdefault("arm_motion", {})
-    arm_motion["fixed_poses"] = copy.deepcopy(dict(calibration["fixed_poses"]))
+    fixed_poses = arm_motion.setdefault("fixed_poses", {})
+    if not isinstance(fixed_poses, dict):
+        raise ValueError("competition.arm_motion.fixed_poses must be a mapping")
+    for name, pose in dict(calibration["fixed_poses"]).items():
+        fixed_poses[str(name)] = copy.deepcopy(dict(pose))
     arenas = arm_motion.setdefault("arenas", {})
     arena_cfg = arenas.setdefault(arena_name, {})
     arena_cfg["pickup"] = copy.deepcopy(dict(calibration["pickup"]))

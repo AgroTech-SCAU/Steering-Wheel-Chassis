@@ -82,3 +82,15 @@ def test_camera_subprocess_does_not_inherit_calibration_terminal_output():
     assert "stderr=" in camera
     assert "subprocess.DEVNULL" in camera
     assert '"--allow-unprepared", "--auto-start"' in camera
+
+
+def test_selected_arena_captures_only_its_sorting_scan_pose():
+    text = (BRINGUP / "scripts" / "arm_motion_calibration.py").read_text(encoding="utf-8")
+    run = text[text.index("    def run_interactive"):text.index("    def cleanup", text.index("    def run_interactive"))]
+
+    assert 'scan_key = f"sorting_scan_{arena.lower()}"' in run
+    assert 'fixed[scan_key] = self._capture_pose' in run
+    assert 'fixed["sorting_scan_a"] = self._capture_pose' not in run
+    assert 'fixed["sorting_scan_b"] = self._capture_pose' not in run
+    assert '"1/8 zero"' in run
+    assert '"3/8 navigation_safe"' in run
