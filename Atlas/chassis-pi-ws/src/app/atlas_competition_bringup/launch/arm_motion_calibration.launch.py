@@ -22,6 +22,7 @@ def _launch_file(package: str, relpath: str) -> str:
 def generate_launch_description():
     competition_config = LaunchConfiguration("competition_config")
     no_preview = LaunchConfiguration("no_preview")
+    joint_tolerance = LaunchConfiguration("navigation_safe_joint_tolerance_rad")
     direct_nav_config = os.path.join(
         get_package_share_directory("atlas_nav_direct_backend"), "config", "direct_nav.yaml"
     )
@@ -42,6 +43,11 @@ def generate_launch_description():
             "no_preview",
             default_value="false",
             description="true=不显示相机画面 false=自动打开 Vision Detection",
+        ),
+        DeclareLaunchArgument(
+            "navigation_safe_joint_tolerance_rad",
+            default_value="0.25",
+            description="机械臂关节位姿复核容差 (rad)，导航前/后确认机械臂回到记录位姿",
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -89,6 +95,9 @@ def generate_launch_description():
                 {
                     "competition_config": competition_config,
                     "no_preview": ParameterValue(no_preview, value_type=bool),
+                    "navigation_safe_joint_tolerance_rad": ParameterValue(
+                        joint_tolerance, value_type=float
+                    ),
                 }
             ],
         ),
