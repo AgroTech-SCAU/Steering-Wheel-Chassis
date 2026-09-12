@@ -52,9 +52,23 @@ competition:
         map: "maps/test/ruikang.yaml"
         pbstream: "maps/test/ruikang.pbstream"
         waypoints:
-          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
-          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
-          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
+          waypoints:
+          pickup:
+            x: 1.211674
+            y: 0.097731
+            yaw: 0.075733673
+            configured: true
+          park_1:
+            x: 0.605351
+            y: -0.332795
+            yaw: 0.035763268
+            configured: true
+          park_2:
+            x: 0.538807
+            y: 0.488885
+            yaw: 0.047984499
+            configured: true
+
 
       B:
         # 临时复用 A 半场 正式比赛前必须替换
