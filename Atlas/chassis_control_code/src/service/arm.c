@@ -16,6 +16,9 @@ static Arm s_arm = { 0 };
  * @brief 机械臂服务对外只读快照
  */
 static Arm s_arm_view = { 0 };
+/* The Idle/Fault stop path disables servo torque. A new target must re-enable
+ * torque after the goal registers are updated. */
+static bool s_torque_enabled = false;
 
 /**
  * @brief 机械臂服务状态刷新失败的循环保护
@@ -196,6 +199,7 @@ ArmStatus arm_init(const ArmConfig* config) {
     }
 
     memset(&s_arm, 0, sizeof(s_arm));
+    s_torque_enabled = false;
     memset(s_refresh_fallback_seen, 0, sizeof(s_refresh_fallback_seen));
     s_refresh_fallback_index = 0u;
     s_arm.config = *config;
@@ -259,6 +263,12 @@ ArmStatus arm_move_joints(const FiveDofArmJointArray* joints, float speed_rad_s)
     ret = s_send_joints_to_servo(joints, s_resolve_speed(speed_rad_s));
     if(ret != ARM_OK)
         return ret;
+
+    if(!s_torque_enabled) {
+        ret = arm_enable();
+        if(ret != ARM_OK)
+            return ret;
+    }
 
     return s_update_target_state(joints, &pose);
 }
@@ -504,6 +514,7 @@ ArmStatus arm_stop(void) {
         return ARM_DEPENDENCY_MISSING;
     }
 
+    s_torque_enabled = false;
     for(uint8_t i = 0u; i < ARM_DOF; i++) {
         if(s_arm.config.stop_servo(s_arm.config.servo_id[i]) != SERVO_STATUS_OK) {
             return ARM_SERVO_FAILED;
@@ -530,6 +541,8 @@ ArmStatus arm_enable(void) {
             return ARM_SERVO_FAILED;
         }
     }
+
+    s_torque_enabled = true;
 
     return ARM_OK;
 }

@@ -3,6 +3,7 @@ atlas_mission_yasmin:
     route_yaml_path: ""
     mcu_status_timeout_s: 1.0
     service_timeout_s: 3.0
+    sorting_result_timeout_s: 90.0
     required_ready_mask: 0
     navigation_result_timeout_s: 60.0
     manipulation_result_timeout_s: 30.0

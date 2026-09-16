@@ -67,6 +67,7 @@ static void app_runtime_reset_auto_task_context(void);
 static void app_runtime_finish_reset_transition(void);
 static void app_runtime_handle_control_result(AppControlResult result);
 static void app_runtime_handle_pi_mission_event(const PiCommsMissionEvent* event);
+static void app_runtime_stop_for_fault(void);
 
 // ! ========================= 接 口 函 数 实 现 ========================= ! //
 
@@ -243,7 +244,13 @@ static bool app_runtime_apply_safety(void) {
         return false;
     }
 
-    if(state == APP_FSM_STATE_FAULT || state == APP_FSM_STATE_ESTOP) {
+    if(state == APP_FSM_STATE_FAULT) {
+        app_runtime_clear_voice_gate();
+        app_runtime_stop_for_fault();
+        return false;
+    }
+
+    if(state == APP_FSM_STATE_ESTOP) {
         app_runtime_clear_voice_gate();
         (void)app_control_stop_all();
         return false;
@@ -344,6 +351,9 @@ static void app_runtime_apply_control(void) {
             break;
 
         case APP_FSM_STATE_FAULT:
+            app_runtime_stop_for_fault();
+            result = APP_CONTROL_RESULT_SKIPPED;
+            break;
         case APP_FSM_STATE_ESTOP:
         case APP_FSM_STATE_IDLE:
         case APP_FSM_STATE_FINISHED:
@@ -353,6 +363,21 @@ static void app_runtime_apply_control(void) {
     }
 
     app_runtime_handle_control_result(result);
+}
+
+static void app_runtime_stop_for_fault(void) {
+    const AppFault* fault = app_fsm_get_fault();
+
+    /* A mission failure is not an arm electrical fault. Keep the last servo
+     * position powered so an elevated arm does not fall while awaiting reset.
+     * EStop and all other fault sources continue to unload the arm. */
+    if(fault != NULL && fault->source == APP_FAULT_SOURCE_PI_MISSION &&
+       fault->level == APP_FAULT_LEVEL_RECOVERABLE && arm.is_ready()) {
+        (void)app_control_brake_chassis();
+        return;
+    }
+
+    (void)app_control_stop_all();
 }
 
 static void app_runtime_leave_manual_chassis_pc_arm(void) {

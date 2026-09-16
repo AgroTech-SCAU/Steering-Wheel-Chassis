@@ -23,6 +23,7 @@ try:
     import rclpy
     from geometry_msgs.msg import PoseStamped
     from sensor_msgs.msg import JointState
+    from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
     from rclpy.node import Node
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -37,6 +38,7 @@ except ImportError:  # Unit tests exercise pure config helpers without ROS.
     rclpy = None
     PoseStamped = None
     JointState = None
+    MutuallyExclusiveCallbackGroup = None
     Node = object
     MultiThreadedExecutor = None
     DurabilityPolicy = None
@@ -115,6 +117,9 @@ class CompetitionManipulationBackend(Node):
         if rclpy is None:
             raise RuntimeError("rclpy is required to run the competition manipulation backend")
         super().__init__("atlas_competition_manipulation_backend")
+        # Sorting callbacks wait for MCU service replies and joint feedback.
+        # Keep them off the default group used by those clients/subscriptions.
+        self._sorting_group = MutuallyExclusiveCallbackGroup()
 
         self.backend_name = str(self.declare_parameter("backend_name", "vision_arm").value)
         self.start_service = str(
@@ -247,10 +252,12 @@ class CompetitionManipulationBackend(Node):
         self.arm_position_client = self.create_client(SetArmPosition, self.arm_position_service)
         self.suction_client = self.create_client(SetBool, self.suction_service)
         self.sorting_scan_a_srv = self.create_service(
-            Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a
+            Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a,
+            callback_group=self._sorting_group,
         )
         self.sorting_scan_b_srv = self.create_service(
-            Trigger, "/atlas/manipulation/move_to_sorting_scan_b", self._on_sorting_scan_b
+            Trigger, "/atlas/manipulation/move_to_sorting_scan_b", self._on_sorting_scan_b,
+            callback_group=self._sorting_group,
         )
 
         self.status_timer = self.create_timer(0.2, self._publish_status)

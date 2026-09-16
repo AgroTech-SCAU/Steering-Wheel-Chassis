@@ -49,12 +49,26 @@ competition:
 
     arenas:
       A:
-        map: "maps/test/ruikang.yaml"
-        pbstream: "maps/test/ruikang.pbstream"
+        map: maps/test/ruikang.yaml
+        pbstream: maps/test/ruikang.pbstream
         waypoints:
-          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
-          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
-          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
+          pickup:
+            x: 1.275774
+            y: 0.089968
+            yaw: 0.087102491
+            configured: true
+          park_1:
+            x: 0.610192
+            y: -0.36646
+            yaw: 0.056990739
+            configured: true
+          park_2:
+            x: 0.571332
+            y: 0.479321
+            yaw: -0.010816577
+            configured: true
+
+
 
       B:
         # 临时复用 A 半场 正式比赛前必须替换
@@ -68,97 +82,133 @@ competition:
   arm_motion:
     fixed_poses:
       zero:
-        configured: false
-        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-        x_m: 0.0
-        y_m: 0.0
-        z_m: 0.0
-        pitch_rad: 0.0
-        yaw_rad: 0.0
-        speed_rad_s: 0.5
-
+        configured: true
+        joints_rad:
+        - 3.03268
+        - 1.566194
+        - 6.278584
+        - 2.998933
+        - 3.140059
+        x_m: 0.052
+        y_m: 0.004
+        z_m: 0.096
+        pitch_rad: -0.105177715
+        yaw_rad: 0.110542989
+        speed_rad_s: 0.8
       sorting_scan_a:
-        configured: false
-        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-        x_m: 0.0
-        y_m: 0.0
-        z_m: 0.0
-        pitch_rad: 0.0
-        yaw_rad: 0.0
-        speed_rad_s: 0.5
-
+        configured: true
+        joints_rad:
+        - 4.746137
+        - 3.431515
+        - 4.479224
+        - 2.998933
+        - 3.140059
+        x_m: -0.013
+        y_m: -0.332
+        z_m: 0.289
+        pitch_rad: -0.039230777
+        yaw_rad: -1.602912392
+        speed_rad_s: 0.8
       sorting_scan_b:
         configured: false
-        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+        joints_rad:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
+        - 0.0
         x_m: 0.0
         y_m: 0.0
         z_m: 0.0
         pitch_rad: 0.0
         yaw_rad: 0.0
         speed_rad_s: 0.5
-
       navigation_safe:
-        configured: false
-        joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-        x_m: 0.0
+        configured: true
+        joints_rad:
+        - 3.104777
+        - 1.56466
+        - 6.26171
+        - 2.998933
+        - 3.140059
+        x_m: 0.051
         y_m: 0.0
-        z_m: 0.0
-        pitch_rad: 0.0
-        yaw_rad: 0.0
-        speed_rad_s: 0.5
-
+        z_m: 0.1
+        pitch_rad: -0.123621342
+        yaw_rad: 0.038431101
+        speed_rad_s: 0.8
     arenas:
       A:
         pickup:
           observe:
-            configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-            x_m: 0.0
-            y_m: 0.0
-            z_m: 0.0
-            pitch_rad: 0.0
-            yaw_rad: 0.0
-            speed_rad_s: 0.5
-          layer_z_configured: false
-          layer_z_m: [0.0, 0.0, 0.0]
-
+            configured: true
+            joints_rad:
+            - 3.397768
+            - 3.71837
+            - 4.115671
+            - 2.998933
+            - 3.140059
+            x_m: 0.373
+            y_m: -0.099
+            z_m: 0.281
+            pitch_rad: -0.115957227
+            yaw_rad: -0.254542533
+            speed_rad_s: 0.8
+          layer_z_configured: true
+          layer_z_m:
+          - 0.023
+          - 0.066
+          - 0.111
         park_1:
           prepare:
-            configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-            x_m: 0.0
-            y_m: 0.0
-            z_m: 0.0
-            pitch_rad: 0.0
-            yaw_rad: 0.0
-            speed_rad_s: 0.5
+            configured: true
+            joints_rad:
+            - 4.827438
+            - 3.922389
+            - 3.698428
+            - 3.247438
+            - 3.140059
+            x_m: -0.048
+            y_m: -0.402
+            z_m: 0.292
+            pitch_rad: -0.080635581
+            yaw_rad: -1.684244854
+            speed_rad_s: 0.8
           placement_reference:
-            configured: false
-            x_m: 0.0
-            y_m: 0.0
-            first_layer_z_m: 0.0
-
+            configured: true
+            x_m: -0.042
+            y_m: -0.368
+            first_layer_z_m: 0.012
         park_2:
           prepare:
-            configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
-            x_m: 0.0
-            y_m: 0.0
-            z_m: 0.0
-            pitch_rad: 0.0
-            yaw_rad: 0.0
-            speed_rad_s: 0.5
+            configured: true
+            joints_rad:
+            - 1.385185
+            - 3.433049
+            - 4.456215
+            - 3.135457
+            - 3.140059
+            x_m: -0.059
+            y_m: 0.324
+            z_m: 0.288
+            pitch_rad: 0.07583089
+            yaw_rad: 1.758036212
+            speed_rad_s: 0.8
           placement_reference:
-            configured: false
-            x_m: 0.0
-            y_m: 0.0
-            first_layer_z_m: 0.0
-
+            configured: true
+            x_m: 0.017
+            y_m: 0.275
+            first_layer_z_m: 0.017
       B:
         pickup:
           observe:
             configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            joints_rad:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
             x_m: 0.0
             y_m: 0.0
             z_m: 0.0
@@ -166,12 +216,19 @@ competition:
             yaw_rad: 0.0
             speed_rad_s: 0.5
           layer_z_configured: false
-          layer_z_m: [0.0, 0.0, 0.0]
-
+          layer_z_m:
+          - 0.0
+          - 0.0
+          - 0.0
         park_1:
           prepare:
             configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            joints_rad:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
             x_m: 0.0
             y_m: 0.0
             z_m: 0.0
@@ -183,11 +240,15 @@ competition:
             x_m: 0.0
             y_m: 0.0
             first_layer_z_m: 0.0
-
         park_2:
           prepare:
             configured: false
-            joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0]
+            joints_rad:
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
             x_m: 0.0
             y_m: 0.0
             z_m: 0.0
@@ -199,10 +260,17 @@ competition:
             x_m: 0.0
             y_m: 0.0
             first_layer_z_m: 0.0
-
   manipulation:
     placement:
-      enabled: false
-      approach_m: 0.060
-      layer_step_m: 0.050
-      slot_offsets_xy_m: [0.0, 0.0, 0.05, 0.0, 0.05, 0.05, 0.0, 0.05]
+      enabled: true
+      approach_m: 0.06
+      layer_step_m: 0.05
+      slot_offsets_xy_m:
+      - 0.0
+      - 0.0
+      - 0.05
+      - 0.0
+      - 0.05
+      - 0.05
+      - 0.0
+      - 0.05

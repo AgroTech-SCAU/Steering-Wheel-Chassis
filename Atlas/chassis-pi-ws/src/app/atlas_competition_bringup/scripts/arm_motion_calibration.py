@@ -122,7 +122,7 @@ class ArmMotionCalibration(Node):
         self.declare_parameter("navigation_timeout_s", 90.0)
         self.declare_parameter("navigation_start_timeout_s", 40.0)
         self.declare_parameter("feedback_timeout_s", 2.0)
-        self.declare_parameter("navigation_safe_joint_tolerance_rad", 0.08)
+        self.declare_parameter("navigation_safe_joint_tolerance_rad", 0.25)
         self.declare_parameter("pose_speed_rad_s", 0.5)
         self.declare_parameter("no_preview", False)
 

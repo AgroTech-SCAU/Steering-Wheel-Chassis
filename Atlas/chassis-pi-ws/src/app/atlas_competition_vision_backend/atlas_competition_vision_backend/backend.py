@@ -219,6 +219,7 @@ class CompetitionVisionBackend(Node):
         self._group = ReentrantCallbackGroup()
 
         self.declare_parameter("service_timeout_s", 3.0)
+        self.declare_parameter("sorting_scan_timeout_s", 40.0)
         self.declare_parameter("vision_pose_ready_timeout_s", 8.0)
         self.declare_parameter("detection_window_s", 1.0)
         self.declare_parameter("final_centers_wait_s", 0.2)
@@ -318,18 +319,19 @@ class CompetitionVisionBackend(Node):
             return f"{label} service unavailable"
         return None
 
-    def _call_trigger(self, client, label: str) -> tuple[bool, str]:
+    def _call_trigger(self, client, label: str, timeout_s: Optional[float] = None) -> tuple[bool, str]:
         error = self._wait_for_service(client, label)
         if error:
             return False, error
         future = client.call_async(Trigger.Request())
-        if not self._wait_future(future):
+        if not self._wait_future(future, timeout_s):
             return False, f"{label} service timeout"
         result = future.result()
         return bool(result and result.success), str(result.message if result else "")
 
-    def _wait_future(self, future) -> bool:
-        deadline = time.monotonic() + float(self.get_parameter("service_timeout_s").value)
+    def _wait_future(self, future, timeout_s: Optional[float] = None) -> bool:
+        timeout = timeout_s if timeout_s is not None else float(self.get_parameter("service_timeout_s").value)
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if future.done():
                 return True
@@ -358,7 +360,8 @@ class CompetitionVisionBackend(Node):
 
     def _scan_view(self, scan_name: str) -> list[Detection]:
         client = self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
-        ok, message = self._call_trigger(client, scan_name)
+        scan_timeout = float(self.get_parameter("sorting_scan_timeout_s").value)
+        ok, message = self._call_trigger(client, scan_name, scan_timeout)
         if not ok:
             self.get_logger().warn(f"{scan_name} move failed: {message}")
             return []
