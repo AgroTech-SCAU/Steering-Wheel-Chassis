@@ -168,6 +168,8 @@ Runtime::RuntimeConfig Runtime::load_config()
   config.route_yaml_path = declare_parameter<std::string>("route_yaml_path", "");
   config.mcu_status_timeout_s = declare_parameter<double>("mcu_status_timeout_s", 1.0);
   config.service_timeout_s = declare_parameter<double>("service_timeout_s", 3.0);
+  config.sorting_result_timeout_s =
+    declare_parameter<double>("sorting_result_timeout_s", 90.0);
   config.navigation_result_timeout_s =
     declare_parameter<double>("navigation_result_timeout_s", 60.0);
   config.manipulation_result_timeout_s =
@@ -537,7 +539,7 @@ SortingResult Runtime::inspect_sorting_zone()
 
   auto request = std::make_shared<atlas_mission_interfaces::srv::ClassifySortingRule::Request>();
   auto future = classify_sorting_->async_send_request(request);
-  if (future.wait_for(std::chrono::duration<double>(config_.service_timeout_s)) !=
+  if (future.wait_for(std::chrono::duration<double>(config_.sorting_result_timeout_s)) !=
     std::future_status::ready)
   {
     return SortingResult{ActionResult::kTimeout, "", "", "", "sorting service timeout"};

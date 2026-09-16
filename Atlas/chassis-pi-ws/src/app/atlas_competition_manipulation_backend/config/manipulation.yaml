@@ -15,8 +15,9 @@ atlas_competition_manipulation_backend:
     arm_position_service: "/mcu/set_arm_position"
     suction_service: "/mcu/set_suction"
 
-    service_timeout_s: 2.0
-    motion_timeout_s: 12.0
+    # 低层服务应尽快确认收件；到位等待单独计算，适配慢速抬臂。
+    service_timeout_s: 5.0
+    motion_timeout_s: 30.0
     initial_pose_timeout_s: 15.0
     position_tolerance_m: 0.015
     stable_delta_m: 0.004

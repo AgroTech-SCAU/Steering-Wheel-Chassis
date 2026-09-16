@@ -1,6 +1,7 @@
 atlas_competition_vision_backend:
   ros__parameters:
     service_timeout_s: 3.0
+    sorting_scan_timeout_s: 40.0
     vision_pose_ready_timeout_s: 8.0
     detection_window_s: 1.0
     final_centers_wait_s: 0.2

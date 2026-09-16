@@ -175,6 +175,7 @@ private:
     std::string route_yaml_path;
     double mcu_status_timeout_s{1.0};
     double service_timeout_s{3.0};
+    double sorting_result_timeout_s{90.0};
     double navigation_result_timeout_s{60.0};
     double manipulation_result_timeout_s{30.0};
     int64_t required_ready_mask{0};
