@@ -9,6 +9,7 @@
 #include "app_runtime.h"
 #include "app_status.h"
 #include "arm.h"
+#include "asr_comms.h"
 #include "assemble/assemble.h"
 #include "chassis.h"
 #include "delay.h"
@@ -132,6 +133,9 @@ static inline void entry_init(void) {
         if(assemble_pi_comms() != SYSTEM_STATUS_OK)
             return;
 
+        if(assemble_asr_comms() != SYSTEM_STATUS_OK)
+            return;
+
         app_runtime_init();
         app_status_init();
     }
@@ -156,7 +160,7 @@ static inline void entry_init(void) {
  * 500Hz base order:
  * 1. chassis.process()
  * 2. 250Hz slot: odom.process()
- * 3. 100Hz slot: remote_process() -> pc_comms_process() -> pi_comms_process()
+ * 3. 100Hz slot: remote_process() -> pc_comms_process() -> pi_comms_process() -> asr_comms_process()
  * 4. 50Hz slot: arm.refresh_current_state()
  * 5. app_runtime_process()
  *
@@ -181,6 +185,7 @@ static inline void entry_loop(void) {
             remote_process();
             pc_comms_process();
             pi_comms_process();
+            asr_comms_process();
         }
 
         if(entry_tick_50hz()) {

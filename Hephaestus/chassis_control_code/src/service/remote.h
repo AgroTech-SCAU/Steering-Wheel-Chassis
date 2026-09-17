@@ -59,6 +59,8 @@ bool remote_is_manual_requested(void);
 
 bool remote_is_auto_requested(void);
 
+bool remote_is_auto_mode_selected(void);
+
 bool remote_take_auto_start_event(void);
 
 bool remote_take_clear_reset_event(void);

@@ -235,7 +235,7 @@ static bool s_last_drive_inverted[CHASSIS_MODULE_COUNT] = { false };
  * 显式配置可避免依赖设备层兼容默认值
  */
 static const DjiMotorConfig s_drive_motor_dji_config = {
-    .model = DJI_MOTOR_MODEL_M2006,
+    .model = DJI_MOTOR_MODEL_M3508,
 };
 /**
  * @brief 转向电机上电准备重试倒计时

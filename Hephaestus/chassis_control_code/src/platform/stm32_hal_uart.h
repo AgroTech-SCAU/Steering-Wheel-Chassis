@@ -39,8 +39,14 @@ extern UART_HandleTypeDef huart5;
 extern UART_HandleTypeDef huart7;
 
 /**
- * @brief USART10 句柄
+ * @brief UART8 句柄
  * @details 当前用于树莓派链路
+ */
+extern UART_HandleTypeDef huart8;
+
+/**
+ * @brief USART10 句柄
+ * @details 当前用于 ASRPro 双向链路
  */
 extern UART_HandleTypeDef huart10;
 
@@ -71,13 +77,21 @@ bool uart1_write_blocking(const char* data, uint32_t len);
 bool uart7_write_blocking(const char* data, uint32_t len);
 
 /**
+ * @brief 通过 UART8 阻塞发送一段字符串数据
+ * @param data 数据缓冲区
+ * @param len 数据长度, 单位 byte
+ * @return bool `true` 表示发送完成
+ */
+bool uart8_write_blocking(const char* data, uint32_t len);
+PiTxHalResult uart8_get_last_tx_result(void);
+
+/**
  * @brief 通过 USART10 阻塞发送一段字符串数据
  * @param data 数据缓冲区
  * @param len 数据长度, 单位 byte
  * @return bool `true` 表示发送完成
  */
 bool uart10_write_blocking(const char* data, uint32_t len);
-PiTxHalResult uart10_get_last_tx_result(void);
 
 /**
  * @brief 启动 UART 中断接收

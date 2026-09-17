@@ -37,7 +37,7 @@ TCP_len = 0.0;
 % 舵机到 URDF 角的标定关系：
 % SERVO_HOME_DEG 对应 URDF 关节角 [0 0 0 0 0]
 % 注意：这个不是默认显示姿态；默认显示姿态在后面的 servo_zero_deg 设置
-SERVO_HOME_DEG = [180, 270, 360, 180, 180];
+SERVO_HOME_DEG = [180, 90, 360, 180, 180];
 
 % ========================= 统一 MDH 参数建模 ========================= %
 
@@ -49,6 +49,8 @@ L4 = Link('alpha', pi/2,   'a', A4, 'offset',  -pi,                  'd', D4, 'm
 
 % 输入方向修正
 L0.flip = true;
+L1.flip = true;
+L4.flip = true;
 
 servo_arm = SerialLink([L0 L1 L2 L3 L4], 'name', 'atlas_arm0_to_arm4_mdh_exact');
 servo_arm.base = transl(BASE_X, BASE_Y, BASE_Z);
@@ -73,7 +75,7 @@ q_home_deg = SERVO_HOME_DEG;
 q_home = deg2rad(q_home_deg);
 T_home = servo_arm.fkine(q_home);
 
-disp('标定 home 姿态 q_home_deg = [180 270 360 180 180]，对应 URDF 关节角 [0 0 0 0 0]：');
+disp('标定 home 姿态 q_home_deg = [180 90 360 180 180]，对应 URDF 关节角 [0 0 0 0 0]：');
 disp(T_home);
 disp('home 末端位置 transl(T_home) = ');
 disp(transl(T_home));
@@ -92,7 +94,7 @@ fprintf('+X = [%.6f %.6f %.6f] 朝前\n', 1, 0, 0);
 fprintf('+Y = [%.6f %.6f %.6f] 朝左\n', 0, 1, 0);
 fprintf('+Z = [%.6f %.6f %.6f] 朝天\n', 0, 0, 1);
 
-servo_zero_deg = [180, 270, 360, 180, 180];
+servo_zero_deg = [180, 90, 360, 180, 180];
 q_default = deg2rad(servo_zero_deg);
 
 T_default = servo_arm.fkine(q_default);
@@ -100,7 +102,7 @@ T_default_mat = double(T_default);
 R_end = T_default_mat(1:3, 1:3);
 p_end = T_default_mat(1:3, 4);
 
-disp('默认显示的舵机零位 servo_zero_deg = [180 270 360 180 180]：');
+disp('默认显示的舵机零位 servo_zero_deg = [180 90 360 180 180]：');
 disp(servo_zero_deg);
 
 disp('默认显示零位 q_default(rad) = ');
@@ -159,5 +161,5 @@ servo_arm.display();
 %   q_sol = servo_arm.ikcon(T_target, q_seed);
 %
 % 说明：
-%   SERVO_HOME_DEG = [180 270 360 180 180] 只用于保证 MDH 与 Atlas.urdf 的关节角映射一致；
-%   servo_zero_deg = [180 270 360 180 180] 是实体默认显示/朝天姿态
+%   SERVO_HOME_DEG = [180 90 360 180 180] 只用于保证 MDH 与 Atlas.urdf 的关节角映射一致；
+%   servo_zero_deg = [180 90 360 180 180] 是实体默认显示/朝天姿态
