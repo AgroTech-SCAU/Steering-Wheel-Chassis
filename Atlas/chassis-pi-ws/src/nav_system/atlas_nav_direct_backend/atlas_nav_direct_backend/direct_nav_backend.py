@@ -15,6 +15,7 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
+from visualization_msgs.msg import MarkerArray
 
 from atlas_competition_config.config import (
     ArenaLock,
@@ -83,6 +84,19 @@ class DirectNavBackend(Node):
         self.localization_stability_yaw_rad = float(self.declare_parameter("startup_localization.stability_yaw_rad", 0.040).value)
         self.map_scan_min_agreement = float(self.declare_parameter("startup_localization.min_map_scan_agreement", 0.35).value)
         self.map_scan_min_hits = int(self.declare_parameter("startup_localization.min_map_scan_hits", 25).value)
+        self.localization_constraint_topic = str(
+            self.declare_parameter("startup_localization.constraint_topic", "/constraint_list").value
+        )
+        self.localization_require_global_constraint = bool(
+            self.declare_parameter("startup_localization.require_global_constraint", True).value
+        )
+        self.localization_min_global_constraints = max(
+            1, int(self.declare_parameter("startup_localization.min_global_constraints", 1).value)
+        )
+        self.localization_post_constraint_settle_s = max(
+            0.0,
+            float(self.declare_parameter("startup_localization.post_constraint_settle_s", 0.8).value),
+        )
 
         self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.20).value)
         self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 1.50).value)
@@ -111,6 +125,22 @@ class DirectNavBackend(Node):
             self.localization_stability_yaw_rad = float(startup_cfg.get("stability_yaw_rad", self.localization_stability_yaw_rad))
             self.map_scan_min_agreement = float(startup_cfg.get("min_map_scan_agreement", self.map_scan_min_agreement))
             self.map_scan_min_hits = int(startup_cfg.get("min_map_scan_hits", self.map_scan_min_hits))
+            self.localization_require_global_constraint = bool(
+                startup_cfg.get("require_global_constraint", self.localization_require_global_constraint)
+            )
+            self.localization_min_global_constraints = max(
+                1,
+                int(startup_cfg.get("min_global_constraints", self.localization_min_global_constraints)),
+            )
+            self.localization_post_constraint_settle_s = max(
+                0.0,
+                float(
+                    startup_cfg.get(
+                        "post_constraint_settle_s",
+                        self.localization_post_constraint_settle_s,
+                    )
+                ),
+            )
         control_cfg = nav_cfg.get("direct_control", {})
         if isinstance(control_cfg, dict):
             self.kp_xy = float(control_cfg.get("kp_xy", self.kp_xy))
@@ -158,6 +188,9 @@ class DirectNavBackend(Node):
         self.localization_tf_samples: list[Pose2D] = []
         self.localization_odom_samples: list[Pose2D] = []
         self.localization_results: list[tuple[LocalizationCandidate, LocalizationEvaluation]] = []
+        self.localization_global_constraint_baseline: Optional[int] = None
+        self.localization_global_constraint_count = 0
+        self.localization_global_constraint_seen_at: Optional[Time] = None
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -166,6 +199,12 @@ class DirectNavBackend(Node):
         self.status_pub = self.create_publisher(NavigationStatus, self.status_topic, 10)
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
         self.scan_sub = self.create_subscription(LaserScan, "/scan", self.on_scan, 10)
+        self.constraint_sub = self.create_subscription(
+            MarkerArray,
+            self.localization_constraint_topic,
+            self.on_constraint_list,
+            10,
+        )
         self.start_srv = self.create_service(StartNavigation, self.start_service, self.on_start)
         self.cancel_srv = self.create_service(CancelNavigation, self.cancel_service, self.on_cancel)
         self.timer = self.create_timer(1.0 / max(1.0, self.control_rate_hz), self.on_timer)
@@ -188,6 +227,48 @@ class DirectNavBackend(Node):
 
     def on_scan(self, msg: LaserScan) -> None:
         self.latest_scan = msg
+
+    def on_constraint_list(self, msg: MarkerArray) -> None:
+        # Cartographer visualizes loop-closure constraints on /constraint_list.
+        # A constraint between different trajectories is the evidence we need:
+        # the newly started localization trajectory has actually connected to
+        # the frozen trajectory loaded from the pbstream. Stable map->odom TF
+        # alone is not sufficient because Cartographer can publish a stable
+        # identity-like transform before global relocalization has happened.
+        if self.phase != self.PHASE_LOCALIZING:
+            return
+        count = 0
+        for marker in msg.markers:
+            if marker.ns == "Inter constraints, different trajectories":
+                count += len(marker.points) // 2
+
+        # The pbstream itself may already contain more than one frozen
+        # trajectory. Capture that pre-existing count first and only accept
+        # constraints added after this startup-localization process began.
+        if self.localization_global_constraint_baseline is None:
+            self.localization_global_constraint_baseline = count
+            self.message = f"global constraint baseline={count}; waiting for new map constraint"
+            return
+
+        new_constraints = max(0, count - self.localization_global_constraint_baseline)
+        if new_constraints > self.localization_global_constraint_count:
+            self.localization_global_constraint_count = new_constraints
+        if (
+            self.localization_global_constraint_seen_at is None
+            and self.localization_global_constraint_count >= self.localization_min_global_constraints
+        ):
+            self.localization_global_constraint_seen_at = self.get_clock().now()
+            # Discard every TF sample collected before loop closure. The pose
+            # graph can jump when the first cross-trajectory constraint lands.
+            self.localization_tf_samples.clear()
+            self.localization_odom_samples.clear()
+            self.localization_retry_after = None
+            self.localization_mismatch_logged = False
+            self.message = (
+                f"global map constraint observed "
+                f"({self.localization_global_constraint_count}); settling"
+            )
+            self.get_logger().info(self.message)
 
     def odom_fresh(self, now: Time) -> bool:
         if self.latest_odom is None or self.latest_odom_stamp is None:
@@ -305,6 +386,9 @@ class DirectNavBackend(Node):
         self.localization_odom_samples.clear()
         self.localization_retry_after = None
         self.localization_mismatch_logged = False
+        self.localization_global_constraint_baseline = None
+        self.localization_global_constraint_count = 0
+        self.localization_global_constraint_seen_at = None
         if self.localization_index >= len(self.localization_candidates):
             return self.finish_startup_localization()
 
@@ -337,6 +421,17 @@ class DirectNavBackend(Node):
         if not self.localization_launcher.running():
             self.finish_current_candidate("cartographer exited")
             return
+        if self.localization_require_global_constraint:
+            if self.localization_global_constraint_seen_at is None:
+                self.message = "waiting for Cartographer global map constraint"
+                return
+            settled_s = (now - self.localization_global_constraint_seen_at).nanoseconds * 1e-9
+            if settled_s < self.localization_post_constraint_settle_s:
+                self.message = (
+                    f"global map constraint observed; settling "
+                    f"{settled_s:.1f}/{self.localization_post_constraint_settle_s:.1f}s"
+                )
+                return
 
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, self.odom_frame, Time())
@@ -364,6 +459,14 @@ class DirectNavBackend(Node):
             self.fail(3112, "localization candidate missing")
             return
         required_samples = max(3, self.localization_sample_count)
+        if (
+            self.localization_require_global_constraint
+            and self.localization_global_constraint_seen_at is None
+        ):
+            reason = fallback_reason or "no cross-trajectory Cartographer constraint observed"
+            self.get_logger().warn(f"candidate {candidate.label} rejected: {reason}")
+            self.start_next_localization_candidate()
+            return
         if len(self.localization_tf_samples) < required_samples:
             reason = fallback_reason or (
                 f"insufficient localization samples: "

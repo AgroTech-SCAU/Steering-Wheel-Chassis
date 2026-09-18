@@ -23,7 +23,7 @@ def generate_launch_description():
         parameters=[{"use_sim_time": False}],
         arguments=[
             "-configuration_directory", os.path.join(at_nav_dir, "config"),
-            "-configuration_basename", "cartographer_localization.lua",
+            "-configuration_basename", "cartographer_startup_localization.lua",
             "-load_state_filename", pbstream,
         ],
         remappings=[

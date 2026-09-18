@@ -21,6 +21,12 @@ atlas_nav_direct_backend:
       sample_count: 20
       min_map_scan_agreement: 0.35
       min_map_scan_hits: 25
+      # Do not freeze map->odom until Cartographer has connected the new
+      # localization trajectory to the frozen trajectory loaded from pbstream.
+      constraint_topic: /constraint_list
+      require_global_constraint: true
+      min_global_constraints: 1
+      post_constraint_settle_s: 0.8
       max_origin_offset_m: 1000.0
       max_origin_yaw_rad: 3.141593
       stability_xy_m: 0.030
