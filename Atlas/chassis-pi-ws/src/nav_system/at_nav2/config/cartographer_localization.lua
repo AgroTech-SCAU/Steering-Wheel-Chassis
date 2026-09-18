@@ -45,7 +45,7 @@ TRAJECTORY_BUILDER_2D.motion_filter.max_distance_meters = 0.1                   
 TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(1.)                                  -- 或旋转1度才取一帧
 
 POSE_GRAPH.optimization_problem.huber_scale = 1e2                                                     -- 位姿图优化Huber损失尺度：100，降低外点对优化的影响
-POSE_GRAPH.optimize_every_n_nodes = 35                                                                -- 位姿图优化频率：每35个节点执行一次全局优化
+POSE_GRAPH.optimize_every_n_nodes = 5                                                                 -- 尽早优化，等待与冻结地图形成约束后才允许导航
 POSE_GRAPH.constraint_builder.min_score = 0.55                                                        -- 约束构建最小匹配分数：0.65，低于此分数的回环/约束被丢弃
 
 TRAJECTORY_BUILDER.pure_localization_trimmer = {                                                      -- [HW_CONFIG] Pure localization mode: does not build new map, only localizes
@@ -55,4 +55,3 @@ TRAJECTORY_BUILDER.pure_localization_trimmer = {                                
 -- Load pre-built .pbstream map (path specified in launch file)
 -- 加载预建好的 .pbstream 地图（路径由 launch 文件指定）
 return options                                                                                        -- 返回配置表给Cartographer节点
-

@@ -3,15 +3,18 @@ from __future__ import annotations
 import math
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import LaserScan
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
-from tf2_ros import Buffer, TransformException, TransformListener
+from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 
 from atlas_competition_config.config import (
     ArenaLock,
@@ -31,7 +34,9 @@ from .direct_nav_model import (
     limit_acceleration,
     normalize_angle,
     target_map_to_odom,
+    compose_pose,
 )
+from .map_scan_match import MapScanMatch
 from .startup_localization import (
     LocalizationCandidate,
     StartupLocalizationLauncher,
@@ -70,12 +75,14 @@ class DirectNavBackend(Node):
         self.default_waypoint_timeout_s = float(self.declare_parameter("default_waypoint_timeout_s", 30.0).value)
 
         self.localization_warmup_s = float(self.declare_parameter("startup_localization.warmup_s", 1.0).value)
-        self.localization_candidate_timeout_s = float(self.declare_parameter("startup_localization.candidate_timeout_s", 5.0).value)
+        self.localization_candidate_timeout_s = float(self.declare_parameter("startup_localization.candidate_timeout_s", 30.0).value)
         self.localization_sample_count = int(self.declare_parameter("startup_localization.sample_count", 20).value)
-        self.max_origin_offset_m = float(self.declare_parameter("startup_localization.max_origin_offset_m", 0.60).value)
-        self.max_origin_yaw_rad = float(self.declare_parameter("startup_localization.max_origin_yaw_rad", 0.50).value)
+        self.max_origin_offset_m = float(self.declare_parameter("startup_localization.max_origin_offset_m", 1000.0).value)
+        self.max_origin_yaw_rad = float(self.declare_parameter("startup_localization.max_origin_yaw_rad", math.pi).value)
         self.localization_stability_xy_m = float(self.declare_parameter("startup_localization.stability_xy_m", 0.030).value)
         self.localization_stability_yaw_rad = float(self.declare_parameter("startup_localization.stability_yaw_rad", 0.040).value)
+        self.map_scan_min_agreement = float(self.declare_parameter("startup_localization.min_map_scan_agreement", 0.35).value)
+        self.map_scan_min_hits = int(self.declare_parameter("startup_localization.min_map_scan_hits", 25).value)
 
         self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.20).value)
         self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 1.50).value)
@@ -102,6 +109,8 @@ class DirectNavBackend(Node):
             self.max_origin_yaw_rad = float(startup_cfg.get("max_origin_yaw_rad", self.max_origin_yaw_rad))
             self.localization_stability_xy_m = float(startup_cfg.get("stability_xy_m", self.localization_stability_xy_m))
             self.localization_stability_yaw_rad = float(startup_cfg.get("stability_yaw_rad", self.localization_stability_yaw_rad))
+            self.map_scan_min_agreement = float(startup_cfg.get("min_map_scan_agreement", self.map_scan_min_agreement))
+            self.map_scan_min_hits = int(startup_cfg.get("min_map_scan_hits", self.map_scan_min_hits))
         control_cfg = nav_cfg.get("direct_control", {})
         if isinstance(control_cfg, dict):
             self.kp_xy = float(control_cfg.get("kp_xy", self.kp_xy))
@@ -123,6 +132,7 @@ class DirectNavBackend(Node):
 
         self.latest_odom: Optional[Pose2D] = None
         self.latest_odom_stamp: Optional[Time] = None
+        self.latest_scan: Optional[LaserScan] = None
         self.frozen_map_to_odom: Optional[Pose2D] = None
         self.target_map: Optional[Pose2D] = None
         self.target_odom: Optional[Pose2D] = None
@@ -143,15 +153,19 @@ class DirectNavBackend(Node):
         self.localization_index = -1
         self.localization_candidate: Optional[LocalizationCandidate] = None
         self.localization_candidate_started_at: Optional[Time] = None
+        self.localization_retry_after: Optional[Time] = None
+        self.localization_mismatch_logged = False
         self.localization_tf_samples: list[Pose2D] = []
         self.localization_odom_samples: list[Pose2D] = []
         self.localization_results: list[tuple[LocalizationCandidate, LocalizationEvaluation]] = []
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.map_tf_broadcaster = TransformBroadcaster(self)
         self.cmd_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.status_pub = self.create_publisher(NavigationStatus, self.status_topic, 10)
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
+        self.scan_sub = self.create_subscription(LaserScan, "/scan", self.on_scan, 10)
         self.start_srv = self.create_service(StartNavigation, self.start_service, self.on_start)
         self.cancel_srv = self.create_service(CancelNavigation, self.cancel_service, self.on_cancel)
         self.timer = self.create_timer(1.0 / max(1.0, self.control_rate_hz), self.on_timer)
@@ -171,6 +185,9 @@ class DirectNavBackend(Node):
             if msg.header.stamp.sec or msg.header.stamp.nanosec
             else self.get_clock().now()
         )
+
+    def on_scan(self, msg: LaserScan) -> None:
+        self.latest_scan = msg
 
     def odom_fresh(self, now: Time) -> bool:
         if self.latest_odom is None or self.latest_odom_stamp is None:
@@ -286,6 +303,8 @@ class DirectNavBackend(Node):
         self.localization_index += 1
         self.localization_tf_samples.clear()
         self.localization_odom_samples.clear()
+        self.localization_retry_after = None
+        self.localization_mismatch_logged = False
         if self.localization_index >= len(self.localization_candidates):
             return self.finish_startup_localization()
 
@@ -312,6 +331,8 @@ class DirectNavBackend(Node):
             self.finish_current_candidate("candidate timeout")
             return
         if elapsed < self.localization_warmup_s or not self.odom_fresh(now):
+            return
+        if self.localization_retry_after is not None and now < self.localization_retry_after:
             return
         if not self.localization_launcher.running():
             self.finish_current_candidate("cartographer exited")
@@ -359,6 +380,43 @@ class DirectNavBackend(Node):
             stability_xy_m=self.localization_stability_xy_m,
             stability_yaw_rad=self.localization_stability_yaw_rad,
         )
+        now = self.get_clock().now()
+        elapsed = (now - self.localization_candidate_started_at).nanoseconds * 1e-9
+        if not evaluation.valid and elapsed + 2.0 < self.localization_candidate_timeout_s:
+            self.localization_tf_samples.clear()
+            self.localization_odom_samples.clear()
+            self.localization_retry_after = now + Duration(seconds=2.0)
+            if not self.localization_mismatch_logged:
+                self.get_logger().warn(f"candidate {candidate.label} awaiting stable localization: {evaluation.reason}")
+                self.localization_mismatch_logged = True
+            return
+        if evaluation.valid:
+            agreement, hits = self.map_scan_agreement(candidate, evaluation.frozen_map_to_odom)
+            if hits < self.map_scan_min_hits or agreement < self.map_scan_min_agreement:
+                evaluation = replace(
+                    evaluation,
+                    valid=False,
+                    reason=(
+                        f"laser does not match saved map: {agreement:.2f} agreement "
+                        f"over {hits} hits (need {self.map_scan_min_agreement:.2f}/{self.map_scan_min_hits})"
+                    ),
+                )
+                if elapsed + 2.0 < self.localization_candidate_timeout_s:
+                    self.localization_tf_samples.clear()
+                    self.localization_odom_samples.clear()
+                    self.localization_retry_after = now + Duration(seconds=2.0)
+                    if not self.localization_mismatch_logged:
+                        self.get_logger().warn(f"candidate {candidate.label} awaiting map match: {evaluation.reason}")
+                        self.localization_mismatch_logged = True
+                    return
+            else:
+                # Select the saved map whose observed walls fit best. Distance
+                # from map origin cannot be a quality score: the robot may
+                # legitimately start away from (0, 0, 0).
+                evaluation = replace(
+                    evaluation,
+                    score=1.0 - agreement + evaluation.xy_spread_m + evaluation.yaw_spread_rad,
+                )
         if evaluation.valid:
             self.localization_results.append((candidate, evaluation))
             self.get_logger().info(
@@ -371,13 +429,41 @@ class DirectNavBackend(Node):
             self.get_logger().warn(f"candidate {candidate.label} rejected: {reason}")
         self.start_next_localization_candidate()
 
+    def map_scan_agreement(self, candidate: LocalizationCandidate, map_to_odom: Pose2D) -> tuple[float, int]:
+        scan = self.latest_scan
+        if scan is None or self.latest_odom is None or self.latest_odom_stamp is None:
+            self.get_logger().warn("saved map scan check unavailable: missing /scan or /odom")
+            return 0.0, 0
+        now = self.get_clock().now()
+        stamp = Time.from_msg(scan.header.stamp)
+        scan_age_s = (now - stamp).nanoseconds * 1e-9
+        if abs(scan_age_s) > 0.5:
+            self.get_logger().warn(
+                f"saved map scan check unavailable: /scan timestamp age {scan_age_s:.2f}s"
+            )
+            return 0.0, 0
+        if not self.odom_fresh(now):
+            self.get_logger().warn("saved map scan check unavailable: /odom is stale")
+            return 0.0, 0
+        try:
+            transform = self.tf_buffer.lookup_transform(self.base_frame, scan.header.frame_id, Time())
+            offset = transform.transform.translation
+            orientation = transform.transform.rotation
+            base_to_laser = Pose2D(float(offset.x), float(offset.y), yaw_from_quaternion(orientation))
+            map_to_laser = compose_pose(compose_pose(map_to_odom, self.latest_odom), base_to_laser)
+            return MapScanMatch(candidate.map_path).agreement(scan, map_to_laser)
+        except (OSError, ValueError, KeyError, IndexError, StopIteration, TransformException) as exc:
+            self.get_logger().warn(f"saved map scan check unavailable: {exc}")
+            return 0.0, 0
+
     def finish_startup_localization(self) -> bool:
         self.localization_launcher.shutdown()
         if not self.localization_results:
-            self.fail(3113, "no stable startup localization candidate near field origin")
+            self.fail(3113, "no startup localization candidate matched the saved map")
             return False
         candidate, evaluation = min(self.localization_results, key=lambda item: item[1].score)
         self.frozen_map_to_odom = evaluation.frozen_map_to_odom
+        self.publish_frozen_map_tf()
         self.get_logger().info(
             f"startup alignment frozen from candidate {candidate.label}: "
             f"map->odom=({self.frozen_map_to_odom.x:.3f},"
@@ -385,6 +471,20 @@ class DirectNavBackend(Node):
         )
         self.begin_tracking_target()
         return True
+
+    def publish_frozen_map_tf(self) -> None:
+        if self.frozen_map_to_odom is None:
+            return
+        transform = TransformStamped()
+        transform.header.stamp = self.get_clock().now().to_msg()
+        transform.header.frame_id = self.map_frame
+        transform.child_frame_id = self.odom_frame
+        transform.transform.translation.x = self.frozen_map_to_odom.x
+        transform.transform.translation.y = self.frozen_map_to_odom.y
+        half_yaw = self.frozen_map_to_odom.yaw / 2.0
+        transform.transform.rotation.z = math.sin(half_yaw)
+        transform.transform.rotation.w = math.cos(half_yaw)
+        self.map_tf_broadcaster.sendTransform(transform)
 
     def begin_tracking_target(self) -> None:
         if self.frozen_map_to_odom is None or self.target_map is None:
@@ -397,6 +497,7 @@ class DirectNavBackend(Node):
 
     def on_timer(self) -> None:
         now = self.get_clock().now()
+        self.publish_frozen_map_tf()
         dt = max(0.001, (now - self.last_update_time).nanoseconds * 1e-9)
         self.last_update_time = now
         if self.state != NavigationStatus.STATE_RUNNING:

@@ -42,7 +42,7 @@ TEST(CompetitionModelTest, CompletesEightCargoWithMinimalLayerContext)
     const auto park = model.destination_for(item);
     const auto park_slot = model.next_park_slot(park);
     ASSERT_LT(park_slot, CompetitionModel::kSlotCount);
-    ASSERT_TRUE(model.confirm_place(park, park_slot));
+    ASSERT_TRUE(model.confirm_place(park, park_slot, item));
   }
 
   EXPECT_TRUE(model.done());
@@ -57,4 +57,53 @@ TEST(CompetitionModelTest, RejectsInvalidSortingRule)
   CompetitionModel model;
   EXPECT_FALSE(model.set_sorting_rule("C", "gear", "t_bolt"));
   EXPECT_FALSE(model.set_sorting_rule("A", "gear", "gear"));
+}
+
+TEST(CompetitionModelTest, EachCargoDestinationHasExactlyFourSlots)
+{
+  CompetitionModel model;
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  for (std::size_t slot = 0; slot < CompetitionModel::kSlotCount; ++slot) {
+    ASSERT_TRUE(model.confirm_pick(slot, "gear"));
+    EXPECT_EQ(model.next_park_slot("park_1"), slot);
+    ASSERT_TRUE(model.confirm_place("park_1", slot, "gear"));
+  }
+  EXPECT_GE(model.next_park_slot("park_1"), CompetitionModel::kSlotCount);
+  EXPECT_FALSE(model.confirm_place("park_1", 0, "gear"));
+  EXPECT_EQ(model.next_park_slot("park_2"), 0U);
+  EXPECT_FALSE(model.done());
+}
+
+TEST(CompetitionModelTest, SortingRuleCannotBeOverwrittenDuringRun)
+{
+  CompetitionModel model;
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  EXPECT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  EXPECT_FALSE(model.set_sorting_rule("B", "t_bolt", "gear"));
+  EXPECT_FALSE(model.set_sorting_rule("A", "t_bolt", "gear"));
+  EXPECT_EQ(model.arena(), "A");
+  EXPECT_EQ(model.destination_for("gear"), "park_1");
+  EXPECT_EQ(model.destination_for("t_bolt"), "park_2");
+
+  model.reset();
+  EXPECT_TRUE(model.set_sorting_rule("B", "t_bolt", "gear"));
+  EXPECT_EQ(model.destination_for("gear"), "park_2");
+}
+
+TEST(CompetitionModelTest, CargoCannotBeConfirmedInWrongPark)
+{
+  CompetitionModel model;
+  EXPECT_FALSE(model.confirm_pick(0, "gear"));
+  EXPECT_FALSE(model.confirm_place("park_1", 0, "gear"));
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  EXPECT_FALSE(model.confirm_place("park_2", 0, "gear"));
+  EXPECT_EQ(model.delivered_total(), 0U);
+  EXPECT_TRUE(model.confirm_pick(0, "gear"));
+  EXPECT_FALSE(model.can_place("park_2", "gear"));
+  EXPECT_FALSE(model.can_place("park_2", "t_bolt"));
+  EXPECT_TRUE(model.can_place("park_1", "gear"));
+  EXPECT_FALSE(model.confirm_pick(1, "t_bolt"));
+  EXPECT_FALSE(model.confirm_place("park_1", 0, "t_bolt"));
+  EXPECT_TRUE(model.confirm_place("park_1", 0, "gear"));
+  EXPECT_EQ(model.delivered_total(), 1U);
 }

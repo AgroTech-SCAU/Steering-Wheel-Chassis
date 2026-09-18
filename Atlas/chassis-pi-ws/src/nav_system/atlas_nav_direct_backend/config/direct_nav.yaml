@@ -17,10 +17,12 @@ atlas_nav_direct_backend:
 
     startup_localization:
       warmup_s: 1.0
-      candidate_timeout_s: 5.0
+      candidate_timeout_s: 30.0
       sample_count: 20
-      max_origin_offset_m: 0.60
-      max_origin_yaw_rad: 0.50
+      min_map_scan_agreement: 0.35
+      min_map_scan_hits: 25
+      max_origin_offset_m: 1000.0
+      max_origin_yaw_rad: 3.141593
       stability_xy_m: 0.030
       stability_yaw_rad: 0.040
 

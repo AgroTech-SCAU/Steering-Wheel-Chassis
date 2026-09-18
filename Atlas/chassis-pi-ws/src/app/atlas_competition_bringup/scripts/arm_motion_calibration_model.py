@@ -26,9 +26,8 @@ def merge_calibration(
         fixed_poses[str(name)] = copy.deepcopy(dict(pose))
     arenas = arm_motion.setdefault("arenas", {})
     arena_cfg = arenas.setdefault(arena_name, {})
-    arena_cfg["pickup"] = copy.deepcopy(dict(calibration["pickup"]))
-    arena_cfg["park_1"] = copy.deepcopy(dict(calibration["park_1"]))
-    arena_cfg["park_2"] = copy.deepcopy(dict(calibration["park_2"]))
+    for area in ("pickup", "park_1", "park_2"):
+        arena_cfg[area] = copy.deepcopy(dict(calibration[area]))
 
     vision = competition.setdefault("vision", {})
     if isinstance(vision, dict):
@@ -40,6 +39,7 @@ def merge_calibration(
     if isinstance(placement, dict):
         placement.pop("park_1", None)
         placement.pop("park_2", None)
+        placement.pop("slot_offsets_xy_m", None)
         placement["enabled"] = True
 
     return merged

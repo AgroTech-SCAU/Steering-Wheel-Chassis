@@ -161,6 +161,7 @@ def resolve_arm_pose(
     *,
     arena: str | None = None,
     area: str | None = None,
+    slot: int | None = None,
 ) -> dict[str, Any]:
     name = str(pose_name or "").strip()
     if name in {"zero", "sorting_scan_a", "sorting_scan_b", "navigation_safe"}:
@@ -168,7 +169,14 @@ def resolve_arm_pose(
     elif name == "pickup_observe":
         normalized_arena = _normalize_arena(arena or "")
         arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
-        pose = _mapping(_mapping(arena_cfg.get("pickup", {})).get("observe"))
+        pickup = _mapping(arena_cfg.get("pickup", {}))
+        observations = pickup.get("observations")
+        if observations is not None:
+            if slot is None or int(slot) not in range(4) or len(observations) != 4:
+                raise CompetitionConfigError("pickup.observations requires slot 0..3 and four poses")
+            pose = _mapping(observations[int(slot)])
+        else:
+            pose = _mapping(pickup.get("observe"))
     elif name == "park_prepare":
         normalized_arena = _normalize_arena(arena or "")
         park = str(area or "").strip()
@@ -200,13 +208,24 @@ def resolve_arm_pose(
 
 
 def resolve_pickup_layer_z(
-    arm_motion: Mapping[str, Any], arena: str, layer: int
+    arm_motion: Mapping[str, Any], arena: str, layer: int, slot: int | None = None
 ) -> float:
     normalized_arena = _normalize_arena(arena)
     if int(layer) not in (1, 2, 3):
         raise CompetitionConfigError("pickup layer must be 1, 2 or 3")
     arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
     pickup = _mapping(arena_cfg.get("pickup", {}))
+    observations = pickup.get("observations")
+    if observations is not None:
+        if slot is None or int(slot) not in range(4) or len(observations) != 4:
+            raise CompetitionConfigError("pickup.observations requires slot 0..3 and four poses")
+        observation = _mapping(observations[int(slot)])
+        if not bool(observation.get("configured", False)):
+            raise CompetitionConfigError(f"arena {normalized_arena} pickup slot {slot} configured=false")
+        heights = list(observation.get("layer_z_m", []) or [])
+        if int(layer) not in (1, 2) or len(heights) != 2:
+            raise CompetitionConfigError("pickup observation needs two layer_z_m values")
+        return float(heights[int(layer) - 1])
     if not bool(pickup.get("layer_z_configured", False)):
         raise CompetitionConfigError(
             f"arena {normalized_arena} pickup.layer_z_configured=false"
@@ -220,14 +239,21 @@ def resolve_pickup_layer_z(
 
 
 def resolve_placement_reference(
-    arm_motion: Mapping[str, Any], arena: str, park: str
+    arm_motion: Mapping[str, Any], arena: str, park: str, slot: int | None = None
 ) -> dict[str, float]:
     normalized_arena = _normalize_arena(arena)
     park_name = str(park or "").strip()
     if park_name not in {"park_1", "park_2"}:
         raise CompetitionConfigError("park must be park_1 or park_2")
     arena_cfg = _mapping(_mapping(arm_motion.get("arenas", {})).get(normalized_arena))
-    reference = _mapping(_mapping(arena_cfg.get(park_name, {})).get("placement_reference"))
+    park_cfg = _mapping(arena_cfg.get(park_name, {}))
+    points = park_cfg.get("placement_points")
+    if points is not None:
+        if slot is None or int(slot) not in range(4) or len(points) != 4:
+            raise CompetitionConfigError(f"{park_name}.placement_points requires slot 0..3 and four points")
+        reference = _mapping(points[int(slot)])
+    else:
+        reference = _mapping(park_cfg.get("placement_reference"))
     required = ("x_m", "y_m", "first_layer_z_m")
     if not reference or any(key not in reference for key in required):
         raise CompetitionConfigError(

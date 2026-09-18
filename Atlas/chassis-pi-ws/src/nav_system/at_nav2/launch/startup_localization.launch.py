@@ -18,7 +18,8 @@ def generate_launch_description():
         package="cartographer_ros",
         executable="cartographer_node",
         name="atlas_startup_cartographer",
-        output="screen",
+        output="log",
+        ros_arguments=["--log-level", "warn"],
         parameters=[{"use_sim_time": False}],
         arguments=[
             "-configuration_directory", os.path.join(at_nav_dir, "config"),

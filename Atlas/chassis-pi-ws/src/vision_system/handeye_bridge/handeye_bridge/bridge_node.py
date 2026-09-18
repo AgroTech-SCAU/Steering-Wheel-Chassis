@@ -40,11 +40,11 @@ from atlas_competition_config.config import (
 
 try:
     from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
-    from .pick_target_config import pick_command_z, resolve_pick_target_parameters
+    from .pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
     from .competition_pose_targets import pickup_vision_pose_targets
 except ImportError:  # 兼容直接运行源码文件
     from vision_pose_gate import VisionPoseTarget, vision_pose_for_position
-    from pick_target_config import pick_command_z, resolve_pick_target_parameters
+    from pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
     from competition_pose_targets import pickup_vision_pose_targets
 
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
@@ -983,11 +983,7 @@ class HandEyeBridgeNode(Node):
             return
 
         # 按 corner_index 匹配
-        match = None
-        for d in self._latest_detections.detections:
-            if d.corner_index == corner:
-                match = d
-                break
+        match = select_pick_detection(self._latest_detections.detections, corner)
 
         if match is None:
             available = [d.corner_index for d in self._latest_detections.detections]

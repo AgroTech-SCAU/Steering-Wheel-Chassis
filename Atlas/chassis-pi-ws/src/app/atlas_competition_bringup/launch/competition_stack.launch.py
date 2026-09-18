@@ -49,6 +49,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 _launch_file('mcu_comm_bridge', 'launch/mcu_comm_bridge.launch.py')),
+            launch_arguments={'stats_enabled': 'false', 'log_level': 'warn'}.items(),
         ),
 
         IncludeLaunchDescription(
@@ -59,6 +60,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 _launch_file('lslidar_driver', 'launch/lsn10p_launch.py')),
+            launch_arguments={'log_level': 'warn'}.items(),
             condition=IfCondition(enable_lidar),
         ),
 

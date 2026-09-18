@@ -20,6 +20,8 @@ def test_navigation_calibration_launch_starts_only_required_background_hardware(
     assert 'robot_description.launch.py' in text
     assert 'lsn10p_launch.py' in text
     assert 'navigation_calibration.py' in text
+    assert 'package="atlas_nav_direct_backend"' in text
+    assert 'executable="direct_nav_backend"' in text
     assert 'full_nav_backend' not in text
     assert 'at_nav.launch.py' not in text
 
@@ -33,21 +35,21 @@ def test_runtime_checks_yaml_map_assets_before_arena_selection_and_warns_shared_
     assert "中转区最优位姿" in text
 
 
-def test_runtime_starts_cartographer_localization_without_nav2_controller():
+def test_runtime_uses_direct_backend_verified_map_alignment_without_second_localizer():
     text = _read(SCRIPT)
-    assert '"cartographer_ros", "cartographer_node"' in text
-    assert 'cartographer_localization.lua' in text
-    assert '"-load_state_filename"' in text
-    assert '"scan:=/scan"' in text
-    assert '"odom:=/odom"' in text
+    assert "_start_localization" not in text
+    assert "_localization_process" not in text
     assert 'NavigateToPose' not in text
-    assert '/atlas/navigation/cmd_vel' not in text
-    assert '/motor_cmd_vel' not in text
+    assert 'self._align_and_return_origin(arena)' in text
+    assert 'request.waypoint_id = "origin"' in text
+    assert '"/atlas/navigation/cmd_vel"' in text
+    assert '"/motor_cmd_vel"' in text
 
 
 def test_runtime_samples_map_to_base_link_and_confirms_three_waypoints():
     text = _read(SCRIPT)
-    assert 'lookup_transform(self.map_frame, self.base_frame' in text
+    assert 'self.tf_buffer.lookup_transform(' in text
+    assert 'self.map_frame, self.base_frame, Time()' in text
     assert 'self.declare_parameter("map_frame", "map")' in text
     assert 'self.declare_parameter("base_frame", "base_link")' in text
     assert 'for waypoint, label in (' in text
@@ -72,5 +74,6 @@ def test_navigation_calibration_displays_current_offset_from_map_origin_before_w
     assert "def _show_origin_deviation" in text
     assert "当前相对地图原点偏差" in text
     assert "distance=" in text
+    assert run.index("self._align_and_return_origin(arena)") < run.index("self._wait_localization_ready()")
     assert run.index("self._wait_localization_ready()") < run.index("self._show_origin_deviation()")
     assert run.index("self._show_origin_deviation()") < run.index("for waypoint, label in (")

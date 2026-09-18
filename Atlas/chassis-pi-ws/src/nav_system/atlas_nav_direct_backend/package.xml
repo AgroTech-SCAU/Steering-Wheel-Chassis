@@ -9,11 +9,13 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>atlas_mission_interfaces</depend>
   <depend>atlas_competition_config</depend>
   <exec_depend>at_nav2</exec_depend>
   <exec_depend>cartographer_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <export><build_type>ament_python</build_type></export>

@@ -20,6 +20,9 @@ def _launch_file(package: str, relpath: str) -> str:
 
 def generate_launch_description():
     competition_config = LaunchConfiguration("competition_config")
+    direct_nav_config = os.path.join(
+        get_package_share_directory("atlas_nav_direct_backend"), "config", "direct_nav.yaml"
+    )
     default_competition_config = os.path.join(
         get_package_share_directory("atlas_competition_bringup"),
         "config",
@@ -39,9 +42,9 @@ def generate_launch_description():
                     _launch_file("mcu_comm_bridge", "launch/mcu_comm_bridge.launch.py")
                 ),
                 launch_arguments={
-                    "output": "log",
+                    "output": "screen",
                     "stats_enabled": "false",
-                    "log_level": "fatal",
+                    "log_level": "warn",
                 }.items(),
             ),
             IncludeLaunchDescription(
@@ -50,13 +53,27 @@ def generate_launch_description():
                         "robot_description", "launch/robot_description.launch.py"
                     )
                 ),
-                launch_arguments={"output": "log", "log_level": "fatal"}.items(),
+                launch_arguments={"output": "screen", "log_level": "warn"}.items(),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     _launch_file("lslidar_driver", "launch/lsn10p_launch.py")
                 ),
-                launch_arguments={"output": "log", "log_level": "fatal"}.items(),
+                launch_arguments={"output": "screen", "log_level": "warn"}.items(),
+            ),
+            Node(
+                package="atlas_nav_direct_backend",
+                executable="direct_nav_backend",
+                name="atlas_nav_direct_backend",
+                output="screen",
+                ros_arguments=["--log-level", "info"],
+                parameters=[
+                    direct_nav_config,
+                    {
+                        "backend_name": "direct_odom_competition",
+                        "competition_config": competition_config,
+                    },
+                ],
             ),
             Node(
                 package="atlas_competition_bringup",

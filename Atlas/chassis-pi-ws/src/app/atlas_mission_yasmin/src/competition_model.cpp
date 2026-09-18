@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 namespace atlas_mission_yasmin
 {
@@ -23,7 +24,7 @@ namespace atlas_mission_yasmin
 namespace
 {
 constexpr std::size_t kInvalidSlot = std::numeric_limits<std::size_t>::max();
-constexpr char kEmptyDestination[] = "";
+const std::string kEmptyDestination;
 }
 
 CompetitionModel::CompetitionModel()
@@ -36,6 +37,7 @@ void CompetitionModel::reset()
   arena_.clear();
   park_1_cargo_.clear();
   park_2_cargo_.clear();
+  held_cargo_.clear();
   pickup_layers_.fill(kInitialPickupLayers);
   park_1_layers_.fill(0);
   park_2_layers_.fill(0);
@@ -63,6 +65,13 @@ bool CompetitionModel::set_sorting_rule(
     park_1_cargo == park_2_cargo)
   {
     return false;
+  }
+
+  // One observation establishes the rule for the entire run. Repeated identical
+  // observations are harmless, but a conflicting result must not reroute cargo.
+  if (!arena_.empty()) {
+    return arena_ == arena && park_1_cargo_ == park_1_cargo &&
+           park_2_cargo_ == park_2_cargo;
   }
 
   arena_ = arena;
@@ -106,10 +115,13 @@ uint8_t CompetitionModel::pickup_layer(const std::size_t slot) const
 
 bool CompetitionModel::confirm_pick(const std::size_t slot, const std::string & cargo)
 {
-  if (slot >= pickup_layers_.size() || pickup_layers_[slot] == 0 || !valid_cargo(cargo)) {
+  if (!held_cargo_.empty() || slot >= pickup_layers_.size() || pickup_layers_[slot] == 0 ||
+    destination_for(cargo).empty())
+  {
     return false;
   }
   --pickup_layers_[slot];
+  held_cargo_ = cargo;
   return true;
 }
 
@@ -119,6 +131,10 @@ std::size_t CompetitionModel::next_park_slot(const std::string & park) const
     return kInvalidSlot;
   }
   const auto & layers = park == "park_1" ? park_1_layers_ : park_2_layers_;
+  const auto count = std::accumulate(layers.begin(), layers.end(), 0U);
+  if (count >= kCargoTotal / 2) {
+    return kInvalidSlot;
+  }
   return static_cast<std::size_t>(
     std::distance(layers.begin(), std::min_element(layers.begin(), layers.end())));
 }
@@ -132,14 +148,26 @@ uint8_t CompetitionModel::park_layer(const std::string & park, const std::size_t
   return layers[slot];
 }
 
-bool CompetitionModel::confirm_place(const std::string & park, const std::size_t slot)
+bool CompetitionModel::can_place(const std::string & park, const std::string & cargo) const
 {
-  if (!valid_park(park) || slot >= kSlotCount || delivered_total_ >= kCargoTotal) {
+  return valid_park(park) && !held_cargo_.empty() &&
+         held_cargo_ == cargo && destination_for(cargo) == park;
+}
+
+bool CompetitionModel::confirm_place(
+  const std::string & park, const std::size_t slot, const std::string & cargo)
+{
+  if (!can_place(park, cargo) || slot >= kSlotCount || delivered_total_ >= kCargoTotal)
+  {
     return false;
   }
   auto & layers = park == "park_1" ? park_1_layers_ : park_2_layers_;
+  if (std::accumulate(layers.begin(), layers.end(), 0U) >= kCargoTotal / 2) {
+    return false;
+  }
   ++layers[slot];
   ++delivered_total_;
+  held_cargo_.clear();
   return true;
 }
 

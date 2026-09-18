@@ -47,7 +47,8 @@ public:
 
   std::size_t next_park_slot(const std::string & park) const;
   uint8_t park_layer(const std::string & park, std::size_t slot) const;
-  bool confirm_place(const std::string & park, std::size_t slot);
+  bool can_place(const std::string & park, const std::string & cargo) const;
+  bool confirm_place(const std::string & park, std::size_t slot, const std::string & cargo);
 
   uint8_t delivered_total() const;
   bool done() const;
@@ -59,6 +60,7 @@ private:
   std::string arena_;
   std::string park_1_cargo_;
   std::string park_2_cargo_;
+  std::string held_cargo_;
   std::array<uint8_t, kSlotCount> pickup_layers_{};
   std::array<uint8_t, kSlotCount> park_1_layers_{};
   std::array<uint8_t, kSlotCount> park_2_layers_{};

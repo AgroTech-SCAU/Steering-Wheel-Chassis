@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 
+def select_pick_detection(detections, corner_index: int):
+    candidates = list(detections)
+    for detection in candidates:
+        if detection.corner_index == corner_index:
+            return detection
+    # A slot-specific view may contain just one cargo, labeled corner 0 by
+    # the detector regardless of the physical slot being processed.
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def resolve_pick_target_parameters(msg, default_z: float, default_pitch: float, default_yaw: float):
     use_target_z = bool(getattr(msg, "use_target_z", False))
     use_orientation = bool(getattr(msg, "use_orientation", False))

@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from handeye_bridge.pick_target_config import resolve_pick_target_parameters
+from handeye_bridge.pick_target_config import resolve_pick_target_parameters, select_pick_detection
 
 
 def test_pick_target_explicit_z_and_orientation_override_defaults():
@@ -38,3 +38,16 @@ def test_pick_target_legacy_command_z_keeps_default_offset():
 
     msg = SimpleNamespace()
     assert pick_command_z(msg, plane_z=0.12, default_offset_m=0.003) == pytest.approx(0.123)
+
+
+def test_single_visible_part_can_be_picked_from_any_calibrated_slot():
+    only = SimpleNamespace(corner_index=0)
+    assert select_pick_detection([only], 3) is only
+    assert select_pick_detection([], 3) is None
+
+
+def test_multiple_visible_parts_still_require_matching_corner():
+    first = SimpleNamespace(corner_index=0)
+    second = SimpleNamespace(corner_index=1)
+    assert select_pick_detection([first, second], 1) is second
+    assert select_pick_detection([first, second], 3) is None
