@@ -61,17 +61,24 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
             "navigation_safe": _pose(3.0),
         },
         "pickup": {
-            "observe": _pose(4.0),
-            "layer_z_configured": True,
-            "layer_z_m": [0.03, 0.08, 0.13],
+            "observations": [
+                {**_pose(4.0 + slot), "layer_z_m": [0.03, 0.08]}
+                for slot in range(4)
+            ],
         },
         "park_1": {
             "prepare": _pose(5.0),
-            "placement_reference": {"configured": True, "x_m": 0.2, "y_m": 0.1, "first_layer_z_m": 0.05},
+            "placement_points": [
+                {"configured": True, "x_m": 0.2 + slot, "y_m": 0.1, "first_layer_z_m": 0.05}
+                for slot in range(4)
+            ],
         },
         "park_2": {
             "prepare": _pose(6.0),
-            "placement_reference": {"configured": True, "x_m": 0.3, "y_m": -0.1, "first_layer_z_m": 0.05},
+            "placement_points": [
+                {"configured": True, "x_m": 0.3 + slot, "y_m": -0.1, "first_layer_z_m": 0.05}
+                for slot in range(4)
+            ],
         },
     }
 
@@ -81,12 +88,14 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
     assert competition["arm_motion"]["fixed_poses"]["navigation_safe"]["joints_rad"][0] == 3.0
     assert competition["arm_motion"]["fixed_poses"]["sorting_scan_a"]["joints_rad"][0] == 1.0
     assert competition["arm_motion"]["fixed_poses"]["sorting_scan_b"]["joints_rad"][0] == 8.0
-    assert competition["arm_motion"]["arenas"]["A"]["pickup"]["layer_z_m"] == [0.03, 0.08, 0.13]
+    assert len(competition["arm_motion"]["arenas"]["A"]["pickup"]["observations"]) == 4
+    assert len(competition["arm_motion"]["arenas"]["A"]["park_1"]["placement_points"]) == 4
     assert competition["arm_motion"]["arenas"]["B"]["pickup"]["observe"]["x_m"] == 9.0
     assert "sorting_scan_a" not in competition["vision"]
     assert "sorting_scan_b" not in competition["vision"]
     assert "park_1" not in competition["manipulation"]["placement"]
     assert "park_2" not in competition["manipulation"]["placement"]
+    assert "slot_offsets_xy_m" not in competition["manipulation"]["placement"]
     assert competition["manipulation"]["placement"]["enabled"] is True
 
 

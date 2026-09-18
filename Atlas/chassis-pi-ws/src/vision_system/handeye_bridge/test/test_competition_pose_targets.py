@@ -34,3 +34,21 @@ def test_pickup_vision_pose_targets_skips_unconfigured_arena():
     arm_motion = {"arenas": {"A": {"pickup": {"observe": pose}}}}
 
     assert pickup_vision_pose_targets(arm_motion) == []
+
+
+def test_pickup_vision_pose_targets_include_all_four_observations():
+    pose = _pose(0.2)
+    arm_motion = {
+        "arenas": {
+            "A": {
+                "pickup": {
+                    "observations": [{**pose, "x_m": 0.2 + slot * 0.1} for slot in range(4)]
+                }
+            }
+        }
+    }
+    targets = pickup_vision_pose_targets(arm_motion)
+    assert [name for name, _ in targets] == [
+        "pickup_observe_a_slot0", "pickup_observe_a_slot1",
+        "pickup_observe_a_slot2", "pickup_observe_a_slot3",
+    ]

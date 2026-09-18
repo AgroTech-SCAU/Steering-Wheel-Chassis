@@ -79,6 +79,19 @@ def test_localization_candidate_rejects_pose_outside_transfer_zone_origin_window
     assert "origin offset" in result.reason
 
 
+def test_localization_accepts_a_map_pose_away_from_origin_for_return_home():
+    result = evaluate_localization_candidate(
+        [Pose2D(1.2, -0.7, 0.5)] * 5,
+        [Pose2D(0.0, 0.0, 0.0)] * 5,
+        max_origin_offset_m=1000.0,
+        max_origin_yaw_rad=math.pi,
+        stability_xy_m=0.03,
+        stability_yaw_rad=0.03,
+    )
+    assert result.valid, result.reason
+    assert_pose_close(result.robot_pose_map, Pose2D(1.2, -0.7, 0.5))
+
+
 def test_localization_candidate_rejects_unstable_scan_match():
     tf_samples = [
         Pose2D(0.00, 0.00, 0.00),

@@ -22,6 +22,6 @@ atlas_competition_vision_backend:
       luosi: t_bolt
 
     # Standalone default remains disabled; competition.yaml can enable it.
-    # Decoding rule: smaller image u = park_1, larger image u = park_2.
+    # A: smaller image u = park_2; B: smaller image u = park_1.
     sorting_rule:
       enabled: false

@@ -7,7 +7,7 @@ mission:
     # 先做一次激光绝对对齐；若切自动时偏离中转区最优位姿，则用 odom 直达回到原点
     origin:
       id: origin
-      timeout_s: 20.0
+      timeout_s: 120.0
     pickup:
       id: pickup
       timeout_s: 30.0

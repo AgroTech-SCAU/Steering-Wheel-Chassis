@@ -243,7 +243,9 @@ class ArmMotionCalibration(Node):
     def _capture_z(self, title: str) -> float:
         while True:
             print(f"\n[{title}]")
-            terminal_input("将吸盘移动到该层实际吸取接触高度后按 Enter > ")
+            value = terminal_input("将吸盘移动到该层实际吸取接触高度后按 Enter  Q=退出 > ").strip().lower()
+            if value == "q":
+                raise KeyboardInterrupt
             try:
                 _joints, pose = self._snapshot()
                 z = round(float(pose.pose.position.z), 6)
@@ -255,7 +257,9 @@ class ArmMotionCalibration(Node):
     def _capture_reference(self, title: str) -> dict[str, float]:
         while True:
             print(f"\n[{title}]")
-            terminal_input("将末端移动到 slot0 第一层标准释放位置后按 Enter > ")
+            value = terminal_input("将末端移动到该放置点第一层标准释放位置后按 Enter  Q=退出 > ").strip().lower()
+            if value == "q":
+                raise KeyboardInterrupt
             try:
                 _joints, pose = self._snapshot()
                 p = pose.pose.position
@@ -514,21 +518,28 @@ class ArmMotionCalibration(Node):
         )
 
         self._navigate(arena, "pickup", fixed["navigation_safe"])
-        pickup_observe = self._capture_pose(
-            "4/8 pickup.observe", "拖动机械臂到货物区固定观察位"
-        )
-        layer_z = [
-            self._capture_z(f"pickup 第 {layer} 层基准高度")
-            for layer in (1, 2, 3)
-        ]
-        self._require_recorded_pose(pickup_observe, "pickup.observe")
+        observations = []
+        for slot in range(4):
+            observe = self._capture_pose(
+                f"pickup slot{slot}.observe",
+                f"拖动机械臂到货物区第 {slot + 1} 个区域的观察位",
+            )
+            layer_z = [
+                self._capture_z(f"pickup slot{slot} 第 {layer} 层吸取接触高度")
+                for layer in (1, 2)
+            ]
+            observations.append({**observe, "layer_z_m": layer_z})
+            self._require_recorded_pose(observe, f"pickup slot{slot}.observe")
         self._require_navigation_safe(fixed["navigation_safe"])
 
         self._navigate(arena, "park_1", fixed["navigation_safe"])
         park1_prepare = self._capture_pose(
             "5/8 park_1.prepare", "拖动机械臂到园区一预备位"
         )
-        park1_reference = self._capture_reference("6/8 park_1.placement_reference")
+        park1_points = [
+            self._capture_reference(f"park_1 slot{slot}.placement_points")
+            for slot in range(4)
+        ]
         self._require_recorded_pose(park1_prepare, "park_1.prepare")
         self._require_navigation_safe(fixed["navigation_safe"])
 
@@ -536,24 +547,25 @@ class ArmMotionCalibration(Node):
         park2_prepare = self._capture_pose(
             "7/8 park_2.prepare", "拖动机械臂到园区二预备位"
         )
-        park2_reference = self._capture_reference("8/8 park_2.placement_reference")
+        park2_points = [
+            self._capture_reference(f"park_2 slot{slot}.placement_points")
+            for slot in range(4)
+        ]
         self._require_recorded_pose(park2_prepare, "park_2.prepare")
         self._require_navigation_safe(fixed["navigation_safe"])
 
         calibration = {
             "fixed_poses": fixed,
             "pickup": {
-                "observe": pickup_observe,
-                "layer_z_configured": True,
-                "layer_z_m": layer_z,
+                "observations": observations,
             },
             "park_1": {
                 "prepare": park1_prepare,
-                "placement_reference": park1_reference,
+                "placement_points": park1_points,
             },
             "park_2": {
                 "prepare": park2_prepare,
-                "placement_reference": park2_reference,
+                "placement_points": park2_points,
             },
         }
         merged = merge_calibration(source, arena, calibration)

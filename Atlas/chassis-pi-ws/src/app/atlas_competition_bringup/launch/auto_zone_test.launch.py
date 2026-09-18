@@ -1,4 +1,4 @@
-"""启动智械争锋自动区整套链路，用于单独联调自动任务。"""
+"""启动自动区完整任务链；AUTO 任务先执行 NAV_ORIGIN 激光重定位。"""
 
 import os
 
@@ -34,6 +34,7 @@ def generate_launch_description():
                 "no_preview": no_preview,
                 "enable_lidar": "true",
                 "enable_navigation": "true",
+                "navigation_backend_name": "direct_odom_competition",
                 "enable_vision": "true",
                 "enable_manipulation": "true",
                 "enable_mission": "true",

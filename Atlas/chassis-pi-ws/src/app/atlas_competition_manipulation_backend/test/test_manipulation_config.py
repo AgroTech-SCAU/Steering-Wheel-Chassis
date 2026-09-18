@@ -112,6 +112,39 @@ def test_compute_placement_target_uses_arena_reference_slot_and_layer():
     assert target.z == pytest.approx(0.10)
 
 
+def test_four_observations_and_four_placement_points_use_selected_slot():
+    from atlas_competition_manipulation_backend.backend import (
+        compute_placement_target, pickup_target_spec,
+    )
+
+    motion = _arm_motion_config()
+    pickup = motion["arenas"]["A"]["pickup"]
+    pickup.pop("observe")
+    pickup["observations"] = [
+        {**_pose_for_slot(slot), "layer_z_m": [0.01 + slot * 0.01, 0.02 + slot * 0.01]}
+        for slot in range(4)
+    ]
+    park = motion["arenas"]["A"]["park_1"]
+    park.pop("placement_reference")
+    park["placement_points"] = [
+        {"configured": True, "x_m": 0.1 + slot * 0.1, "y_m": 0.2, "first_layer_z_m": 0.03}
+        for slot in range(4)
+    ]
+    spec = pickup_target_spec(motion, "A", 2, 3)
+    assert spec["target_z_m"] == pytest.approx(0.05)
+    assert spec["yaw_rad"] == pytest.approx(0.3)
+    target = compute_placement_target(motion, {"enabled": True, "layer_step_m": 0.05}, "A", "park_1", 3, 0)
+    assert (target.x, target.y, target.z) == pytest.approx((0.4, 0.2, 0.03))
+
+
+def _pose_for_slot(slot):
+    return {
+        "configured": True, "joints_rad": [0.0] * 5,
+        "x_m": 0.2, "y_m": 0.0, "z_m": 0.3,
+        "pitch_rad": 0.0, "yaw_rad": slot * 0.1, "speed_rad_s": 0.5,
+    }
+
+
 def test_pre_recognition_reports_status_and_moves_to_pickup_observe(monkeypatch):
     import atlas_competition_manipulation_backend.backend as backend
 
@@ -123,15 +156,15 @@ def test_pre_recognition_reports_status_and_moves_to_pickup_observe(monkeypatch)
     status_calls = []
     move_calls = []
     node._set_status = lambda state, **kwargs: status_calls.append((state, kwargs))
-    node._move_named_pose = lambda name, arena="", area="": move_calls.append(
-        (name, arena, area)
+    node._move_named_pose = lambda name, arena="", area="", slot=0: move_calls.append(
+        (name, arena, area, slot)
     ) or True
 
-    assert node._do_pre_recognition("A", "pickup") is True
+    assert node._do_pre_recognition("A", "pickup", 3) is True
     assert status_calls == [
         (1, {"step": "move_to_observe_pose", "message": "移动到 pickup 固定观察或预备位"})
     ]
-    assert move_calls == [("pickup_observe", "A", "")]
+    assert move_calls == [("pickup_observe", "A", "", 3)]
 
 
 def test_pick_contact_target_descends_to_calibrated_layer_z_not_relative_magic_distance():

@@ -186,7 +186,14 @@ std::string NavOriginState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_ORIGIN", "startup lidar alignment and origin correction");
-  return action_outcome(runtime_->navigate("origin"));
+  const auto result = runtime_->navigate("origin");
+  if (result == ActionResult::kSucceeded || result == ActionResult::kReset ||
+    result == ActionResult::kShutdown)
+  {
+    return action_outcome(result);
+  }
+  // A failed map match must stop the mission without reporting an MCU Fault.
+  return outcomes::kRecovery;
 }
 
 ArmZeroState::ArmZeroState(Runtime::SharedPtr runtime)
@@ -273,6 +280,11 @@ std::string InspectSortZoneState::execute(yasmin::Blackboard::SharedPtr blackboa
     blackboard->set<std::string>("arena", result.arena);
     return outcomes::kOk;
   }
+  if (result.result == ActionResult::kFailed) {
+    // A partial sorting image cannot establish the arena or cargo routing.
+    // Pause for recovery without sending a mission-fail event to the MCU.
+    return outcomes::kRecovery;
+  }
   return action_outcome(result.result);
 }
 
@@ -320,11 +332,11 @@ std::string ObservePickupState::execute(yasmin::Blackboard::SharedPtr blackboard
   }
   const auto & destination = runtime_->model().destination_for(observation.cargo_class);
   if (destination.empty()) {
-    return outcomes::kFailed;
+    return outcomes::kRecovery;
   }
   const auto park_slot = runtime_->model().next_park_slot(destination);
   if (park_slot >= CompetitionModel::kSlotCount) {
-    return outcomes::kFailed;
+    return outcomes::kRecovery;
   }
   blackboard->set<std::string>("cargo", observation.cargo_class);
   blackboard->set<std::string>("destination", destination);
@@ -367,10 +379,14 @@ NavParkState::NavParkState(Runtime::SharedPtr runtime)
 std::string NavParkState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PARK", "");
-  if (!blackboard->contains("destination")) {
+  if (!blackboard->contains("destination") || !blackboard->contains("cargo")) {
     return outcomes::kFailed;
   }
-  return action_outcome(runtime_->navigate(blackboard->get<std::string>("destination")));
+  const auto park = blackboard->get<std::string>("destination");
+  if (!runtime_->model().can_place(park, blackboard->get<std::string>("cargo"))) {
+    return outcomes::kRecovery;
+  }
+  return action_outcome(runtime_->navigate(park));
 }
 
 ObserveParkState::ObserveParkState(Runtime::SharedPtr runtime)
@@ -413,6 +429,9 @@ std::string PlaceState::execute(yasmin::Blackboard::SharedPtr blackboard)
   }
   const auto park = blackboard->get<std::string>("destination");
   const auto cargo = blackboard->get<std::string>("cargo");
+  if (!runtime_->model().can_place(park, cargo)) {
+    return outcomes::kRecovery;
+  }
   const auto slot = get_slot(blackboard, "park_slot");
   if (slot >= CompetitionModel::kSlotCount) {
     return outcomes::kFailed;
@@ -422,7 +441,7 @@ std::string PlaceState::execute(yasmin::Blackboard::SharedPtr blackboard)
   if (result != ActionResult::kSucceeded) {
     return action_outcome(result);
   }
-  return runtime_->model().confirm_place(park, slot) ? outcomes::kOk : outcomes::kFailed;
+  return runtime_->model().confirm_place(park, slot, cargo) ? outcomes::kOk : outcomes::kFailed;
 }
 
 CheckDoneState::CheckDoneState(Runtime::SharedPtr runtime)

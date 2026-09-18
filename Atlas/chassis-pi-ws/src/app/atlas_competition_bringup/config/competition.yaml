@@ -6,7 +6,7 @@ competition:
   backend_name: direct_odom_competition
 
   vision:
-    # 智能分拣区按相机画面左右关系解码：左侧=园区一(park_1)，右侧=园区二(park_2)
+    # A 区：画面左侧=园区二，右侧=园区一；B 区：左侧=园区一，右侧=园区二
     sorting_rule:
       enabled: true
 
@@ -22,14 +22,17 @@ competition:
     action_server_timeout_s: 10.0
     stack_ready_timeout_s: 30.0
 
-    # 激光只在全自主任务开头做一次绝对对齐
+    # 激光只在全自主任务开头做一次绝对对齐；允许从地图任意位置返回原点
     # A/B 地图都必须以中转区最优位姿/朝向作为 (0,0,0)；若 A/B 指向同一地图会自动去重
     startup_localization:
       warmup_s: 1.0
-      candidate_timeout_s: 5.0
+      candidate_timeout_s: 30.0
       sample_count: 20
-      max_origin_offset_m: 0.60
-      max_origin_yaw_rad: 0.50
+      # 与保存的 map 图片核对激光命中点，避免把本次启动位置误认为地图原点
+      min_map_scan_agreement: 0.35
+      min_map_scan_hits: 25
+      max_origin_offset_m: 1000.0
+      max_origin_yaw_rad: 3.141593
       stability_xy_m: 0.030
       stability_yaw_rad: 0.040
 
@@ -53,20 +56,21 @@ competition:
         pbstream: maps/test/ruikang.pbstream
         waypoints:
           pickup:
-            x: 1.275774
-            y: 0.089968
-            yaw: 0.087102491
+            x: 1.289458
+            y: 0.071087
+            yaw: 0.149729088
             configured: true
           park_1:
-            x: 0.610192
-            y: -0.36646
-            yaw: 0.056990739
+            x: 0.605981
+            y: -0.388758
+            yaw: 0.01298434
             configured: true
           park_2:
-            x: 0.571332
-            y: 0.479321
-            yaw: -0.010816577
+            x: 0.579779
+            y: 0.493262
+            yaw: 0.02811168
             configured: true
+
 
 
 
@@ -84,101 +88,194 @@ competition:
       zero:
         configured: true
         joints_rad:
-        - 3.03268
+        - 3.117049
         - 1.566194
         - 6.278584
-        - 2.998933
-        - 3.140059
+        - 3.003535
+        - 3.141593
         x_m: 0.052
-        y_m: 0.004
+        y_m: 0.0
         z_m: 0.096
-        pitch_rad: -0.105177715
-        yaw_rad: 0.110542989
-        speed_rad_s: 0.8
+        pitch_rad: -0.100563182
+        yaw_rad: 0.024618519
+        speed_rad_s: 0.5
       sorting_scan_a:
         configured: true
         joints_rad:
-        - 4.746137
-        - 3.431515
-        - 4.479224
-        - 2.998933
-        - 3.140059
-        x_m: -0.013
-        y_m: -0.332
-        z_m: 0.289
-        pitch_rad: -0.039230777
-        yaw_rad: -1.602912392
-        speed_rad_s: 0.8
+        - 4.787555
+        - 3.466797
+        - 4.451613
+        - 3.003535
+        - 3.141593
+        x_m: -0.027
+        y_m: -0.339
+        z_m: 0.284
+        pitch_rad: -0.026970704
+        yaw_rad: -1.645864532
+        speed_rad_s: 0.5
       sorting_scan_b:
-        configured: false
+        # A 观察位沿机械臂 x 轴镜像：y、末端 yaw 和基座关节角取镜像值
+        configured: true
         joints_rad:
-        - 0.0
-        - 0.0
-        - 0.0
-        - 0.0
-        - 0.0
-        x_m: 0.0
-        y_m: 0.0
-        z_m: 0.0
-        pitch_rad: 0.0
-        yaw_rad: 0.0
+        - -1.495630
+        - -3.466797
+        - -4.451613
+        - -3.003535
+        - -3.141593
+        x_m: -0.027
+        y_m: 0.339
+        z_m: 0.284
+        pitch_rad: -0.026970704
+        yaw_rad: 1.645864532
         speed_rad_s: 0.5
       navigation_safe:
         configured: true
         joints_rad:
-        - 3.104777
-        - 1.56466
-        - 6.26171
-        - 2.998933
-        - 3.140059
-        x_m: 0.051
-        y_m: 0.0
-        z_m: 0.1
-        pitch_rad: -0.123621342
-        yaw_rad: 0.038431101
-        speed_rad_s: 0.8
+        - 3.064894
+        - 1.566194
+        - 6.280118
+        - 3.003535
+        - 3.141593
+        x_m: 0.052
+        y_m: 0.002
+        z_m: 0.095
+        pitch_rad: -0.099024221
+        yaw_rad: 0.076771955
+        speed_rad_s: 0.5
     arenas:
       A:
         pickup:
-          observe:
-            configured: true
+          observations:
+          - configured: true
             joints_rad:
-            - 3.397768
-            - 3.71837
-            - 4.115671
-            - 2.998933
-            - 3.140059
-            x_m: 0.373
-            y_m: -0.099
-            z_m: 0.281
-            pitch_rad: -0.115957227
-            yaw_rad: -0.254542533
-            speed_rad_s: 0.8
-          layer_z_configured: true
-          layer_z_m:
-          - 0.023
-          - 0.066
-          - 0.111
+            - 3.04035
+            - 3.511282
+            - 5.045263
+            - 2.399146
+            - 3.143127
+            x_m: 0.329
+            y_m: 0.032
+            z_m: 0.155
+            pitch_rad: 0.006776305
+            yaw_rad: 0.099806095
+            speed_rad_s: 0.5
+            layer_z_m:
+            - 0.017
+            - 0.059
+          - configured: true
+            joints_rad:
+            - 3.425379
+            - 3.388564
+            - 5.12503
+            - 2.481981
+            - 3.143127
+            x_m: 0.295
+            y_m: -0.088
+            z_m: 0.169
+            pitch_rad: 0.046692015
+            yaw_rad: -0.285215311
+            speed_rad_s: 0.5
+            layer_z_m:
+            - 0.027
+            - 0.067
+          - configured: true
+            joints_rad:
+            - 3.385496
+            - 4.206176
+            - 3.854894
+            - 2.943709
+            - 3.141593
+            x_m: 0.448
+            y_m: -0.113
+            z_m: 0.152
+            pitch_rad: 0.055866629
+            yaw_rad: -0.243816079
+            speed_rad_s: 0.5
+            layer_z_m:
+            - 0.014
+            - 0.066
+          - configured: true
+            joints_rad:
+            - 3.0787
+            - 4.227651
+            - 3.781263
+            - 2.908428
+            - 3.141593
+            x_m: 0.464
+            y_m: 0.028
+            z_m: 0.162
+            pitch_rad: -0.031542968
+            yaw_rad: 0.062994281
+            speed_rad_s: 0.5
+            layer_z_m:
+            - 0.005
+            - 0.071
         park_1:
           prepare:
             configured: true
             joints_rad:
-            - 4.827438
-            - 3.922389
-            - 3.698428
-            - 3.247438
-            - 3.140059
-            x_m: -0.048
-            y_m: -0.402
-            z_m: 0.292
-            pitch_rad: -0.080635581
-            yaw_rad: -1.684244854
-            speed_rad_s: 0.8
-          placement_reference:
+            - 4.649496
+            - 3.483671
+            - 4.626487
+            - 2.856272
+            - 3.141593
+            x_m: 0.02
+            y_m: -0.345
+            z_m: 0.243
+            pitch_rad: 0.017514988
+            yaw_rad: -1.507823402
+            speed_rad_s: 0.5
+          placement_points:
+          - configured: true
+            x_m: 0.055
+            y_m: -0.301
+            first_layer_z_m: 0.016
+          - configured: true
+            x_m: 0.056
+            y_m: -0.301
+            first_layer_z_m: 0.016
+          - configured: true
+            x_m: 0.063
+            y_m: -0.289
+            first_layer_z_m: 0.059
+          - configured: true
+            x_m: 0.063
+            y_m: -0.289
+            first_layer_z_m: 0.059
+        # 旧版四点标定，留作对照；当前任务使用下方的 park_2
+        park_2_previous_calibration:
+          prepare:
             configured: true
-            x_m: -0.042
-            y_m: -0.368
-            first_layer_z_m: 0.012
+            joints_rad:
+            - 1.428136
+            - 3.350214
+            - 4.535981
+            - 3.19068
+            - 3.140059
+            x_m: -0.043
+            y_m: 0.308
+            z_m: 0.291
+            pitch_rad: 0.127966872
+            yaw_rad: 1.715079331
+            speed_rad_s: 0.5
+          placement_points:
+          - configured: true
+            x_m: -0.034
+            y_m: 0.297
+            first_layer_z_m: 0.013
+          - configured: true
+            x_m: -0.034
+            y_m: 0.297
+            first_layer_z_m: 0.013
+          - configured: true
+            x_m: -0.035
+            y_m: 0.297
+            first_layer_z_m: 0.013
+          - configured: true
+            x_m: -0.035
+            y_m: 0.297
+            first_layer_z_m: 0.013
+
         park_2:
           prepare:
             configured: true

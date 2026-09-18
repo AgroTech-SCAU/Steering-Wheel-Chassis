@@ -155,7 +155,7 @@ ros2 launch atlas_competition_bringup navigation_calibration.launch.py \
   competition_config:=/path/to/competition.yaml
 ```
 
-程序会先核对 map YAML、地图图片和 pbstream 是否存在，再询问标定 A/B；随后仅启动 Cartographer 纯定位；定位稳定后会先显示当前底盘相对地图原点 `(0,0,0)` 的 `dx / dy / distance / yaw` 偏差用于核对，但**导航标定不会自动回原点**；用户继续手动遥控到底盘的货物区、园区一、园区二最终位姿并确认，程序记录 `map -> base_link` 的 x/y/yaw 到所选半场 waypoint
+程序会先核对 map YAML、地图图片和 pbstream，询问标定 A/B，并在确认机械臂已收拢、底盘周围安全后执行激光重定位与自动回地图原点 `(0,0,0)`。定位阶段还会把当前激光扫描与保存的地图图片对照；不匹配时继续等待，超时则拒绝导航，避免把启动位置误当成地图原点。到位后直接使用导航后端保留的同一份 `map -> odom` 对齐复核原点偏差；随后由用户遥控到货物区、园区一、园区二的最终位姿并确认，程序记录 `map -> base_link` 的 x/y/yaw 到所选半场 waypoint。
 
 机械臂标定：
 
@@ -191,6 +191,15 @@ ros2 launch atlas_competition_bringup competition_stack.launch.py \
 ```
 
 ### 8. 常用联调方式
+
+自动区测试入口：
+
+```bash
+ros2 launch atlas_competition_bringup auto_zone_test.launch.py \
+  competition_config:=/path/to/competition.yaml
+```
+
+此入口启动完整任务栈。激光重定位发生在 MCU 发出 AUTO 启动事件、任务进入 `NAV_ORIGIN` 时；仅启动 launch 而停在 `WAIT_AUTO` 或 `WAIT_RESET` 时不会移动底盘，也不会开始定位。可通过 `/atlas/mission/status` 和 `/atlas/navigation/status` 确认状态。
 
 查看启动参数：
 
@@ -317,34 +326,18 @@ competition:
 
 ### 视觉配置
 
-`sorting_scan_a` 和 `sorting_scan_b` 是两套实测机械臂观察位姿，用于判断当前半场：
+自动区先移动机械臂到 `arm_motion.fixed_poses.sorting_scan_a`。画面里恰好有两个不同标签的零件时，判定为 A 区，并记录左侧零件去 `park_2`、右侧去 `park_1`。否则移动到 `sorting_scan_b`；在 B 区识别到两个不同标签时，记录左侧去 `park_1`、右侧去 `park_2`。两个观察位都无法确认时进入恢复流程。
+
+当前 `competition.yaml` 的 B 观察位由 A 观察位沿 x 轴镜像得到：`y_m` 和 `yaw_rad` 取反，基座关节角也取镜像值。机械臂仍按 `joints_rad` 执行，并检查末端位置，因此上机前须复核镜像位姿。
 
 ```yaml
 competition:
   vision:
-    sorting_scan_a:
-      configured: true
-      x_m: 0.30
-      y_m: 0.10
-      z_m: 0.35
-      pitch_rad: -3.06
-      yaw_rad: -3.11
-      speed_rad_s: 0.5
-    sorting_scan_b:
-      configured: true
-      x_m: 0.30
-      y_m: -0.10
-      z_m: 0.35
-      pitch_rad: -3.06
-      yaw_rad: -3.11
-      speed_rad_s: 0.5
     sorting_rule:
       enabled: true
-      park_1_roi: [10, 20, 110, 120]
-      park_2_roi: [130, 20, 230, 120]
 ```
 
-检测流程先尝试 `sorting_scan_a`，能稳定识别分拣标识则认为 arena=A；否则尝试 `sorting_scan_b`，成功则 arena=B
+识别规则保存在任务模型中。到货物区后逐件识别类别，再按已记录的类别与园区对应关系导航和投放。
 
 ### 机械臂放置配置
 

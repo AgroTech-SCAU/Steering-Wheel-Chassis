@@ -105,11 +105,15 @@ def _best_detection_by_cargo(
 def resolve_sorting_rule(
     detections: Iterable[Detection],
     config: BackendConfig,
+    arena: str,
 ) -> SortingRuleResult:
     if not config.sorting_enabled:
         return SortingRuleResult(False, message="sorting_rule.enabled=false")
 
-    best = _best_detection_by_cargo(detections, config.class_aliases)
+    parts = list(detections)
+    if len(parts) != 2:
+        return SortingRuleResult(False, message="sorting view must contain exactly two parts")
+    best = _best_detection_by_cargo(parts, config.class_aliases)
     if "gear" not in best or "t_bolt" not in best:
         return SortingRuleResult(
             False,
@@ -124,44 +128,38 @@ def resolve_sorting_rule(
             message="sorting left/right order is ambiguous",
         )
 
-    if gear.u < t_bolt.u:
-        park_1_cargo, park_2_cargo = "gear", "t_bolt"
-    else:
-        park_1_cargo, park_2_cargo = "t_bolt", "gear"
+    if arena not in {"A", "B"}:
+        return SortingRuleResult(False, message=f"unknown arena {arena}")
+    left, right = ("gear", "t_bolt") if gear.u < t_bolt.u else ("t_bolt", "gear")
+    # The physical park numbering is mirrored between the two arenas.
+    park_1_cargo, park_2_cargo = (right, left) if arena == "A" else (left, right)
 
     return SortingRuleResult(
         True,
         park_1_cargo=park_1_cargo,
         park_2_cargo=park_2_cargo,
-        message="sorting rule decoded by image left/right order",
+        message=f"arena {arena} sorting rule decoded by image left/right order",
     )
 
 
 def classify_with_scan_sequence(
-    scan: Callable[[str], Iterable[Detection]],
+    scan: Callable[[str], Optional[Iterable[Detection]]],
     config: BackendConfig,
 ) -> SortingRuleResult:
-    results: list[tuple[str, str, SortingRuleResult]] = []
     for arena, scan_name in (("A", "sorting_scan_a"), ("B", "sorting_scan_b")):
-        result = resolve_sorting_rule(scan(scan_name), config)
+        detections = scan(scan_name)
+        if detections is None:
+            return SortingRuleResult(False, message=f"{scan_name} scan failed")
+        result = resolve_sorting_rule(detections, config, arena)
         if result.success:
-            results.append((arena, scan_name, result))
-
-    if len(results) == 1:
-        arena, scan_name, result = results[0]
-        return SortingRuleResult(
-            True,
-            arena=arena,
-            park_1_cargo=result.park_1_cargo,
-            park_2_cargo=result.park_2_cargo,
-            message=f"{scan_name} decoded sorting rule",
-        )
-    if len(results) > 1:
-        return SortingRuleResult(
-            False,
-            message="ambiguous arena: both sorting_scan_a and sorting_scan_b decoded a valid rule",
-        )
-    return SortingRuleResult(False, message="no valid sorting rule in scan_A or scan_B")
+            return SortingRuleResult(
+                True,
+                arena=arena,
+                park_1_cargo=result.park_1_cargo,
+                park_2_cargo=result.park_2_cargo,
+                message=f"{scan_name} decoded sorting rule",
+            )
+    return SortingRuleResult(False, message="no valid sorting rule in scan A or B")
 
 
 def detect_camera_target_from_centers(
@@ -173,10 +171,16 @@ def detect_camera_target_from_centers(
     expected_layer = int(request.expected_layer)
     if slot not in (0, 1, 2, 3):
         return DetectTargetResult(False, message="slot must be 0..3")
-    if expected_layer not in (1, 2, 3):
-        return DetectTargetResult(False, message="expected_layer must be 1..3")
+    if expected_layer not in (1, 2):
+        return DetectTargetResult(False, message="expected_layer must be 1..2")
 
-    matching = [d for d in centers if int(d.corner_index) == slot]
+    detections = list(centers)
+    matching = [d for d in detections if int(d.corner_index) == slot]
+    if (not matching and len(detections) == 1
+            and str(getattr(request, "waypoint_id", "pickup")) == "pickup"):
+        # A calibrated slot view can show only its one remaining cargo. The
+        # detector labels a lone object corner 0 regardless of physical slot.
+        matching = detections
     max_targets = int(getattr(request, "max_targets", 1) or 1)
     target_count = min(len(matching), max_targets)
     if not matching:
@@ -238,6 +242,8 @@ class CompetitionVisionBackend(Node):
         self._config = self._load_config()
         self._vision_pose_ready = False
         self._latest_centers: list[Detection] = []
+        self._final_centers: Optional[list[Detection]] = None
+        self._capture_start_ns = 0
 
         ready_qos = QoSProfile(depth=1)
         ready_qos.reliability = ReliabilityPolicy.RELIABLE
@@ -308,10 +314,14 @@ class CompetitionVisionBackend(Node):
         self._vision_pose_ready = bool(msg.data)
 
     def _on_detection_centers(self, msg) -> None:
-        self._latest_centers = [
+        centers = [
             Detection(d.cls_name, float(d.u), float(d.v), float(d.conf), int(d.corner_index))
             for d in msg.detections
         ]
+        self._latest_centers = centers
+        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+        if msg.is_final_best and self._capture_start_ns and stamp_ns >= self._capture_start_ns:
+            self._final_centers = centers
 
     def _wait_for_service(self, client, label: str) -> Optional[str]:
         timeout_s = float(self.get_parameter("service_timeout_s").value)
@@ -358,26 +368,26 @@ class CompetitionVisionBackend(Node):
             return None, "vision_detect service timeout"
         return future.result(), ""
 
-    def _scan_view(self, scan_name: str) -> list[Detection]:
+    def _scan_view(self, scan_name: str) -> Optional[list[Detection]]:
         client = self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
         scan_timeout = float(self.get_parameter("sorting_scan_timeout_s").value)
         ok, message = self._call_trigger(client, scan_name, scan_timeout)
         if not ok:
             self.get_logger().warn(f"{scan_name} move failed: {message}")
-            return []
+            return None
         if not self._wait_vision_pose_ready():
             self.get_logger().warn(f"{scan_name} did not publish vision_pose_ready=true")
-            return []
+            return None
 
         start_response, error = self._set_vision_detect(True)
         if error or not start_response or not start_response.success:
             self.get_logger().warn(error or start_response.message)
-            return []
+            return None
         time.sleep(float(self.get_parameter("detection_window_s").value))
         stop_response, error = self._set_vision_detect(False)
         if error or not stop_response or not stop_response.success:
             self.get_logger().warn(error or stop_response.message)
-            return []
+            return None
         return [
             Detection(cls_name, u, v, 1.0)
             for cls_name, u, v in zip(
@@ -385,18 +395,29 @@ class CompetitionVisionBackend(Node):
         ]
 
     def _capture_target_centers(self) -> list[Detection]:
+        self._final_centers = None
+        self._capture_start_ns = self.get_clock().now().nanoseconds
         start_response, error = self._set_vision_detect(True)
         if error or not start_response or not start_response.success:
             self.get_logger().warn(error or start_response.message)
+            self._capture_start_ns = 0
             return []
         time.sleep(float(self.get_parameter("detection_window_s").value))
-        self._set_vision_detect(False)
-        time.sleep(float(self.get_parameter("final_centers_wait_s").value))
-        return list(self._latest_centers)
+        stop_response, error = self._set_vision_detect(False)
+        if error or not stop_response or not stop_response.success:
+            self.get_logger().warn(error or stop_response.message)
+            self._capture_start_ns = 0
+            return []
+        deadline = time.monotonic() + float(self.get_parameter("final_centers_wait_s").value)
+        while self._final_centers is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        result = list(self._final_centers or [])
+        self._capture_start_ns = 0
+        return result
 
     def _on_classify_sorting(self, _request, response):
         if not self._config.sorting_enabled:
-            result = resolve_sorting_rule([], self._config)
+            result = resolve_sorting_rule([], self._config, "A")
         else:
             result = classify_with_scan_sequence(self._scan_view, self._config)
         response.success = result.success

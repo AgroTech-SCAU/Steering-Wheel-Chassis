@@ -633,9 +633,16 @@ Observation Runtime::observe_with_recovery(
   const std::size_t slot,
   const uint8_t expected_layer)
 {
+  // Observation cannot make progress after a preparation or scan failure.
+  // Stop in RECOVERY without reporting a mission failure to the MCU, which
+  // would enter Fault while the arm may still be elevated.
+  const auto observation_failure = [](ActionResult result) {
+      return result == ActionResult::kReset || result == ActionResult::kShutdown ?
+             result : ActionResult::kRecovery;
+    };
   auto action = manipulate(area, "pre_recognition", slot, expected_layer);
   if (action != ActionResult::kSucceeded) {
-    return Observation{action, "", false, false, "pre-recognition failed"};
+    return Observation{observation_failure(action), "", false, false, "pre-recognition failed"};
   }
 
   auto observation = observe_once(area, slot, expected_layer);
@@ -645,19 +652,19 @@ Observation Runtime::observe_with_recovery(
 
   action = manipulate(area, "view_scan", slot, expected_layer);
   if (action != ActionResult::kSucceeded) {
-    return Observation{action, "", false, false, "arm view scan failed"};
+    return Observation{observation_failure(action), "", false, false, "arm view scan failed"};
   }
   observation = observe_once(area, slot, expected_layer);
   const auto restore_arm = manipulate(area, "pre_recognition", slot, expected_layer);
   if (restore_arm != ActionResult::kSucceeded) {
-    return Observation{restore_arm, "", false, false, "arm restore failed"};
+    return Observation{observation_failure(restore_arm), "", false, false, "arm restore failed"};
   }
   if (observation_valid(observation)) {
     return observation;
   }
 
   if (!set_navigation_view_scan(true)) {
-    return Observation{ActionResult::kFailed, "", false, false, "base yaw scan failed"};
+    return Observation{ActionResult::kRecovery, "", false, false, "base yaw scan failed"};
   }
   observation = observe_once(area, slot, expected_layer);
   const bool restored = set_navigation_view_scan(false);
@@ -665,7 +672,9 @@ Observation Runtime::observe_with_recovery(
     return Observation{ActionResult::kRecovery, "", false, false, "base yaw restore failed"};
   }
   if (!observation_valid(observation)) {
-    observation.result = ActionResult::kFailed;
+    // Exhausted vision retries: hold for recovery instead of reporting a
+    // mission failure to the MCU for an incomplete camera view.
+    observation.result = ActionResult::kRecovery;
   }
   return observation;
 }
@@ -914,7 +923,11 @@ void Runtime::safe_stop(const std::string & reason)
     ++safe_stop_count_;
   }
   publish_motor_zero();
-  RCLCPP_WARN(get_logger(), "safe_stop: %s", reason.c_str());
+  if (reason == "wait reset") {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "safe_stop: %s", reason.c_str());
+  } else {
+    RCLCPP_WARN(get_logger(), "safe_stop: %s", reason.c_str());
+  }
 }
 
 void Runtime::publish_mission_status_locked()

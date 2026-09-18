@@ -69,10 +69,10 @@ class XYZ:
         )
 
 
-def pickup_target_spec(arm_motion: dict, arena: str, layer: int) -> dict[str, float]:
-    observe = resolve_arm_pose(arm_motion, "pickup_observe", arena=arena)
+def pickup_target_spec(arm_motion: dict, arena: str, layer: int, slot: int = 0) -> dict[str, float]:
+    observe = resolve_arm_pose(arm_motion, "pickup_observe", arena=arena, slot=slot)
     return {
-        "target_z_m": resolve_pickup_layer_z(arm_motion, arena, layer),
+        "target_z_m": resolve_pickup_layer_z(arm_motion, arena, layer, slot),
         "pitch_rad": float(observe["pitch_rad"]),
         "yaw_rad": float(observe["yaw_rad"]),
     }
@@ -94,12 +94,16 @@ def compute_placement_target(
         raise ValueError(f"park slot 非法: {slot}")
     if existing_layer < 0:
         raise ValueError(f"existing layer 非法: {existing_layer}")
-    offsets = list(placement.get("slot_offsets_xy_m", []) or [])
-    if len(offsets) != 8:
-        raise ValueError("placement.slot_offsets_xy_m 必须正好包含 8 个数")
-    reference = resolve_placement_reference(arm_motion, arena, park)
-    dx = float(offsets[slot * 2])
-    dy = float(offsets[slot * 2 + 1])
+    park_cfg = arm_motion.get("arenas", {}).get(arena, {}).get(park, {})
+    reference = resolve_placement_reference(arm_motion, arena, park, slot)
+    if "placement_points" in park_cfg:
+        dx = dy = 0.0
+    else:
+        offsets = list(placement.get("slot_offsets_xy_m", []) or [])
+        if len(offsets) != 8:
+            raise ValueError("placement.slot_offsets_xy_m 必须正好包含 8 个数")
+        dx = float(offsets[slot * 2])
+        dy = float(offsets[slot * 2 + 1])
     step = float(placement.get("layer_step_m", 0.050))
     return XYZ(
         reference["x_m"] + dx,
@@ -530,9 +534,9 @@ class CompetitionManipulationBackend(Node):
                 self._joint_cv.wait(timeout=0.05)
         return False
 
-    def _move_named_pose(self, pose_name: str, arena: str = "", area: str = "") -> bool:
+    def _move_named_pose(self, pose_name: str, arena: str = "", area: str = "", slot: int = 0) -> bool:
         pose = resolve_arm_pose(
-            self.arm_motion, pose_name, arena=arena or None, area=area or None
+            self.arm_motion, pose_name, arena=arena or None, area=area or None, slot=slot
         )
         req = SetArmJoints.Request()
         req.joints_rad = [float(v) for v in pose["joints_rad"]]
@@ -577,13 +581,13 @@ class CompetitionManipulationBackend(Node):
         try:
             arena = str(getattr(request, "arena", "") or "").strip().upper()
             if task == "pre_recognition":
-                ok = self._do_pre_recognition(arena, request.waypoint_id)
+                ok = self._do_pre_recognition(arena, request.waypoint_id, int(request.slot))
             elif task == "view_scan":
-                ok = self._do_view_scan(arena, request.waypoint_id)
+                ok = self._do_view_scan(arena, request.waypoint_id, int(request.slot))
             elif task in {"zero", "sorting_scan_a", "sorting_scan_b", "navigation_safe"}:
                 ok = self._move_named_pose(task)
             elif task == "pickup_observe":
-                ok = self._move_named_pose("pickup_observe", arena=arena)
+                ok = self._move_named_pose("pickup_observe", arena=arena, slot=int(request.slot))
             elif task == "park_prepare":
                 ok = self._move_named_pose("park_prepare", arena=arena, area=request.waypoint_id)
             elif task == "pick":
@@ -626,26 +630,26 @@ class CompetitionManipulationBackend(Node):
                     message=str(exc),
                 )
 
-    def _do_pre_recognition(self, arena: str, area: str) -> bool:
+    def _do_pre_recognition(self, arena: str, area: str, slot: int = 0) -> bool:
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="move_to_observe_pose",
             message=f"移动到 {area} 固定观察或预备位",
         )
         if area == "pickup":
-            return self._move_named_pose("pickup_observe", arena=arena)
+            return self._move_named_pose("pickup_observe", arena=arena, slot=slot)
         if area in {"park_1", "park_2"}:
             return self._move_named_pose("park_prepare", arena=arena, area=area)
         raise ValueError(f"pre_recognition 不支持区域: {area}")
 
-    def _do_view_scan(self, arena: str, area: str) -> bool:
+    def _do_view_scan(self, arena: str, area: str, slot: int = 0) -> bool:
         if not self.view_scan_enabled:
             self._set_status(
                 ManipulationStatus.STATE_RUNNING,
                 step="view_scan_fallback",
                 message="view_scan 未标定，退化为重新回固定观察位",
             )
-            return self._do_pre_recognition(arena, area)
+            return self._do_pre_recognition(arena, area, slot)
 
         start = self._current_pose()
         if start is None:
@@ -665,7 +669,7 @@ class CompetitionManipulationBackend(Node):
     def _do_pick(self, arena: str, slot: int, layer: int) -> bool:
         if slot not in (0, 1, 2, 3):
             raise ValueError(f"pickup slot 非法: {slot}")
-        if layer not in (1, 2, 3):
+        if layer not in (1, 2):
             raise ValueError(f"pickup layer 非法: {layer}")
 
         start = self._current_pose()
@@ -677,7 +681,7 @@ class CompetitionManipulationBackend(Node):
             step="select_pick_target",
             message=f"选择角点 slot={slot}, layer={layer}",
         )
-        spec = pickup_target_spec(self.arm_motion, arena, layer)
+        spec = pickup_target_spec(self.arm_motion, arena, layer, slot)
         msg = PickTarget()
         msg.corner_index = int(slot)
         msg.layer = int(layer)

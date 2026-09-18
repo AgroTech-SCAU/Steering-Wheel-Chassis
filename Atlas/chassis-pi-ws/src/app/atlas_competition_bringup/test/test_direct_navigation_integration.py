@@ -12,6 +12,14 @@ def test_competition_stack_starts_direct_backend_by_default():
     assert "atlas_nav_full_backend" not in launch
 
 
+def test_auto_zone_test_keeps_mission_origin_localization_enabled():
+    launch = (ROOT / "launch/auto_zone_test.launch.py").read_text()
+    assert '"competition_stack.launch.py"' in launch
+    assert '"enable_navigation": "true"' in launch
+    assert '"enable_mission": "true"' in launch
+    assert '"navigation_backend_name": "direct_odom_competition"' in launch
+
+
 def test_competition_yaml_selects_direct_backend_and_documents_origin_alignment():
     config = (ROOT / "config/competition.yaml").read_text()
     assert "backend_name: direct_odom_competition" in config
