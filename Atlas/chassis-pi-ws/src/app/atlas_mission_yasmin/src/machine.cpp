@@ -70,7 +70,14 @@ yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPt
 
   machine->add_state(
     "OBSERVE_PICKUP", std::make_shared<ObservePickupState>(runtime),
-    action_transitions("PICK"));
+    {
+      {outcomes::kOk, "PICK"},
+      {outcomes::kNext, "ARM_NAV_SAFE_TO_PICKUP"},
+      {outcomes::kFailed, outcomes::kFailed},
+      {outcomes::kReset, outcomes::kReset},
+      {outcomes::kRecovery, outcomes::kRecovery},
+      {outcomes::kShutdown, outcomes::kShutdown},
+    });
 
   machine->add_state(
     "PICK", std::make_shared<PickState>(runtime),

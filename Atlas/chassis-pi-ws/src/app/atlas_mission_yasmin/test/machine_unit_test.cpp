@@ -50,6 +50,7 @@ TEST_F(MachineUnitTest, AutonomousMachineUsesSafeArmKeyframeTopology)
   EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "NAV_ORIGIN");
   EXPECT_EQ(transitions.at("NAV_ORIGIN").at("ok"), "INSPECT_SORT_ZONE");
   EXPECT_EQ(transitions.at("INSPECT_SORT_ZONE").at("ok"), "ARM_NAV_SAFE_INITIAL");
+  EXPECT_EQ(transitions.at("OBSERVE_PICKUP").at("next"), "ARM_NAV_SAFE_TO_PICKUP");
   EXPECT_EQ(transitions.at("PICK").at("ok"), "RETURN_PICKUP_OBSERVE");
   EXPECT_EQ(transitions.at("RETURN_PICKUP_OBSERVE").at("ok"), "ARM_NAV_SAFE_TO_PARK");
   EXPECT_EQ(transitions.at("NAV_PARK").at("ok"), "PARK_PREPARE");

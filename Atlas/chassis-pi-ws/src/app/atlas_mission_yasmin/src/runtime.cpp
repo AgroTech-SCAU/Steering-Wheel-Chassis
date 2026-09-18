@@ -633,13 +633,18 @@ Observation Runtime::observe_with_recovery(
   const std::size_t slot,
   const uint8_t expected_layer)
 {
-  // Observation cannot make progress after a preparation or scan failure.
-  // Stop in RECOVERY without reporting a mission failure to the MCU, which
-  // would enter Fault while the arm may still be elevated.
+  // Mechanical/safety failures still enter RECOVERY. A semantic vision miss
+  // (service succeeded but no valid target/layer was found) is different: it
+  // is a task-level miss that the pickup scheduler may defer and retry later.
   const auto observation_failure = [](ActionResult result) {
       return result == ActionResult::kReset || result == ActionResult::kShutdown ?
              result : ActionResult::kRecovery;
     };
+  const auto semantic_miss = [](const Observation & value) {
+      return value.result == ActionResult::kSucceeded &&
+             (!value.layer_ok || !value.complete);
+    };
+
   auto action = manipulate(area, "pre_recognition", slot, expected_layer);
   if (action != ActionResult::kSucceeded) {
     return Observation{observation_failure(action), "", false, false, "pre-recognition failed"};
@@ -648,6 +653,9 @@ Observation Runtime::observe_with_recovery(
   auto observation = observe_once(area, slot, expected_layer);
   if (observation_valid(observation)) {
     return observation;
+  }
+  if (!semantic_miss(observation)) {
+    return Observation{observation_failure(observation.result), "", false, false, observation.message};
   }
 
   action = manipulate(area, "view_scan", slot, expected_layer);
@@ -662,6 +670,20 @@ Observation Runtime::observe_with_recovery(
   if (observation_valid(observation)) {
     return observation;
   }
+  if (!semantic_miss(observation)) {
+    return Observation{observation_failure(observation.result), "", false, false, observation.message};
+  }
+
+  // The direct competition navigation backend does not necessarily provide a
+  // base-yaw view_scan service. If that optional recovery stage is unavailable,
+  // do not turn a plain "not seen" result into a global mission recovery. The
+  // arm has already been restored to its calibrated observation pose, so the
+  // scheduler can safely defer this cargo and move to the next scheduled point.
+  if (!nav_view_scan_client_->wait_for_service(std::chrono::duration<double>(0.05))) {
+    observation.result = ActionResult::kFailed;
+    observation.message += "; base yaw scan unavailable, deferred";
+    return observation;
+  }
 
   if (!set_navigation_view_scan(true)) {
     return Observation{ActionResult::kRecovery, "", false, false, "base yaw scan failed"};
@@ -671,12 +693,15 @@ Observation Runtime::observe_with_recovery(
   if (!restored) {
     return Observation{ActionResult::kRecovery, "", false, false, "base yaw restore failed"};
   }
-  if (!observation_valid(observation)) {
-    // Exhausted vision retries: hold for recovery instead of reporting a
-    // mission failure to the MCU for an incomplete camera view.
-    observation.result = ActionResult::kRecovery;
+  if (observation_valid(observation)) {
+    return observation;
   }
-  return observation;
+  if (semantic_miss(observation)) {
+    observation.result = ActionResult::kFailed;
+    observation.message += "; vision retries exhausted, deferred";
+    return observation;
+  }
+  return Observation{observation_failure(observation.result), "", false, false, observation.message};
 }
 
 ActionResult Runtime::run_navigation_request(const Waypoint & waypoint)

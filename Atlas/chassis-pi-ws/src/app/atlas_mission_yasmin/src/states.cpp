@@ -298,35 +298,68 @@ NavPickupState::NavPickupState(Runtime::SharedPtr runtime)
 
 std::string NavPickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
-  runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PICKUP", "");
   if (runtime_->model().done()) {
+    runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PICKUP", "pickup schedule complete");
     return outcomes::kRouteDone;
   }
+  if (runtime_->model().pickup_stalled()) {
+    runtime_->set_state(
+      MissionStatus::STATE_RUNNING, "NAV_PICKUP",
+      "deferred pickup retry pass made no progress");
+    return outcomes::kRecovery;
+  }
+
   const auto slot = runtime_->model().next_pickup_slot();
   if (slot >= CompetitionModel::kSlotCount) {
     return outcomes::kFailed;
   }
+  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto round = runtime_->model().pickup_round();
+  const auto layer_name = layer == CompetitionModel::kHighPickupLayer ? "high" : "low";
+  const auto phase_name = runtime_->model().pickup_retry_phase() ? "deferred-retry" : "primary";
+  runtime_->set_state(
+    MissionStatus::STATE_RUNNING, "NAV_PICKUP",
+    "round=" + std::to_string(round) + " slot=" + std::to_string(slot) +
+    " layer=" + layer_name + " phase=" + phase_name);
+
   blackboard->set<std::size_t>("pickup_slot", slot);
+  blackboard->set<std::size_t>("pickup_round", round);
+  blackboard->set<std::size_t>("pickup_layer", layer);
   return action_outcome(runtime_->navigate("pickup"));
 }
 
 ObservePickupState::ObservePickupState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+    {outcomes::kOk, outcomes::kNext, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
       outcomes::kShutdown})
 {
 }
 
 std::string ObservePickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
-  runtime_->set_state(MissionStatus::STATE_RUNNING, "OBSERVE_PICKUP", "");
   const auto slot = get_slot(blackboard, "pickup_slot");
   if (slot >= CompetitionModel::kSlotCount) {
     return outcomes::kFailed;
   }
-  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto layer = blackboard->contains("pickup_layer") ?
+    static_cast<uint8_t>(blackboard->get<std::size_t>("pickup_layer")) :
+    runtime_->model().pickup_layer(slot);
+  const auto round = blackboard->contains("pickup_round") ?
+    blackboard->get<std::size_t>("pickup_round") :
+    static_cast<std::size_t>(runtime_->model().pickup_round());
+  const auto layer_name = layer == CompetitionModel::kHighPickupLayer ? "high" : "low";
+  runtime_->set_state(
+    MissionStatus::STATE_RUNNING, "OBSERVE_PICKUP",
+    "round=" + std::to_string(round) + " slot=" + std::to_string(slot) +
+    " layer=" + layer_name);
+
   const auto observation = runtime_->observe_with_recovery("pickup", slot, layer);
+  if (observation.result == ActionResult::kFailed) {
+    // A pure vision miss is deferred by the pickup scheduler. This advances
+    // the nominal round/point without consuming the physical layer.
+    return runtime_->model().record_pick_failure(slot) ? outcomes::kNext : outcomes::kRecovery;
+  }
   if (observation.result != ActionResult::kSucceeded) {
     return action_outcome(observation.result);
   }
@@ -360,7 +393,9 @@ std::string PickState::execute(yasmin::Blackboard::SharedPtr blackboard)
     return outcomes::kFailed;
   }
   const auto cargo = blackboard->get<std::string>("cargo");
-  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto layer = blackboard->contains("pickup_layer") ?
+    static_cast<uint8_t>(blackboard->get<std::size_t>("pickup_layer")) :
+    runtime_->model().pickup_layer(slot);
   const auto result = runtime_->manipulate("pickup", "pick", slot, layer, cargo);
   if (result != ActionResult::kSucceeded) {
     return action_outcome(result);
