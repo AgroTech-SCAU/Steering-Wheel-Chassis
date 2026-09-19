@@ -188,3 +188,125 @@ def test_pick_contact_target_descends_to_calibrated_layer_z_not_relative_magic_d
     contact = compute_pick_contact_target(above, 0.12)
 
     assert contact == XYZ(0.2, -0.1, 0.12)
+
+
+def test_move_pose_sends_five_dof_target_and_suction(monkeypatch):
+    import atlas_competition_manipulation_backend.backend as backend
+
+    class DummySetArmPose:
+        class Request:
+            pass
+
+    monkeypatch.setattr(backend, "SetArmPose", DummySetArmPose)
+    node = object.__new__(backend.CompetitionManipulationBackend)
+    node.default_speed_rad_s = 0.8
+    node.motion_timeout_s = 30.0
+    node.arm_pose_client = object()
+    node._cancelled = lambda: False
+    captured = {}
+
+    def call_service(client, req):
+        captured["client"] = client
+        captured["req"] = req
+        return type("Result", (), {"success": True})()
+
+    node._call_service = call_service
+    node._wait_pose_target = lambda target, timeout: captured.update(
+        target=target, timeout=timeout
+    ) or True
+
+    target = backend.XYZ(0.2, -0.1, 0.12)
+    assert node._move_pose(
+        target,
+        pitch_rad=-0.11,
+        yaw_rad=0.23,
+        suction_valid=True,
+        suction_enable=True,
+    ) is True
+
+    req = captured["req"]
+    assert (req.x_m, req.y_m, req.z_m) == pytest.approx((0.2, -0.1, 0.12))
+    assert req.pitch_rad == pytest.approx(-0.11)
+    assert req.yaw_rad == pytest.approx(0.23)
+    assert req.speed_rad_s == pytest.approx(0.8)
+    assert req.suction_valid is True
+    assert req.suction_enable is True
+    assert captured["target"] == target
+    assert captured["timeout"] == pytest.approx(30.0)
+
+
+def test_pick_descend_and_lift_keep_same_pose_constraint(monkeypatch):
+    import atlas_competition_manipulation_backend.backend as backend
+
+    class DummyPickTarget:
+        def __init__(self):
+            self.corner_index = 0
+            self.layer = 0
+            self.use_target_z = False
+            self.target_z_m = 0.0
+            self.use_orientation = False
+            self.pitch_rad = 0.0
+            self.yaw_rad = 0.0
+            self.use_approach = False
+            self.approach_m = 0.0
+
+    class DummyStatus:
+        STATE_RUNNING = 1
+
+    class DummyPublisher:
+        def __init__(self):
+            self.messages = []
+
+        def publish(self, msg):
+            self.messages.append(msg)
+
+    monkeypatch.setattr(backend, "PickTarget", DummyPickTarget)
+    monkeypatch.setattr(backend, "ManipulationStatus", DummyStatus)
+    monkeypatch.setattr(
+        backend,
+        "pickup_target_spec",
+        lambda _arm, _arena, _layer, _slot: {
+            "target_z_m": 0.12,
+            "pitch_rad": -0.10,
+            "yaw_rad": 0.20,
+        },
+    )
+
+    node = object.__new__(backend.CompetitionManipulationBackend)
+    node.arm_motion = {}
+    node.motion_timeout_s = 30.0
+    node.pick_target_settle_s = 0.0
+    node.pick_approach_m = 0.05
+    node.pick_suction_hold_s = 0.0
+    node.pick_target_pub = DummyPublisher()
+    node._current_pose = lambda: backend.XYZ(0.10, 0.00, 0.30)
+    node._wait_for_motion_then_stable = lambda _start, _timeout: backend.XYZ(
+        0.20, -0.10, 0.17
+    )
+    node._set_status = lambda *_args, **_kwargs: None
+    node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
+    moves = []
+
+    def move_pose(target, **kwargs):
+        moves.append((target, kwargs))
+        return True
+
+    node._move_pose = move_pose
+
+    assert node._do_pick("A", 2, 1) is True
+    assert len(moves) == 2
+
+    descend_target, descend = moves[0]
+    lift_target, lift = moves[1]
+    assert descend_target == backend.XYZ(0.20, -0.10, 0.12)
+    assert lift_target == backend.XYZ(0.20, -0.10, 0.17)
+    for params in (descend, lift):
+        assert params["pitch_rad"] == pytest.approx(-0.10)
+        assert params["yaw_rad"] == pytest.approx(0.20)
+        assert params["suction_valid"] is True
+        assert params["suction_enable"] is True
+
+    published = node.pick_target_pub.messages[0]
+    assert published.use_orientation is True
+    assert published.pitch_rad == pytest.approx(-0.10)
+    assert published.yaw_rad == pytest.approx(0.20)

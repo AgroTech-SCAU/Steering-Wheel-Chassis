@@ -32,7 +32,7 @@ try:
 
     from atlas_mission_interfaces.msg import ManipulationStatus
     from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
-    from mcu_comm_bridge.srv import SetArmJoints, SetArmPosition
+    from mcu_comm_bridge.srv import SetArmJoints, SetArmPose, SetArmPosition
     from vison_topic_interfaces.msg import PickTarget
 except ImportError:  # Unit tests exercise pure config helpers without ROS.
     rclpy = None
@@ -51,6 +51,7 @@ except ImportError:  # Unit tests exercise pure config helpers without ROS.
     CancelManipulation = None
     StartManipulation = None
     SetArmJoints = None
+    SetArmPose = None
     SetArmPosition = None
     PickTarget = None
 
@@ -157,6 +158,9 @@ class CompetitionManipulationBackend(Node):
         )
         self.arm_position_service = str(
             self.declare_parameter("arm_position_service", "/mcu/set_arm_position").value
+        )
+        self.arm_pose_service = str(
+            self.declare_parameter("arm_pose_service", "/mcu/set_arm_pose").value
         )
         self.suction_service = str(
             self.declare_parameter("suction_service", "/mcu/set_suction").value
@@ -283,6 +287,7 @@ class CompetitionManipulationBackend(Node):
         self.initial_pose_client = self.create_client(Trigger, self.initial_pose_service)
         self.arm_joints_client = self.create_client(SetArmJoints, self.arm_joints_service)
         self.arm_position_client = self.create_client(SetArmPosition, self.arm_position_service)
+        self.arm_pose_client = self.create_client(SetArmPose, self.arm_pose_service)
         self.suction_client = self.create_client(SetBool, self.suction_service)
         self.sorting_scan_a_srv = self.create_service(
             Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a,
@@ -553,6 +558,36 @@ class CompetitionManipulationBackend(Node):
         req.suction_valid = bool(suction_valid)
         req.suction_enable = bool(suction_enable)
         result = self._call_service(self.arm_position_client, req)
+        if result is None or not result.success:
+            return False
+        return self._wait_pose_target(target, self.motion_timeout_s)
+
+    def _move_pose(
+        self,
+        target: XYZ,
+        *,
+        pitch_rad: float,
+        yaw_rad: float,
+        suction_valid: bool,
+        suction_enable: bool,
+    ) -> bool:
+        """按 XYZ + pitch + yaw 五维位姿移动，并在同一命令中保持吸盘状态。
+
+        该接口用于抓取下降/抬升，保证与视觉生成的 approach 使用相同的
+        pitch/yaw 约束，避免从接近位切回 3D position IK 后末端姿态漂移。
+        """
+        if self._cancelled():
+            return False
+        req = SetArmPose.Request()
+        req.x_m = float(target.x)
+        req.y_m = float(target.y)
+        req.z_m = float(target.z)
+        req.pitch_rad = float(pitch_rad)
+        req.yaw_rad = float(yaw_rad)
+        req.speed_rad_s = float(self.default_speed_rad_s)
+        req.suction_valid = bool(suction_valid)
+        req.suction_enable = bool(suction_enable)
+        result = self._call_service(self.arm_pose_client, req)
         if result is None or not result.success:
             return False
         return self._wait_pose_target(target, self.motion_timeout_s)
@@ -845,7 +880,13 @@ class CompetitionManipulationBackend(Node):
             step="pick_descend",
             message=f"下降到标定吸取高度 z={contact.z:.3f} m 并打开吸盘",
         )
-        if not self._move_position(contact, suction_valid=True, suction_enable=True):
+        if not self._move_pose(
+            contact,
+            pitch_rad=spec["pitch_rad"],
+            yaw_rad=spec["yaw_rad"],
+            suction_valid=True,
+            suction_enable=True,
+        ):
             return False
 
         # 到达接触高度后不要立刻抬升，给真空建立和吸盘贴合留出时间。
@@ -855,7 +896,13 @@ class CompetitionManipulationBackend(Node):
             step="pick_lift",
             message=f"吸附后回到抓取接近位 z={above.z:.3f} m",
         )
-        return self._move_position(above, suction_valid=True, suction_enable=True)
+        return self._move_pose(
+            above,
+            pitch_rad=spec["pitch_rad"],
+            yaw_rad=spec["yaw_rad"],
+            suction_valid=True,
+            suction_enable=True,
+        )
 
     def _place_target(
         self, arena: str, park: str, slot: int, existing_layer: int
