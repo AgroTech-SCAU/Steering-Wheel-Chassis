@@ -6,7 +6,7 @@ competition:
   backend_name: direct_odom_competition
 
   vision:
-    # A 区：画面左侧=园区二，右侧=园区一；B 区：左侧=园区一，右侧=园区二
+    # A/B 区均：画面左侧=园区一，右侧=园区二
     sorting_rule:
       enabled: true
 

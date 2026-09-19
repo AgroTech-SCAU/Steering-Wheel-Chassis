@@ -112,7 +112,9 @@ def resolve_sorting_rule(
 
     parts = list(detections)
     if len(parts) != 2:
-        return SortingRuleResult(False, message="sorting view must contain exactly two parts")
+        return SortingRuleResult(
+            False, message="sorting view must contain exactly two parts"
+        )
     best = _best_detection_by_cargo(parts, config.class_aliases)
     if "gear" not in best or "t_bolt" not in best:
         return SortingRuleResult(
@@ -132,7 +134,7 @@ def resolve_sorting_rule(
         return SortingRuleResult(False, message=f"unknown arena {arena}")
     left, right = ("gear", "t_bolt") if gear.u < t_bolt.u else ("t_bolt", "gear")
     # The physical park numbering is mirrored between the two arenas.
-    park_1_cargo, park_2_cargo = (right, left) if arena == "A" else (left, right)
+    park_1_cargo, park_2_cargo = left, right
 
     return SortingRuleResult(
         True,
@@ -176,8 +178,11 @@ def detect_camera_target_from_centers(
 
     detections = list(centers)
     matching = [d for d in detections if int(d.corner_index) == slot]
-    if (not matching and len(detections) == 1
-            and str(getattr(request, "waypoint_id", "pickup")) == "pickup"):
+    if (
+        not matching
+        and len(detections) == 1
+        and str(getattr(request, "waypoint_id", "pickup")) == "pickup"
+    ):
         # A calibrated slot view can show only its one remaining cargo. The
         # detector labels a lone object corner 0 regardless of physical slot.
         matching = detections
@@ -204,7 +209,9 @@ def detect_camera_target_from_centers(
         )
 
     target_class = str(getattr(request, "target_class", "") or "")
-    target_ok = not target_class or cargo_class == _canonical_class(target_class, aliases)
+    target_ok = not target_class or cargo_class == _canonical_class(
+        target_class, aliases
+    )
     return DetectTargetResult(
         True,
         cargo_class=cargo_class,
@@ -218,7 +225,9 @@ def detect_camera_target_from_centers(
 class CompetitionVisionBackend(Node):
     def __init__(self) -> None:
         if rclpy is None:
-            raise RuntimeError("rclpy is required to run the competition vision backend")
+            raise RuntimeError(
+                "rclpy is required to run the competition vision backend"
+            )
         super().__init__("atlas_competition_vision_backend")
         self._group = ReentrantCallbackGroup()
 
@@ -230,11 +239,19 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("pose_settle_s", 0.3)
         self.declare_parameter("topics.vision_pose_ready", "/vision_pose_ready")
         self.declare_parameter("topics.detection_centers", "/detection_centers")
-        self.declare_parameter("services.classify_sorting", "/atlas/vision/classify_sorting_rule")
+        self.declare_parameter(
+            "services.classify_sorting", "/atlas/vision/classify_sorting_rule"
+        )
         self.declare_parameter("services.detect_target", "/atlas/vision/detect_target")
         self.declare_parameter("services.vision_detect", "/vision_detect")
-        self.declare_parameter("services.move_to_sorting_scan_a", "/atlas/manipulation/move_to_sorting_scan_a")
-        self.declare_parameter("services.move_to_sorting_scan_b", "/atlas/manipulation/move_to_sorting_scan_b")
+        self.declare_parameter(
+            "services.move_to_sorting_scan_a",
+            "/atlas/manipulation/move_to_sorting_scan_a",
+        )
+        self.declare_parameter(
+            "services.move_to_sorting_scan_b",
+            "/atlas/manipulation/move_to_sorting_scan_b",
+        )
         self.declare_parameter("competition_config", "")
         self.declare_parameter("class_aliases.chilun", "gear")
         self.declare_parameter("class_aliases.luosi", "t_bolt")
@@ -316,12 +333,20 @@ class CompetitionVisionBackend(Node):
 
     def _on_detection_centers(self, msg) -> None:
         centers = [
-            Detection(d.cls_name, float(d.u), float(d.v), float(d.conf), int(d.corner_index))
+            Detection(
+                d.cls_name, float(d.u), float(d.v), float(d.conf), int(d.corner_index)
+            )
             for d in msg.detections
         ]
         self._latest_centers = centers
-        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
-        if msg.is_final_best and self._capture_start_ns and stamp_ns >= self._capture_start_ns:
+        stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(
+            msg.header.stamp.nanosec
+        )
+        if (
+            msg.is_final_best
+            and self._capture_start_ns
+            and stamp_ns >= self._capture_start_ns
+        ):
             self._final_centers = centers
 
     def _wait_for_service(self, client, label: str) -> Optional[str]:
@@ -330,7 +355,9 @@ class CompetitionVisionBackend(Node):
             return f"{label} service unavailable"
         return None
 
-    def _call_trigger(self, client, label: str, timeout_s: Optional[float] = None) -> tuple[bool, str]:
+    def _call_trigger(
+        self, client, label: str, timeout_s: Optional[float] = None
+    ) -> tuple[bool, str]:
         error = self._wait_for_service(client, label)
         if error:
             return False, error
@@ -341,7 +368,11 @@ class CompetitionVisionBackend(Node):
         return bool(result and result.success), str(result.message if result else "")
 
     def _wait_future(self, future, timeout_s: Optional[float] = None) -> bool:
-        timeout = timeout_s if timeout_s is not None else float(self.get_parameter("service_timeout_s").value)
+        timeout = (
+            timeout_s
+            if timeout_s is not None
+            else float(self.get_parameter("service_timeout_s").value)
+        )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if future.done():
@@ -351,7 +382,8 @@ class CompetitionVisionBackend(Node):
 
     def _wait_vision_pose_ready(self) -> bool:
         deadline = time.monotonic() + float(
-            self.get_parameter("vision_pose_ready_timeout_s").value)
+            self.get_parameter("vision_pose_ready_timeout_s").value
+        )
         while time.monotonic() < deadline:
             if self._vision_pose_ready:
                 return True
@@ -376,14 +408,18 @@ class CompetitionVisionBackend(Node):
         return future.result(), ""
 
     def _scan_view(self, scan_name: str) -> Optional[list[Detection]]:
-        client = self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
+        client = (
+            self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
+        )
         scan_timeout = float(self.get_parameter("sorting_scan_timeout_s").value)
         ok, message = self._call_trigger(client, scan_name, scan_timeout)
         if not ok:
             self.get_logger().warn(f"{scan_name} move failed: {message}")
             return None
         if not self._wait_observation_pose():
-            self.get_logger().warn(f"{scan_name} did not publish vision_pose_ready=true")
+            self.get_logger().warn(
+                f"{scan_name} did not publish vision_pose_ready=true"
+            )
             return None
 
         start_response, error = self._set_vision_detect(True)
@@ -398,7 +434,8 @@ class CompetitionVisionBackend(Node):
         return [
             Detection(cls_name, u, v, 1.0)
             for cls_name, u, v in zip(
-                stop_response.cls_names, stop_response.u_px, stop_response.v_px)
+                stop_response.cls_names, stop_response.u_px, stop_response.v_px
+            )
         ]
 
     def _capture_target_centers(self) -> tuple[Optional[list[Detection]], str]:
@@ -417,7 +454,9 @@ class CompetitionVisionBackend(Node):
             self.get_logger().warn(error or stop_response.message)
             self._capture_start_ns = 0
             return None, error or str(stop_response.message)
-        deadline = time.monotonic() + float(self.get_parameter("final_centers_wait_s").value)
+        deadline = time.monotonic() + float(
+            self.get_parameter("final_centers_wait_s").value
+        )
         while self._final_centers is None and time.monotonic() < deadline:
             time.sleep(0.01)
         if self._final_centers is None and int(stop_response.count) > 0:
@@ -466,8 +505,12 @@ def load_yaml_config(path: str) -> BackendConfig:
     with open(path, encoding="utf-8") as stream:
         data = yaml.safe_load(stream) or {}
     if "competition" in data:
-        return BackendConfig.from_dict(data.get("competition", {}).get("vision", {}) or {})
-    params = data.get("atlas_competition_vision_backend", {}).get("ros__parameters", data)
+        return BackendConfig.from_dict(
+            data.get("competition", {}).get("vision", {}) or {}
+        )
+    params = data.get("atlas_competition_vision_backend", {}).get(
+        "ros__parameters", data
+    )
     return BackendConfig.from_dict(params)
 
 
