@@ -7,6 +7,10 @@ atlas_competition_vision_backend:
     pose_settle_s: 0.3
     detection_window_s: 1.5
     final_centers_wait_s: 0.5
+    # 智能分拣区只看到一个标志时，根据其画面位置微调 joint1 后重试。
+    # 中心/右侧 -> 向右；左侧 -> 向左。
+    sorting_reframe_attempts: 2
+    sorting_image_center_u_px: 320.0
 
     topics:
       vision_pose_ready: "/vision_pose_ready"
@@ -18,12 +22,14 @@ atlas_competition_vision_backend:
       vision_detect: "/vision_detect"
       move_to_sorting_scan_a: "/atlas/manipulation/move_to_sorting_scan_a"
       move_to_sorting_scan_b: "/atlas/manipulation/move_to_sorting_scan_b"
+      adjust_sorting_scan_left: "/atlas/manipulation/adjust_sorting_scan_left"
+      adjust_sorting_scan_right: "/atlas/manipulation/adjust_sorting_scan_right"
 
     class_aliases:
       chilun: gear
       luosi: t_bolt
 
     # Standalone default remains disabled; competition.yaml can enable it.
-    # A: smaller image u = park_2; B: smaller image u = park_1.
+    # A/B 均：smaller image u = park_1，larger image u = park_2。
     sorting_rule:
       enabled: false

@@ -28,6 +28,9 @@ atlas_competition_manipulation_backend:
     min_pick_target_motion_m: 0.005
     pick_target_settle_s: 0.25
     pick_approach_m: 0.050
+    # 吸盘到达接触高度后保持开启的时间；避免真空尚未建立就立即抬升
+    pick_suction_hold_s: 1.50
+    # 放置释放后的静置时间，和抓取保持时间分开配置
     suction_settle_s: 0.45
     default_speed_rad_s: 0.8
     joint_tolerance_rad: 0.06
@@ -45,6 +48,16 @@ atlas_competition_manipulation_backend:
       dx_m: 0.0
       dy_m: 0.025
       dz_m: 0.0
+
+    # 智能分拣区只看到一个分类标志时，不再大范围改 XYZ，
+    # 而是按画面左右只微调底座 joint1(q0)，再重新识别
+    sorting_scan:
+      # 每次约 4°，最多约 8°；保持在 handeye_bridge 视觉观察位容差附近
+      joint1_step_rad: 0.07
+      joint1_max_offset_rad: 0.14
+      joint1_settle_s: 0.35
+      # 实机“向右转”若与 +joint1 相反，只需改为 -1.0，不改代码
+      joint1_right_sign: 1.0
 
     # 园区放置基准点由 competition.yaml 的 arm_motion.arenas.* 提供
     placement:

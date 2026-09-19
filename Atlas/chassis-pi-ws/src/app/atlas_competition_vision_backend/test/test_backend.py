@@ -8,6 +8,7 @@ from atlas_competition_vision_backend.backend import (
     detect_camera_target_from_centers,
     load_yaml_config,
     resolve_sorting_rule,
+    sorting_reframe_direction,
 )
 
 
@@ -32,7 +33,7 @@ def test_sorting_rule_disabled_fails_safe():
     assert not result.success
 
 
-def test_sorting_rule_maps_image_sides_by_arena():
+def test_sorting_rule_maps_image_sides_same_in_both_arenas():
     gear_on_left = resolve_sorting_rule(
         [
             Detection("chilun", 25.0, 25.0, 0.9),
@@ -49,8 +50,8 @@ def test_sorting_rule_maps_image_sides_by_arena():
     )
 
     assert gear_on_left.success
-    assert gear_on_left.park_1_cargo == "t_bolt"
-    assert gear_on_left.park_2_cargo == "gear"
+    assert gear_on_left.park_1_cargo == "gear"
+    assert gear_on_left.park_2_cargo == "t_bolt"
     assert t_bolt_on_left.success
     assert t_bolt_on_left.park_1_cargo == "t_bolt"
     assert t_bolt_on_left.park_2_cargo == "gear"
@@ -65,8 +66,27 @@ def test_a_left_luosi_right_chilun_routes_by_observed_class():
         _config(),
     )
     assert result.success and result.arena == "A"
-    assert result.park_1_cargo == "gear"
-    assert result.park_2_cargo == "t_bolt"
+    assert result.park_1_cargo == "t_bolt"
+    assert result.park_2_cargo == "gear"
+
+
+def test_single_sorting_marker_reframes_toward_its_image_side():
+    aliases = _config().class_aliases
+    assert sorting_reframe_direction(
+        [Detection("chilun", 420.0, 120.0)], aliases, 320.0
+    ) == "right"
+    assert sorting_reframe_direction(
+        [Detection("luosi", 320.0, 120.0)], aliases, 320.0
+    ) == "right"
+    assert sorting_reframe_direction(
+        [Detection("chilun", 180.0, 120.0)], aliases, 320.0
+    ) == "left"
+    assert sorting_reframe_direction([], aliases, 320.0) is None
+    assert sorting_reframe_direction(
+        [Detection("chilun", 180.0, 120.0), Detection("luosi", 420.0, 120.0)],
+        aliases,
+        320.0,
+    ) is None
 
 
 def test_sorting_rule_rejects_more_than_two_parts():
@@ -126,8 +146,8 @@ def test_scan_a_success_stops_before_scan_b():
     assert result.success
     assert result.arena == "A"
     assert calls == ["sorting_scan_a"]
-    assert result.park_1_cargo == "t_bolt"
-    assert result.park_2_cargo == "gear"
+    assert result.park_1_cargo == "gear"
+    assert result.park_2_cargo == "t_bolt"
 
 
 def test_scan_a_failure_then_scan_b_success_returns_b():

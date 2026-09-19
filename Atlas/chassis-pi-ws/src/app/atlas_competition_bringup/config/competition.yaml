@@ -129,7 +129,7 @@ competition:
 
 
       B:
-        # 临时复用 A 半场 正式比赛前必须替换
+        # B 半场独立地图已配置；pickup / park 语义点仍需现场实测后再启用
         map: "maps/ruikang_b_map/ruikang_b.yaml"
         pbstream: "maps/ruikang_b_map/ruikang_b.pbstream"
         waypoints:

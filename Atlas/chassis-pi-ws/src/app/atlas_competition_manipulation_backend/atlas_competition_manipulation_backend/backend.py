@@ -185,6 +185,11 @@ class CompetitionManipulationBackend(Node):
         self.suction_settle_s = float(
             self.declare_parameter("suction_settle_s", 0.45).value
         )
+        # 抓取接触后额外保持吸盘开启的时间。与放置释放后的 settle 分离，
+        # 避免为了延长吸取等待而拖慢每次放置动作。
+        self.pick_suction_hold_s = float(
+            self.declare_parameter("pick_suction_hold_s", 1.50).value
+        )
         self.default_speed_rad_s = float(
             self.declare_parameter("default_speed_rad_s", 0.8).value
         )
@@ -213,6 +218,21 @@ class CompetitionManipulationBackend(Node):
         )
         self.view_scan_offsets_m = self._load_view_scan_offsets()
 
+        # 智能分拣区观察补偿：只调整底座 joint1(q0)，不改其它关节和末端姿态约束。
+        # 方向由视觉后端根据“当前只看到的一个标志”位于画面左右侧来决定。
+        self.sorting_joint1_step_rad = abs(float(
+            self.declare_parameter("sorting_scan.joint1_step_rad", 0.07).value
+        ))
+        self.sorting_joint1_max_offset_rad = abs(float(
+            self.declare_parameter("sorting_scan.joint1_max_offset_rad", 0.14).value
+        ))
+        self.sorting_joint1_settle_s = max(0.0, float(
+            self.declare_parameter("sorting_scan.joint1_settle_s", 0.35).value
+        ))
+        self.sorting_joint1_right_sign = 1.0 if float(
+            self.declare_parameter("sorting_scan.joint1_right_sign", 1.0).value
+        ) >= 0.0 else -1.0
+
         self.competition = load_optional_competition_config(
             str(self.get_parameter("competition_config").value)
         )
@@ -232,6 +252,8 @@ class CompetitionManipulationBackend(Node):
         self._initial_ready = False
         self._worker: Optional[threading.Thread] = None
         self._cancel_event = threading.Event()
+        self._active_sorting_scan = ""
+        self._sorting_joint1_offset_rad = 0.0
 
         self._status_state = ManipulationStatus.STATE_IDLE
         self._status_waypoint = ""
@@ -268,6 +290,18 @@ class CompetitionManipulationBackend(Node):
         )
         self.sorting_scan_b_srv = self.create_service(
             Trigger, "/atlas/manipulation/move_to_sorting_scan_b", self._on_sorting_scan_b,
+            callback_group=self._sorting_group,
+        )
+        self.sorting_scan_left_srv = self.create_service(
+            Trigger,
+            "/atlas/manipulation/adjust_sorting_scan_left",
+            self._on_sorting_scan_left,
+            callback_group=self._sorting_group,
+        )
+        self.sorting_scan_right_srv = self.create_service(
+            Trigger,
+            "/atlas/manipulation/adjust_sorting_scan_right",
+            self._on_sorting_scan_right,
             callback_group=self._sorting_group,
         )
 
@@ -567,6 +601,9 @@ class CompetitionManipulationBackend(Node):
     def _on_sorting_scan_a(self, _request, response):
         try:
             response.success = self._move_named_pose("sorting_scan_a")
+            if response.success:
+                self._active_sorting_scan = "sorting_scan_a"
+                self._sorting_joint1_offset_rad = 0.0
             response.message = "sorting_scan_a 到位" if response.success else "sorting_scan_a 到位失败"
         except Exception as exc:  # noqa: BLE001
             response.success = False
@@ -576,7 +613,74 @@ class CompetitionManipulationBackend(Node):
     def _on_sorting_scan_b(self, _request, response):
         try:
             response.success = self._move_named_pose("sorting_scan_b")
+            if response.success:
+                self._active_sorting_scan = "sorting_scan_b"
+                self._sorting_joint1_offset_rad = 0.0
             response.message = "sorting_scan_b 到位" if response.success else "sorting_scan_b 到位失败"
+        except Exception as exc:  # noqa: BLE001
+            response.success = False
+            response.message = str(exc)
+        return response
+
+    def _adjust_sorting_joint1(self, direction: str) -> tuple[bool, str]:
+        """在当前分拣观察位基础上只微调 joint1(q0)。
+
+        direction 是相机画面语义方向：right 表示底座向右追视，left 表示向左。
+        joint1_right_sign 用来适配实机正负方向；默认 +1，现场若方向相反只改 YAML。
+        """
+        if self._active_sorting_scan not in {"sorting_scan_a", "sorting_scan_b"}:
+            return False, "尚未进入 sorting_scan_a/b 固定观察位"
+        if self.sorting_joint1_step_rad <= 0.0:
+            return False, "sorting_scan.joint1_step_rad 必须 > 0"
+
+        pose = resolve_arm_pose(self.arm_motion, self._active_sorting_scan)
+        joints = [float(v) for v in pose["joints_rad"]]
+        if len(joints) != 5:
+            return False, "sorting scan joints_rad 必须包含 5 个关节"
+
+        sign = self.sorting_joint1_right_sign
+        if direction == "left":
+            sign *= -1.0
+        elif direction != "right":
+            return False, f"未知 joint1 调整方向: {direction}"
+
+        next_offset = self._sorting_joint1_offset_rad + sign * self.sorting_joint1_step_rad
+        limit = self.sorting_joint1_max_offset_rad
+        if limit > 0.0:
+            next_offset = max(-limit, min(limit, next_offset))
+        if math.isclose(next_offset, self._sorting_joint1_offset_rad, abs_tol=1e-9):
+            return False, "joint1 已达到分拣观察补偿上限"
+
+        joints[0] += next_offset
+        req = SetArmJoints.Request()
+        req.joints_rad = joints
+        req.speed_rad_s = float(pose["speed_rad_s"])
+        req.suction_valid = False
+        req.suction_enable = False
+        result = self._call_service(self.arm_joints_client, req)
+        if result is None or not result.success:
+            return False, "joint1 微调命令下发失败"
+        if not self._wait_joint_target(joints, self.motion_timeout_s):
+            return False, "joint1 微调后未在超时内到位"
+
+        self._sorting_joint1_offset_rad = next_offset
+        time.sleep(self.sorting_joint1_settle_s)
+        return True, (
+            f"{direction} 微调完成: joint1_offset="
+            f"{self._sorting_joint1_offset_rad:+.3f} rad"
+        )
+
+    def _on_sorting_scan_left(self, _request, response):
+        try:
+            response.success, response.message = self._adjust_sorting_joint1("left")
+        except Exception as exc:  # noqa: BLE001
+            response.success = False
+            response.message = str(exc)
+        return response
+
+    def _on_sorting_scan_right(self, _request, response):
+        try:
+            response.success, response.message = self._adjust_sorting_joint1("right")
         except Exception as exc:  # noqa: BLE001
             response.success = False
             response.message = str(exc)
@@ -744,7 +848,8 @@ class CompetitionManipulationBackend(Node):
         if not self._move_position(contact, suction_valid=True, suction_enable=True):
             return False
 
-        time.sleep(max(0.0, self.suction_settle_s))
+        # 到达接触高度后不要立刻抬升，给真空建立和吸盘贴合留出时间。
+        time.sleep(max(0.0, self.pick_suction_hold_s))
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="pick_lift",

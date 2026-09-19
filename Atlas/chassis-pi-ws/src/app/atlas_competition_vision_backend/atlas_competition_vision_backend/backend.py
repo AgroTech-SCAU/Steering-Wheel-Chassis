@@ -102,6 +102,26 @@ def _best_detection_by_cargo(
     return best
 
 
+def sorting_reframe_direction(
+    detections: Iterable[Detection],
+    aliases: dict[str, str],
+    image_center_u_px: float,
+) -> Optional[str]:
+    """只有一个有效分类标志时，根据其横向位置给出 joint1 追视方向。
+
+    现场约定：单个标志位于画面中间/右侧时，底座 joint1 向右微调；
+    位于左侧时向左微调。若不是“恰好一个有效标志”，不做方向猜测。
+    """
+    valid = [
+        detection
+        for detection in detections
+        if _canonical_class(detection.cls_name, aliases) is not None
+    ]
+    if len(valid) != 1:
+        return None
+    return "right" if float(valid[0].u) >= float(image_center_u_px) else "left"
+
+
 def resolve_sorting_rule(
     detections: Iterable[Detection],
     config: BackendConfig,
@@ -133,7 +153,7 @@ def resolve_sorting_rule(
     if arena not in {"A", "B"}:
         return SortingRuleResult(False, message=f"unknown arena {arena}")
     left, right = ("gear", "t_bolt") if gear.u < t_bolt.u else ("t_bolt", "gear")
-    # The physical park numbering is mirrored between the two arenas.
+    # A/B 两个场区都按同一画面语义：左侧=园区一，右侧=园区二。
     park_1_cargo, park_2_cargo = left, right
 
     return SortingRuleResult(
@@ -237,6 +257,8 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("detection_window_s", 1.0)
         self.declare_parameter("final_centers_wait_s", 0.2)
         self.declare_parameter("pose_settle_s", 0.3)
+        self.declare_parameter("sorting_reframe_attempts", 2)
+        self.declare_parameter("sorting_image_center_u_px", 320.0)
         self.declare_parameter("topics.vision_pose_ready", "/vision_pose_ready")
         self.declare_parameter("topics.detection_centers", "/detection_centers")
         self.declare_parameter(
@@ -251,6 +273,14 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter(
             "services.move_to_sorting_scan_b",
             "/atlas/manipulation/move_to_sorting_scan_b",
+        )
+        self.declare_parameter(
+            "services.adjust_sorting_scan_left",
+            "/atlas/manipulation/adjust_sorting_scan_left",
+        )
+        self.declare_parameter(
+            "services.adjust_sorting_scan_right",
+            "/atlas/manipulation/adjust_sorting_scan_right",
         )
         self.declare_parameter("competition_config", "")
         self.declare_parameter("class_aliases.chilun", "gear")
@@ -294,6 +324,16 @@ class CompetitionVisionBackend(Node):
         self._move_scan_b = self.create_client(
             Trigger,
             str(self.get_parameter("services.move_to_sorting_scan_b").value),
+            callback_group=self._group,
+        )
+        self._adjust_scan_left = self.create_client(
+            Trigger,
+            str(self.get_parameter("services.adjust_sorting_scan_left").value),
+            callback_group=self._group,
+        )
+        self._adjust_scan_right = self.create_client(
+            Trigger,
+            str(self.get_parameter("services.adjust_sorting_scan_right").value),
             callback_group=self._group,
         )
 
@@ -407,21 +447,7 @@ class CompetitionVisionBackend(Node):
             return None, "vision_detect service timeout"
         return future.result(), ""
 
-    def _scan_view(self, scan_name: str) -> Optional[list[Detection]]:
-        client = (
-            self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
-        )
-        scan_timeout = float(self.get_parameter("sorting_scan_timeout_s").value)
-        ok, message = self._call_trigger(client, scan_name, scan_timeout)
-        if not ok:
-            self.get_logger().warn(f"{scan_name} move failed: {message}")
-            return None
-        if not self._wait_observation_pose():
-            self.get_logger().warn(
-                f"{scan_name} did not publish vision_pose_ready=true"
-            )
-            return None
-
+    def _capture_sorting_view(self) -> Optional[list[Detection]]:
         start_response, error = self._set_vision_detect(True)
         if error or not start_response or not start_response.success:
             self.get_logger().warn(error or start_response.message)
@@ -437,6 +463,65 @@ class CompetitionVisionBackend(Node):
                 stop_response.cls_names, stop_response.u_px, stop_response.v_px
             )
         ]
+
+    def _scan_view(self, scan_name: str) -> Optional[list[Detection]]:
+        client = (
+            self._move_scan_a if scan_name == "sorting_scan_a" else self._move_scan_b
+        )
+        scan_timeout = float(self.get_parameter("sorting_scan_timeout_s").value)
+        ok, message = self._call_trigger(client, scan_name, scan_timeout)
+        if not ok:
+            self.get_logger().warn(f"{scan_name} move failed: {message}")
+            return None
+        if not self._wait_observation_pose():
+            self.get_logger().warn(
+                f"{scan_name} did not publish vision_pose_ready=true"
+            )
+            return None
+
+        detections = self._capture_sorting_view()
+        if detections is None:
+            return None
+        if resolve_sorting_rule(detections, self._config, "A").success:
+            return detections
+
+        attempts = max(0, int(self.get_parameter("sorting_reframe_attempts").value))
+        center_u = float(self.get_parameter("sorting_image_center_u_px").value)
+        for attempt in range(attempts):
+            direction = sorting_reframe_direction(
+                detections, self._config.class_aliases, center_u
+            )
+            if direction is None:
+                break
+            adjust_client = (
+                self._adjust_scan_right if direction == "right" else self._adjust_scan_left
+            )
+            ok, message = self._call_trigger(
+                adjust_client,
+                f"adjust_sorting_scan_{direction}",
+                scan_timeout,
+            )
+            if not ok:
+                self.get_logger().warn(
+                    f"{scan_name} adaptive joint1 adjust failed: {message}"
+                )
+                return None
+            if not self._wait_observation_pose():
+                self.get_logger().warn(
+                    f"{scan_name} joint1 adjust did not remain vision-ready"
+                )
+                return None
+            self.get_logger().info(
+                f"{scan_name} only one marker visible; joint1 {direction} "
+                f"reframe attempt {attempt + 1}/{attempts}"
+            )
+            detections = self._capture_sorting_view()
+            if detections is None:
+                return None
+            # 成功看到一齿轮一 T 型螺栓后立即结束补偿，不继续晃动机械臂。
+            if resolve_sorting_rule(detections, self._config, "A").success:
+                break
+        return detections
 
     def _capture_target_centers(self) -> tuple[Optional[list[Detection]], str]:
         if not self._wait_observation_pose():
