@@ -85,14 +85,26 @@ def _arm_motion_config():
     }
 
 
-def test_pickup_target_spec_uses_arena_layer_height_and_observe_orientation():
+def test_pickup_target_spec_uses_layer_height_and_vertical_orientation():
     from atlas_competition_manipulation_backend.backend import pickup_target_spec
 
     spec = pickup_target_spec(_arm_motion_config(), "A", 2)
 
     assert spec["target_z_m"] == 0.08
-    assert spec["pitch_rad"] == -1.2
-    assert spec["yaw_rad"] == 0.7
+    assert spec["pitch_rad"] == 0.0
+    assert spec["yaw_rad"] == 0.0
+
+
+def test_pickup_target_spec_uses_configured_pick_orientation():
+    from atlas_competition_manipulation_backend.backend import pickup_target_spec
+
+    motion = _arm_motion_config()
+    motion["pick_orientation"] = {"pitch_rad": -0.1, "yaw_rad": 0.2}
+    spec = pickup_target_spec(motion, "A", 2)
+
+    assert spec["target_z_m"] == 0.08
+    assert spec["pitch_rad"] == -0.1
+    assert spec["yaw_rad"] == 0.2
 
 
 def test_compute_placement_target_uses_arena_reference_slot_and_layer():
@@ -132,7 +144,8 @@ def test_four_observations_and_four_placement_points_use_selected_slot():
     ]
     spec = pickup_target_spec(motion, "A", 2, 3)
     assert spec["target_z_m"] == pytest.approx(0.05)
-    assert spec["yaw_rad"] == pytest.approx(0.3)
+    assert spec["pitch_rad"] == 0.0
+    assert spec["yaw_rad"] == 0.0
     target = compute_placement_target(motion, {"enabled": True, "layer_step_m": 0.05}, "A", "park_1", 3, 0)
     assert (target.x, target.y, target.z) == pytest.approx((0.4, 0.2, 0.03))
 
@@ -159,6 +172,7 @@ def test_pre_recognition_reports_status_and_moves_to_pickup_observe(monkeypatch)
     node._move_named_pose = lambda name, arena="", area="", slot=0: move_calls.append(
         (name, arena, area, slot)
     ) or True
+    node.settle_before_observe_s = 0.0
 
     assert node._do_pre_recognition("A", "pickup", 3) is True
     assert status_calls == [

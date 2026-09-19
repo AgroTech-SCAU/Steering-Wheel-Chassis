@@ -7,6 +7,12 @@ atlas_mission_yasmin:
     required_ready_mask: 0
     navigation_result_timeout_s: 60.0
     manipulation_result_timeout_s: 30.0
+    # 包含观察位确认、采样窗口、检测启停及最终结果话题的等待时间。
+    vision_result_timeout_s: 20.0
+    # 漏检先在固定观察位重采一次，再进入机械臂换视角自检。
+    observation_retries: 1
+    # 识别失败后的机械臂自检次数（对应 view_scan.offsets_m 的方向数）
+    view_scan_attempts: 3
 
     topics:
       mcu_status: "/mcu/status"

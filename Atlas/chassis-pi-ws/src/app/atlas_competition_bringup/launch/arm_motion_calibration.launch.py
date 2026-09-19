@@ -37,7 +37,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "competition_config",
             default_value=default_competition_config,
-            description="已有顶层比赛 YAML  标定结果会基于它生成新 YAML",
+            description="当前比赛 YAML；标定后可选择自动备份并部署新 YAML",
         ),
         DeclareLaunchArgument(
             "no_preview",

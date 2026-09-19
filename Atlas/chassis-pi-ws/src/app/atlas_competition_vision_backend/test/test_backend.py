@@ -189,6 +189,53 @@ def test_only_current_capture_final_centers_are_used():
     assert backend._final_centers == [Detection("chilun", 20.0, 30.0, 0.9, 0)]
 
 
+def test_target_capture_reports_detector_start_failure():
+    backend = CompetitionVisionBackend.__new__(CompetitionVisionBackend)
+    backend._wait_observation_pose = lambda: True
+    backend._final_centers = None
+    backend._capture_start_ns = 0
+    backend.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=42))
+    backend._set_vision_detect = lambda _start: (
+        SimpleNamespace(success=False, message="camera unavailable"), "",
+    )
+    backend.get_logger = lambda: SimpleNamespace(warn=lambda _message: None)
+
+    centers, error = backend._capture_target_centers()
+
+    assert centers is None
+    assert error == "camera unavailable"
+    assert backend._capture_start_ns == 0
+
+
+def test_observation_pose_must_remain_ready_after_settling(monkeypatch):
+    backend = CompetitionVisionBackend.__new__(CompetitionVisionBackend)
+    backend._vision_pose_ready = True
+    backend._wait_vision_pose_ready = lambda: True
+    backend.get_parameter = lambda _name: SimpleNamespace(value=0.3)
+    monkeypatch.setattr(
+        "atlas_competition_vision_backend.backend.time.sleep",
+        lambda _seconds: setattr(backend, "_vision_pose_ready", False),
+    )
+
+    assert not backend._wait_observation_pose()
+
+
+def test_target_service_preserves_capture_failure():
+    backend = CompetitionVisionBackend.__new__(CompetitionVisionBackend)
+    backend._capture_target_centers = lambda: (None, "vision_detect service timeout")
+    response = SimpleNamespace(
+        success=True, layer_ok=True, complete=True, message="", target_count=1,
+    )
+
+    backend._on_detect_target(SimpleNamespace(), response)
+
+    assert not response.success
+    assert not response.layer_ok
+    assert not response.complete
+    assert response.message == "vision_detect service timeout"
+    assert response.target_count == 0
+
+
 def test_scan_a_valid_does_not_consult_scan_b():
     calls = []
 

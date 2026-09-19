@@ -227,6 +227,7 @@ class CompetitionVisionBackend(Node):
         self.declare_parameter("vision_pose_ready_timeout_s", 8.0)
         self.declare_parameter("detection_window_s", 1.0)
         self.declare_parameter("final_centers_wait_s", 0.2)
+        self.declare_parameter("pose_settle_s", 0.3)
         self.declare_parameter("topics.vision_pose_ready", "/vision_pose_ready")
         self.declare_parameter("topics.detection_centers", "/detection_centers")
         self.declare_parameter("services.classify_sorting", "/atlas/vision/classify_sorting_rule")
@@ -357,6 +358,12 @@ class CompetitionVisionBackend(Node):
             time.sleep(0.02)
         return False
 
+    def _wait_observation_pose(self) -> bool:
+        if not self._wait_vision_pose_ready():
+            return False
+        time.sleep(max(0.0, float(self.get_parameter("pose_settle_s").value)))
+        return self._vision_pose_ready
+
     def _set_vision_detect(self, start: bool):
         error = self._wait_for_service(self._vision_detect, "vision_detect")
         if error:
@@ -375,7 +382,7 @@ class CompetitionVisionBackend(Node):
         if not ok:
             self.get_logger().warn(f"{scan_name} move failed: {message}")
             return None
-        if not self._wait_vision_pose_ready():
+        if not self._wait_observation_pose():
             self.get_logger().warn(f"{scan_name} did not publish vision_pose_ready=true")
             return None
 
@@ -394,26 +401,31 @@ class CompetitionVisionBackend(Node):
                 stop_response.cls_names, stop_response.u_px, stop_response.v_px)
         ]
 
-    def _capture_target_centers(self) -> list[Detection]:
+    def _capture_target_centers(self) -> tuple[Optional[list[Detection]], str]:
+        if not self._wait_observation_pose():
+            return None, "vision pose not ready or unstable"
         self._final_centers = None
         self._capture_start_ns = self.get_clock().now().nanoseconds
         start_response, error = self._set_vision_detect(True)
         if error or not start_response or not start_response.success:
             self.get_logger().warn(error or start_response.message)
             self._capture_start_ns = 0
-            return []
+            return None, error or str(start_response.message)
         time.sleep(float(self.get_parameter("detection_window_s").value))
         stop_response, error = self._set_vision_detect(False)
         if error or not stop_response or not stop_response.success:
             self.get_logger().warn(error or stop_response.message)
             self._capture_start_ns = 0
-            return []
+            return None, error or str(stop_response.message)
         deadline = time.monotonic() + float(self.get_parameter("final_centers_wait_s").value)
         while self._final_centers is None and time.monotonic() < deadline:
             time.sleep(0.01)
+        if self._final_centers is None and int(stop_response.count) > 0:
+            self._capture_start_ns = 0
+            return None, "final detection centers not received"
         result = list(self._final_centers or [])
         self._capture_start_ns = 0
-        return result
+        return result, ""
 
     def _on_classify_sorting(self, _request, response):
         if not self._config.sorting_enabled:
@@ -428,9 +440,17 @@ class CompetitionVisionBackend(Node):
         return response
 
     def _on_detect_target(self, request, response):
+        centers, error = self._capture_target_centers()
+        if centers is None:
+            response.success = False
+            response.layer_ok = False
+            response.complete = False
+            response.message = error
+            response.target_count = 0
+            return response
         result = detect_camera_target_from_centers(
             request,
-            self._capture_target_centers(),
+            centers,
             self._config.class_aliases,
         )
         response.success = result.success

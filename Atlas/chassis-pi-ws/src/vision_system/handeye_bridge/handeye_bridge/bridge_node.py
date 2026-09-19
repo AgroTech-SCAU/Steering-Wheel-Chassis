@@ -41,11 +41,11 @@ from atlas_competition_config.config import (
 try:
     from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
     from .pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
-    from .competition_pose_targets import pickup_vision_pose_targets
+    from .competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets
 except ImportError:  # 兼容直接运行源码文件
     from vision_pose_gate import VisionPoseTarget, vision_pose_for_position
     from pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
-    from competition_pose_targets import pickup_vision_pose_targets
+    from competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets
 
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
 _SetArmPose = None
@@ -125,8 +125,6 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("plane1_z_m", 0.05)
         self.declare_parameter("plane2_z_m", 0.12)
         self.declare_parameter("plane3_z_m", 0.19)
-        self.declare_parameter("camera_to_plane1_distance_m", 0.35)
-        self.declare_parameter("camera_to_plane2_distance_m", 0.28)
         self.declare_parameter("camera_to_plane3_distance_m", 0.21)
         self.declare_parameter("default_plane", 1)
         self.declare_parameter("default_speed_rad_s", 0.8)
@@ -347,7 +345,10 @@ class HandEyeBridgeNode(Node):
         )
         if competition is None:
             return []
-        return pickup_vision_pose_targets(competition.arm_motion)
+        return (
+            pickup_vision_pose_targets(competition.arm_motion) +
+            park_vision_pose_targets(competition.arm_motion)
+        )
 
     def _scan_value(self, key: str, field: str):
         section = self._sorting_scan_overrides.get(key, {})

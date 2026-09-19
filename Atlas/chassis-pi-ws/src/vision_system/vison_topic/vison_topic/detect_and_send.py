@@ -89,7 +89,7 @@ CONFIG = {
 
     # ── 边缘过滤 ──
     # 检测框中心距离图像边缘小于此值(px)时丢弃，避免裁剪导致的坐标偏移
-    "edge_margin_px": 25,
+    "edge_margin_px": 0,
 }
 
 # NMS 交并比阈值 (越高保留越多框)
@@ -309,11 +309,27 @@ def load_onnx_model(onnx_path: str, num_threads: int = 2) -> Dict:
     input_info = session.get_inputs()[0]
     output_info = session.get_outputs()[0]
 
+    # 输出张量布局: YOLOv5 为 [1, N, 5+nc] (通道在最后一维, 带 objectness)；
+    # YOLOv8/YOLO26 为 [1, 4+nc, N] (通道在中间维, 无 objectness)。
+    # 通道数远小于候选框数，取较小的一维作为通道数来判断布局。
+    out_shape = output_info.shape
+    d1, d2 = int(out_shape[1]), int(out_shape[2])
+    if d1 <= d2:
+        # [1, C, N]
+        channels, output_layout = d1, "channels_first"
+    else:
+        # [1, N, C]
+        channels, output_layout = d2, "channels_last"
+
+    # YOLOv5: C = 5 + nc；YOLOv8/YOLO26: C = 4 + nc
+    num_classes = channels - 5 if output_layout == "channels_last" else channels - 4
+
     return {
         "session": session,
         "input_name": input_info.name,
         "img_size": input_info.shape[2],
-        "num_classes": output_info.shape[2] - 5,
+        "num_classes": num_classes,
+        "output_layout": output_layout,
     }
 
 
@@ -376,12 +392,24 @@ def parse_output(
     scale: float = 1.0,
     pad_left: int = 0,
     pad_top: int = 0,
+    output_layout: str = "channels_last",
 ) -> np.ndarray:
-    """ONNX 输出 → [N, 6] (x1, y1, x2, y2, conf, cls_id)"""
-    obj_conf = pred_single[:, 4]
-    cls_scores = pred_single[:, 5:5 + num_classes]
-    cls_ids = cls_scores.argmax(axis=1)
-    total_conf = obj_conf * cls_scores.max(axis=1)
+    """ONNX 输出 → [N, 6] (x1, y1, x2, y2, conf, cls_id)
+
+    兼容两种 YOLO 输出布局:
+      - channels_last  (YOLOv5):    [N, 5+nc] = x,y,w,h,obj,cls...
+      - channels_first (YOLOv8/26): [4+nc, N] = x,y,w,h,cls... (无 objectness)
+    """
+    if output_layout == "channels_first":
+        pred_single = pred_single.T  # [4+nc, N] → [N, 4+nc]
+        cls_scores = pred_single[:, 4:4 + num_classes]
+        cls_ids = cls_scores.argmax(axis=1)
+        total_conf = cls_scores.max(axis=1)  # 无独立 objectness，置信度即类别分
+    else:
+        obj_conf = pred_single[:, 4]
+        cls_scores = pred_single[:, 5:5 + num_classes]
+        cls_ids = cls_scores.argmax(axis=1)
+        total_conf = obj_conf * cls_scores.max(axis=1)
 
     keep = np.where(total_conf >= conf_thres)[0]
     if len(keep) == 0:
@@ -441,6 +469,7 @@ def run_inference(
         outputs[0][0], frame.shape[0], frame.shape[1],
         model["img_size"], model["num_classes"], conf_thres,
         scale=scale, pad_left=pad_left, pad_top=pad_top,
+        output_layout=model.get("output_layout", "channels_last"),
     )
     if len(dets) > 1:
         dets = fast_nms(dets)
@@ -515,6 +544,8 @@ class VisionDetectServer:
         self._class_names = load_class_names()
         print(f"[INFO] 类别: {self._class_names}  "
               f"输入: {self._model['img_size']}x{self._model['img_size']}  "
+              f"输出布局: {self._model['output_layout']}  "
+              f"类别数: {self._model['num_classes']}  "
               f"线程: {onnx_threads}")
 
         # ── 参数 ──

@@ -214,7 +214,8 @@ scp wheeltec@192.168.0.100:screw_pick/calib/debug/calib_debug.jpg .
 
 ## 7. 深度与坐标变换
 
-深度模式在 `handeye_bridge/config/bridge_node.yaml` 中选择。
+比赛深度模式在 `competition.yaml` 的 `competition.handeye_bridge` 中选择；
+默认平面高度在 `handeye_bridge/config/bridge_node.yaml` 中配置。
 
 ### 7.1 manual：固定工作平面，默认
 
@@ -240,9 +241,10 @@ ros2 topic echo /arm/pose --once
 目标 Z = planeX_z_m + target_z_offset_m + manual_offset_z_m
 ```
 
-当前代码中的 `camera_to_plane1_distance_m`、`camera_to_plane2_distance_m`、
-`camera_to_plane3_distance_m` 仅作为测量记录和像素比例参考，manual 模式的
-射线求交不使用这些参数。
+比赛配置中每个货物观察位的 `camera_to_plane1_distance_m`、
+`camera_to_plane2_distance_m` 由机械臂标定按观察位 Z 减去对应层高自动生成。
+这些 TCP 高度差用于记录和复核；manual 模式的射线求交仍使用手眼变换和
+`plane_z`，不读取这些距离。
 
 ### 7.2 pnp：四点矩形深度
 

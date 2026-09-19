@@ -22,6 +22,29 @@ def _write_config(tmp_path: Path, payload: dict) -> Path:
     return path
 
 
+def test_handeye_parameters_load_from_competition_and_check_observation_distances(tmp_path):
+    observation = {
+        "configured": True,
+        "z_m": 0.35,
+        "layer_z_m": [0.03, 0.08],
+        "camera_to_plane1_distance_m": 0.32,
+        "camera_to_plane2_distance_m": 0.27,
+    }
+    payload = {"competition": {
+        "handeye_bridge": {"manual_offset_x_m": -0.055, "plane1_z_m": 0.03},
+        "arm_motion": {"arenas": {"A": {"pickup": {"observations": [observation]}}}},
+    }}
+    config_path = _write_config(tmp_path, payload)
+    config = load_competition_config(config_path)
+    assert config.handeye_bridge["manual_offset_x_m"] == -0.055
+    assert config.handeye_bridge["plane1_z_m"] == 0.03
+
+    observation["camera_to_plane1_distance_m"] = 0.36
+    _write_config(tmp_path, payload)
+    with pytest.raises(CompetitionConfigError, match="plane distance mismatch"):
+        load_competition_config(config_path)
+
+
 def test_navigation_resolves_configured_arena_waypoint_and_paths(
     tmp_path,
 ):

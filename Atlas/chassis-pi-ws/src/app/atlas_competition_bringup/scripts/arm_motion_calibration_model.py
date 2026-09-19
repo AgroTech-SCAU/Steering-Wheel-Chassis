@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any, Mapping
 
 import yaml
@@ -28,6 +29,16 @@ def merge_calibration(
     arena_cfg = arenas.setdefault(arena_name, {})
     for area in ("pickup", "park_1", "park_2"):
         arena_cfg[area] = copy.deepcopy(dict(calibration[area]))
+    for observation in arena_cfg["pickup"].get("observations", []):
+        heights = observation["layer_z_m"]
+        if len(heights) != 2:
+            raise ValueError("pickup observation must have two layer_z_m values")
+        observe_z = float(observation["z_m"])
+        for layer, plane_z in enumerate(heights, start=1):
+            distance = observe_z - float(plane_z)
+            if not math.isfinite(distance) or distance <= 0.0:
+                raise ValueError(f"pickup observation layer {layer} distance must be positive")
+            observation[f"camera_to_plane{layer}_distance_m"] = round(distance, 6)
 
     vision = competition.setdefault("vision", {})
     if isinstance(vision, dict):

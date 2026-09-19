@@ -73,7 +73,10 @@ ros2 launch handeye_bridge screw_pick.launch.py
 
 ## 5. 配置顺序
 
-编辑 `config/bridge_node.yaml`。新设备或重新标定后，推荐按以下顺序配置。
+桥节点本地参数（标定文件路径、初始位、工作空间和默认平面）在
+`handeye_bridge/config/bridge_node.yaml`。比赛抓取参数在顶层
+`atlas_competition_bringup/config/competition.yaml` 的 `competition.handeye_bridge`。
+新设备或重新标定后，推荐按以下顺序配置。
 
 ### 5.1 标定文件
 
@@ -82,16 +85,19 @@ intrinsics_file: "camera_intrinsics.yaml"
 handeye_result_file: "samples_result.yaml"
 ```
 
-相对路径以安装后的 `share/handeye_bridge/config/` 为基准，也可使用绝对路径。
+`screw_pick.launch.py` 先加载 `bridge_node.yaml`，再用顶层配置中的比赛抓取参数覆盖对应项。
+它默认读取已安装的顶层配置，也可用 `competition_config:=...` 指定配置。
+标定文件的相对路径仍以安装后的 `share/handeye_bridge/config/` 为基准，
+也可使用绝对路径。
 
 ### 5.2 安全状态先关闭
 
 首次调试建议：
 
 ```yaml
-initial_pose_configured: false
-plane_heights_configured: false
-auto_send: false
+initial_pose_configured: false  # bridge_node.yaml
+plane_heights_configured: false  # bridge_node.yaml
+auto_send: false  # competition.yaml
 ```
 
 不要直接沿用旧设备中已经为 `true` 的值。
@@ -120,26 +126,8 @@ ros2 topic echo /initial_pose_ready --once
 
 服务响应成功只表示命令已提交；必须等 `/arm/pose` 连续进入容差后，`/initial_pose_ready` 才会变为 `true`。
 
-比赛分类识别位必须由实车 FK 记录后填写。未确认前保持 `configured: false`：
-
-```yaml
-sorting_scan_a:
-  configured: false
-  x_m: 0.0
-  y_m: 0.0
-  z_m: 0.0
-  pitch_rad: 0.0
-  yaw_rad: 0.0
-  speed_rad_s: 0.5
-sorting_scan_b:
-  configured: false
-  x_m: 0.0
-  y_m: 0.0
-  z_m: 0.0
-  pitch_rad: 0.0
-  yaw_rad: 0.0
-  speed_rad_s: 0.5
-```
+比赛分类识别位由 `competition.arm_motion.fixed_poses.sorting_scan_a/b` 提供，
+必须由实车标定；未确认前保持 `configured: false`。
 
 `/vision_pose_ready` 覆盖初始观察位和两个 sorting scan 位；`/initial_pose_ready` 仍只表示 default pickup 观察位。
 
@@ -183,15 +171,16 @@ plane_heights_configured: true
 
 #### camera_to_plane 参数
 
-```yaml
-camera_to_plane1_distance_m: 0.395
-camera_to_plane2_distance_m: 0.28
-camera_to_plane3_distance_m: 0.21
+货物区每个 `competition.arm_motion.arenas.*.pickup.observations` 分别保存
+`camera_to_plane1_distance_m` 和 `camera_to_plane2_distance_m`。机械臂标定导出时计算：
+
+```text
+第 n 层距离 = 观察位 TCP 的 z_m - 第 n 层吸取接触高度 layer_z_m[n-1]
 ```
 
-在当前代码中，这三个参数已声明，但 manual 模式的实际坐标计算仍使用“射线与 `planeX_z_m` 求交”，不会读取 `camera_to_planeX_distance_m`。
-
-因此修改 `camera_to_plane1_distance_m` 不会改变当前抓取坐标。它只能作为测量记录和近似像素比例参考：
+加载顶层配置时会检查这两个差值与记录的 Z 值一致且为正。这里使用的是 TCP
+高度差；它不能代替相机光心到平面的实测距离。当前 manual 模式仍使用手眼变换后的
+相机射线与 `plane_z` 求交，这两个距离只用于记录和近似像素比例参考：
 
 ```text
 mm_per_pixel ≈ camera_to_plane_distance_m × 1000 / fx_px

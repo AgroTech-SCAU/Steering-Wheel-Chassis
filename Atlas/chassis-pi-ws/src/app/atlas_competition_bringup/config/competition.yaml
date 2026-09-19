@@ -14,6 +14,60 @@ competition:
       chilun: gear
       luosi: t_bolt
 
+  # 比赛抓取参数；桥节点通用参数保留在 handeye_bridge/config/bridge_node.yaml。
+  handeye_bridge:
+    # ── 深度模式 ──
+    # "manual": 使用 planeX_z_m 固定高度 (默认, 兼容旧配置)
+    #            射线-平面求交: 像素反投影射线 ∩ Z=plane_z 平面 → (x,y)
+    # "pnp":    用 4 个检测角点 + 已知物理间距做 PnP 求解实际深度
+    #            自动算出目标在相机坐标系下的真实 3D 位置
+    #            ⚠️ 需要 pnp_target_width_m / pnp_target_height_m 与实际螺丝间距一致
+    depth_mode: "manual"
+    # PnP 模式参数 (仅 depth_mode="pnp" 时生效)
+    # 4 个螺丝/角点围成矩形的物理尺寸 (单位米)
+    #    TL(0) ──── TR(1)
+    #     │           │
+    #    BL(3) ──── BR(2)
+    # 测量方法: 卡尺量 TL→TR 的水平中心距 = width, TL→BL 的垂直中心距 = height
+    pnp_target_width_m: 0.05      # ← 改! 实测螺丝间距 (都是5cm)
+    pnp_target_height_m: 0.05     # ← 改! 实测螺丝间距 (都是5cm)
+    # PnP 质量门禁
+    pnp_max_reprojection_px: 2.0  # 重投影误差超过此值拒绝
+    pnp_min_depth_m: 0.05         # 最小合理深度 (太近可能误检)
+    pnp_max_depth_m: 0.80         # 最大合理深度 (太远 PnP 不可靠)
+
+    # ── 运动参数 ──
+    # 机械臂移动速度 (rad/s)
+    default_speed_rad_s: 0.8
+    # 末端在目标上方偏移 (避免碰撞)
+    target_z_offset_m: 0.003
+
+    # ── 同步与标定安全门禁 ──
+    expected_image_width: 640
+    expected_image_height: 480
+    max_detection_age_s: 0.5
+    # 停止检测后重发的最佳帧，在接收后多少秒内允许选择
+    final_best_valid_s: 60.0
+    max_pose_sync_dt_ms: 80.0
+    pose_history_size: 200
+    # 保存实时检测帧与其原始机械臂位姿，供停止后的最佳帧复用
+    detection_pose_cache_size: 2000
+    min_handeye_inliers: 6
+    max_handeye_translation_m: 0.50
+    # true: 手眼结果必须包含采集时内参，且与运行时内参逐项一致
+    require_intrinsics_binding: true
+
+    # ── 手动偏置 (补偿系统误差，标定后微调用) ──
+    # 正值=基座坐标系正方向；通常只调 X/Y，不动 Z
+    manual_offset_x_m: -0.055
+    manual_offset_y_m: 0.000
+    manual_offset_z_m: 0.000
+
+    # ── 行为 ──
+    # 收到 /pick_target 后是否自动发送目标给机械臂 (false 则仅打印日志)
+    # 默认仅计算和打印。完成新标定、平面实测和空载验证后再手动改为 true
+    auto_send: true
+
   # 地图要求：导航组必须在中转区最优位姿/朝向开始建图，该位姿定义地图原点
   # 同一底盘基准位姿也用于机械臂 sorting_scan_a / sorting_scan_b 标定
   navigation:
@@ -84,40 +138,44 @@ competition:
           park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
 
   arm_motion:
+    # 抓取时吸盘姿态：沿基座 -Z 轴垂直向下，与观察位 pitch/yaw 解耦。
+    # pitch_rad/yaw_rad = 0 即吸盘竖直向下；若工具安装存在微小偏角可在此微调。
+    pick_orientation:
+      pitch_rad: 0.0
+      yaw_rad: 0.0
     fixed_poses:
       zero:
         configured: true
         joints_rad:
-        - 3.117049
-        - 1.566194
-        - 6.278584
-        - 3.003535
-        - 3.141593
+        - 3.081768
+        - 1.56466
+        - 6.280118
+        - 3.006603
+        - 3.144661
         x_m: 0.052
-        y_m: 0.0
-        z_m: 0.096
-        pitch_rad: -0.100563182
-        yaw_rad: 0.024618519
+        y_m: 0.002
+        z_m: 0.095
+        pitch_rad: -0.097506948
+        yaw_rad: 0.056828306
         speed_rad_s: 0.5
       sorting_scan_a:
         configured: true
         joints_rad:
-        - 4.787555
-        - 3.466797
-        - 4.451613
-        - 3.003535
-        - 3.141593
-        x_m: -0.027
-        y_m: -0.339
-        z_m: 0.284
-        pitch_rad: -0.026970704
-        yaw_rad: -1.645864532
+        - 4.741535
+        - 3.321069
+        - 4.549787
+        - 3.006603
+        - 3.144661
+        x_m: -0.01
+        y_m: -0.308
+        z_m: 0.304
+        pitch_rad: -0.071483975
+        yaw_rad: -1.602948094
         speed_rad_s: 0.5
       sorting_scan_b:
-        # A 观察位沿机械臂 x 轴镜像：y、末端 yaw 和基座关节角取镜像值
         configured: true
         joints_rad:
-        - -1.495630
+        - -1.49563
         - -3.466797
         - -4.451613
         - -3.003535
@@ -131,16 +189,16 @@ competition:
       navigation_safe:
         configured: true
         joints_rad:
-        - 3.064894
-        - 1.566194
+        - 3.107845
+        - 1.567728
         - 6.280118
-        - 3.003535
-        - 3.141593
+        - 3.006603
+        - 3.144661
         x_m: 0.052
-        y_m: 0.002
+        y_m: 0.0
         z_m: 0.095
-        pitch_rad: -0.099024221
-        yaw_rad: 0.076771955
+        pitch_rad: -0.094427924
+        yaw_rad: 0.030737324
         speed_rad_s: 0.5
     arenas:
       A:
@@ -148,101 +206,108 @@ competition:
           observations:
           - configured: true
             joints_rad:
-            - 3.04035
-            - 3.511282
-            - 5.045263
-            - 2.399146
-            - 3.143127
-            x_m: 0.329
-            y_m: 0.032
-            z_m: 0.155
-            pitch_rad: 0.006776305
-            yaw_rad: 0.099806095
+            - 3.095574
+            - 3.115515
+            - 4.819768
+            - 3.006603
+            - 3.144661
+            x_m: 0.265
+            y_m: 0.011
+            z_m: 0.291
+            pitch_rad: -0.007026225
+            yaw_rad: 0.04300418
             speed_rad_s: 0.5
             layer_z_m:
-            - 0.017
-            - 0.059
+            - 0.02
+            - 0.063
+            camera_to_plane1_distance_m: 0.271
+            camera_to_plane2_distance_m: 0.228
           - configured: true
             joints_rad:
-            - 3.425379
-            - 3.388564
-            - 5.12503
-            - 2.481981
-            - 3.143127
-            x_m: 0.295
-            y_m: -0.088
-            z_m: 0.169
-            pitch_rad: 0.046692015
-            yaw_rad: -0.285215311
+            - 3.489807
+            - 3.255108
+            - 4.910273
+            - 2.759632
+            - 3.136991
+            x_m: 0.279
+            y_m: -0.103
+            z_m: 0.245
+            pitch_rad: -0.023906709
+            yaw_rad: -0.343566747
             speed_rad_s: 0.5
             layer_z_m:
-            - 0.027
-            - 0.067
+            - 0.024
+            - 0.065
+            camera_to_plane1_distance_m: 0.221
+            camera_to_plane2_distance_m: 0.18
           - configured: true
             joints_rad:
-            - 3.385496
-            - 4.206176
-            - 3.854894
-            - 2.943709
-            - 3.141593
-            x_m: 0.448
-            y_m: -0.113
-            z_m: 0.152
-            pitch_rad: 0.055866629
-            yaw_rad: -0.243816079
+            - 3.380894
+            - 3.965341
+            - 3.805807
+            - 3.097108
+            - 3.138525
+            x_m: 0.411
+            y_m: -0.102
+            z_m: 0.257
+            pitch_rad: -0.080644362
+            yaw_rad: -0.236132764
+            speed_rad_s: 0.5
+            layer_z_m:
+            - 0.015
+            - 0.055
+            camera_to_plane1_distance_m: 0.242
+            camera_to_plane2_distance_m: 0.202
+          - configured: true
+            joints_rad:
+            - 3.035748
+            - 4.172428
+            - 3.71837
+            - 3.009671
+            - 3.138525
+            x_m: 0.453
+            y_m: 0.047
+            z_m: 0.197
+            pitch_rad: -0.048456988
+            yaw_rad: 0.109015256
             speed_rad_s: 0.5
             layer_z_m:
             - 0.014
-            - 0.066
-          - configured: true
-            joints_rad:
-            - 3.0787
-            - 4.227651
-            - 3.781263
-            - 2.908428
-            - 3.141593
-            x_m: 0.464
-            y_m: 0.028
-            z_m: 0.162
-            pitch_rad: -0.031542968
-            yaw_rad: 0.062994281
-            speed_rad_s: 0.5
-            layer_z_m:
-            - 0.005
-            - 0.071
+            - 0.061
+            camera_to_plane1_distance_m: 0.183
+            camera_to_plane2_distance_m: 0.136
         park_1:
           prepare:
             configured: true
             joints_rad:
-            - 4.649496
-            - 3.483671
-            - 4.626487
-            - 2.856272
-            - 3.141593
-            x_m: 0.02
-            y_m: -0.345
-            z_m: 0.243
-            pitch_rad: 0.017514988
-            yaw_rad: -1.507823402
+            - 4.819768
+            - 3.443787
+            - 4.497632
+            - 2.885418
+            - 3.143127
+            x_m: -0.038
+            y_m: -0.335
+            z_m: 0.286
+            pitch_rad: -0.122088457
+            yaw_rad: -1.67962515
             speed_rad_s: 0.5
           placement_points:
           - configured: true
-            x_m: 0.055
-            y_m: -0.301
+            x_m: 0.049
+            y_m: -0.283
+            first_layer_z_m: 0.019
+          - configured: true
+            x_m: -0.047
+            y_m: -0.289
             first_layer_z_m: 0.016
           - configured: true
-            x_m: 0.056
-            y_m: -0.301
-            first_layer_z_m: 0.016
+            x_m: 0.04
+            y_m: -0.365
+            first_layer_z_m: 0.008
           - configured: true
-            x_m: 0.063
-            y_m: -0.289
-            first_layer_z_m: 0.059
-          - configured: true
-            x_m: 0.063
-            y_m: -0.289
-            first_layer_z_m: 0.059
-        # 旧版四点标定，留作对照；当前任务使用下方的 park_2
+            x_m: -0.09
+            y_m: -0.367
+            first_layer_z_m: 0.003
         park_2_previous_calibration:
           prepare:
             configured: true
@@ -275,27 +340,39 @@ competition:
             x_m: -0.035
             y_m: 0.297
             first_layer_z_m: 0.013
-
         park_2:
           prepare:
             configured: true
             joints_rad:
-            - 1.385185
-            - 3.433049
-            - 4.456215
-            - 3.135457
-            - 3.140059
-            x_m: -0.059
-            y_m: 0.324
-            z_m: 0.288
-            pitch_rad: 0.07583089
-            yaw_rad: 1.758036212
-            speed_rad_s: 0.8
-          placement_reference:
-            configured: true
-            x_m: 0.017
-            y_m: 0.275
-            first_layer_z_m: 0.017
+            - 1.438874
+            - 3.49901
+            - 4.279807
+            - 3.207554
+            - 3.143127
+            x_m: -0.043
+            y_m: 0.336
+            z_m: 0.306
+            pitch_rad: 0.037496746
+            yaw_rad: 1.701287125
+            speed_rad_s: 0.5
+          placement_points:
+          - configured: true
+            x_m: -0.046
+            y_m: 0.349
+            first_layer_z_m: 0.015
+          - configured: true
+            x_m: 0.078
+            y_m: 0.369
+            first_layer_z_m: 0.014
+          - configured: true
+            x_m: 0.029
+            y_m: 0.422
+            first_layer_z_m: 0.005
+          - configured: true
+            x_m: -0.067
+            y_m: 0.43
+            first_layer_z_m: -0.003
+
       B:
         pickup:
           observe:

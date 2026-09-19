@@ -33,10 +33,15 @@ atlas_competition_manipulation_backend:
     joint_tolerance_rad: 0.06
     pose_validation_tolerance_m: 0.08
 
-    # 视觉恢复的机械臂换视角；默认关闭，不允许未标定就自动偏移
-    # false 时 view_scan 只重新回固定观察位，属于安全退化模式
+    # 到位后静置时间：机械臂完全静止后再开始视觉检测，避免"还没稳定就开"
+    settle_before_observe_s: 0.5
+
+    # 视觉恢复的机械臂换视角；识别失败时按 offsets_m 逐次做小范围自检
+    # offsets_m 为扁平 (dx,dy,dz) 三元组序列：上 / 右 / 后，逐次尝试
+    # 未提供 offsets_m 时回退到 dx_m/dy_m/dz_m 固定偏移
     view_scan:
-      enabled: false
+      enabled: true
+      offsets_m: [0.0, 0.0, 0.02,  0.0, 0.03, 0.0,  -0.03, 0.0, 0.0]
       dx_m: 0.0
       dy_m: 0.025
       dz_m: 0.0

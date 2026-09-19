@@ -174,7 +174,11 @@ Runtime::RuntimeConfig Runtime::load_config()
     declare_parameter<double>("navigation_result_timeout_s", 60.0);
   config.manipulation_result_timeout_s =
     declare_parameter<double>("manipulation_result_timeout_s", 30.0);
+  config.vision_result_timeout_s =
+    declare_parameter<double>("vision_result_timeout_s", 20.0);
   config.required_ready_mask = declare_parameter<int64_t>("required_ready_mask", 0);
+  config.observation_retries = declare_parameter<int64_t>("observation_retries", 1);
+  config.view_scan_attempts = declare_parameter<int64_t>("view_scan_attempts", 3);
   return config;
 }
 
@@ -612,7 +616,7 @@ Observation Runtime::observe_once(
   request->target_class = "";
 
   auto future = detect_target_->async_send_request(request);
-  if (future.wait_for(std::chrono::duration<double>(config_.service_timeout_s)) !=
+  if (future.wait_for(std::chrono::duration<double>(config_.vision_result_timeout_s)) !=
     std::future_status::ready)
   {
     return Observation{ActionResult::kTimeout, "", false, false, "vision service timeout"};
@@ -658,20 +662,37 @@ Observation Runtime::observe_with_recovery(
     return Observation{observation_failure(observation.result), "", false, false, observation.message};
   }
 
-  action = manipulate(area, "view_scan", slot, expected_layer);
-  if (action != ActionResult::kSucceeded) {
-    return Observation{observation_failure(action), "", false, false, "arm view scan failed"};
+  // Retry the fixed viewpoint first: a late camera frame should not cause an
+  // unnecessary arm move. Only an actual target miss enters the scan sequence.
+  for (int64_t retry = 0; retry < config_.observation_retries; ++retry) {
+    observation = observe_once(area, slot, expected_layer);
+    if (observation_valid(observation)) {
+      return observation;
+    }
+    if (!semantic_miss(observation)) {
+      return Observation{observation_failure(observation.result), "", false, false, observation.message};
+    }
   }
-  observation = observe_once(area, slot, expected_layer);
-  const auto restore_arm = manipulate(area, "pre_recognition", slot, expected_layer);
-  if (restore_arm != ActionResult::kSucceeded) {
-    return Observation{observation_failure(restore_arm), "", false, false, "arm restore failed"};
-  }
-  if (observation_valid(observation)) {
-    return observation;
-  }
-  if (!semantic_miss(observation)) {
-    return Observation{observation_failure(observation.result), "", false, false, observation.message};
+
+  const int64_t view_scan_attempts =
+    config_.view_scan_attempts > 0 ? config_.view_scan_attempts : 0;
+  for (int64_t attempt = 0; attempt < view_scan_attempts; ++attempt) {
+    // view_scan 任务不消费 layer 参数；把自检偏移序号经 layer 透传，逐次换不同小偏移
+    action = manipulate(area, "view_scan", slot, static_cast<uint8_t>(attempt));
+    if (action != ActionResult::kSucceeded) {
+      return Observation{observation_failure(action), "", false, false, "arm view scan failed"};
+    }
+    observation = observe_once(area, slot, expected_layer);
+    const auto restore_arm = manipulate(area, "pre_recognition", slot, expected_layer);
+    if (restore_arm != ActionResult::kSucceeded) {
+      return Observation{observation_failure(restore_arm), "", false, false, "arm restore failed"};
+    }
+    if (observation_valid(observation)) {
+      return observation;
+    }
+    if (!semantic_miss(observation)) {
+      return Observation{observation_failure(observation.result), "", false, false, observation.message};
+    }
   }
 
   // The direct competition navigation backend does not necessarily provide a

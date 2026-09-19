@@ -178,7 +178,10 @@ private:
     double sorting_result_timeout_s{90.0};
     double navigation_result_timeout_s{60.0};
     double manipulation_result_timeout_s{30.0};
+    double vision_result_timeout_s{20.0};
     int64_t required_ready_mask{0};
+    int64_t observation_retries{1};
+    int64_t view_scan_attempts{3};
   };
 
   RuntimeConfig load_config();

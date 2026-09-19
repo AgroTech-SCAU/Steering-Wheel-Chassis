@@ -1,0 +1,2 @@
+scripts/arm_motion_calibration.py text eol=lf
+scripts/navigation_calibration.py text eol=lf

@@ -12,6 +12,8 @@ from typing import Optional
 
 import yaml
 
+from calibration_deployment import deploy_calibration
+
 from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
@@ -412,12 +414,25 @@ class NavigationCalibration(Node):
                 print("路径不能为空")
                 continue
             output = Path(raw).expanduser()
+            if output.resolve() == self.config_path.resolve():
+                print("请先导出到新文件；部署时会备份并替换当前配置")
+                continue
             if output.exists():
                 if terminal_input(f"{output} 已存在  是否覆盖 [y/N] > ").strip().lower() != "y":
                     continue
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(preview, encoding="utf-8")
             print(f"已导出 {output}")
+            answer = terminal_input(
+                f"是否自动部署到当前比赛配置 {self.config_path} [y/N] > "
+            ).strip().lower()
+            if answer == "y":
+                try:
+                    backup = deploy_calibration(output, self.config_path)
+                except (OSError, ValueError) as exc:
+                    print(f"自动部署失败：{exc}；导出文件仍保留在 {output}")
+                else:
+                    print(f"已部署到 {self.config_path}；原配置备份为 {backup}；下次启动任务时生效")
             return
 
     def run_interactive(self) -> None:

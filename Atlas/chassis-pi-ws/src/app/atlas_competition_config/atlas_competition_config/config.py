@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,7 @@ class CompetitionConfig:
     navigation: dict[str, Any] = field(default_factory=dict)
     manipulation: dict[str, Any] = field(default_factory=dict)
     arm_motion: dict[str, Any] = field(default_factory=dict)
+    handeye_bridge: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
 
 
@@ -68,6 +70,7 @@ def load_competition_config(path: str | os.PathLike[str]) -> CompetitionConfig:
     navigation = dict(competition.get("navigation", {}) or {})
     navigation["_source_path"] = str(config_path)
     arm_motion = dict(competition.get("arm_motion", {}) or {})
+    _validate_observation_distances(arm_motion)
     vision = _vision_with_arm_motion_compatibility(
         dict(competition.get("vision", {}) or {}),
         arm_motion,
@@ -78,8 +81,31 @@ def load_competition_config(path: str | os.PathLike[str]) -> CompetitionConfig:
         navigation=navigation,
         manipulation=dict(competition.get("manipulation", {}) or {}),
         arm_motion=arm_motion,
+        handeye_bridge=dict(competition.get("handeye_bridge", {}) or {}),
         source_path=config_path,
     )
+
+
+def _validate_observation_distances(arm_motion: Mapping[str, Any]) -> None:
+    for arena, arena_cfg in _mapping(arm_motion.get("arenas")).items():
+        observations = _mapping(_mapping(arena_cfg).get("pickup")).get("observations") or []
+        for slot, observation in enumerate(observations):
+            if not isinstance(observation, Mapping) or not observation.get("configured", False):
+                continue
+            keys = ("camera_to_plane1_distance_m", "camera_to_plane2_distance_m")
+            if not any(key in observation for key in keys):
+                continue  # Existing calibration files without derived distances remain readable.
+            heights = observation.get("layer_z_m", [])
+            if len(heights) != 2 or not all(key in observation for key in keys):
+                raise CompetitionConfigError(f"arena {arena} pickup slot {slot} needs two plane distances")
+            for layer, (key, plane_z) in enumerate(zip(keys, heights), start=1):
+                distance = float(observation[key])
+                expected = float(observation["z_m"]) - float(plane_z)
+                if (not math.isfinite(distance) or not math.isfinite(expected)
+                        or distance <= 0.0 or abs(distance - expected) > 0.001):
+                    raise CompetitionConfigError(
+                        f"arena {arena} pickup slot {slot} layer {layer} plane distance mismatch"
+                    )
 
 
 def load_optional_competition_config(

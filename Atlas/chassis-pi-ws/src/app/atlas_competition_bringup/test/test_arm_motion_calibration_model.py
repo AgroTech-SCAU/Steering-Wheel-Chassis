@@ -89,6 +89,9 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
     assert competition["arm_motion"]["fixed_poses"]["sorting_scan_a"]["joints_rad"][0] == 1.0
     assert competition["arm_motion"]["fixed_poses"]["sorting_scan_b"]["joints_rad"][0] == 8.0
     assert len(competition["arm_motion"]["arenas"]["A"]["pickup"]["observations"]) == 4
+    observation = competition["arm_motion"]["arenas"]["A"]["pickup"]["observations"][0]
+    assert observation["camera_to_plane1_distance_m"] == 4.17
+    assert observation["camera_to_plane2_distance_m"] == 4.12
     assert len(competition["arm_motion"]["arenas"]["A"]["park_1"]["placement_points"]) == 4
     assert competition["arm_motion"]["arenas"]["B"]["pickup"]["observe"]["x_m"] == 9.0
     assert "sorting_scan_a" not in competition["vision"]
@@ -97,6 +100,19 @@ def test_merge_calibration_updates_only_selected_arena_and_removes_legacy_duplic
     assert "park_2" not in competition["manipulation"]["placement"]
     assert "slot_offsets_xy_m" not in competition["manipulation"]["placement"]
     assert competition["manipulation"]["placement"]["enabled"] is True
+
+
+def test_merge_calibration_rejects_observation_below_a_layer():
+    source = {"competition": {}}
+    calibration = {
+        "fixed_poses": {},
+        "pickup": {"observations": [{**_pose(0.0), "layer_z_m": [0.03, 0.21]}]},
+        "park_1": {},
+        "park_2": {},
+    }
+    import pytest
+    with pytest.raises(ValueError, match="distance must be positive"):
+        model.merge_calibration(source, "A", calibration)
 
 
 def test_dump_clean_yaml_contains_no_comments_and_round_trips():

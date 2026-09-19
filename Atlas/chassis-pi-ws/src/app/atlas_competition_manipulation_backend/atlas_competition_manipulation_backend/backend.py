@@ -70,11 +70,13 @@ class XYZ:
 
 
 def pickup_target_spec(arm_motion: dict, arena: str, layer: int, slot: int = 0) -> dict[str, float]:
-    observe = resolve_arm_pose(arm_motion, "pickup_observe", arena=arena, slot=slot)
+    # 抓取姿态与观察位角度解耦：吸盘沿基座 -Z 轴垂直向下 (pitch=0, yaw=0)。
+    # 如需补偿工具安装偏角，在 competition.yaml 的 arm_motion.pick_orientation 微调。
+    orientation = arm_motion.get("pick_orientation") or {}
     return {
         "target_z_m": resolve_pickup_layer_z(arm_motion, arena, layer, slot),
-        "pitch_rad": float(observe["pitch_rad"]),
-        "yaw_rad": float(observe["yaw_rad"]),
+        "pitch_rad": float(orientation.get("pitch_rad", 0.0)),
+        "yaw_rad": float(orientation.get("yaw_rad", 0.0)),
     }
 
 
@@ -192,6 +194,10 @@ class CompetitionManipulationBackend(Node):
         self.pose_validation_tolerance_m = float(
             self.declare_parameter("pose_validation_tolerance_m", 0.08).value
         )
+        # 到位后静置时间：机械臂完全静止后再开始视觉检测，避免"还没稳定就开"
+        self.settle_before_observe_s = float(
+            self.declare_parameter("settle_before_observe_s", 0.5).value
+        )
 
         self.view_scan_enabled = bool(
             self.declare_parameter("view_scan.enabled", False).value
@@ -205,6 +211,7 @@ class CompetitionManipulationBackend(Node):
         self.view_scan_dz_m = float(
             self.declare_parameter("view_scan.dz_m", 0.0).value
         )
+        self.view_scan_offsets_m = self._load_view_scan_offsets()
 
         self.competition = load_optional_competition_config(
             str(self.get_parameter("competition_config").value)
@@ -583,7 +590,9 @@ class CompetitionManipulationBackend(Node):
             if task == "pre_recognition":
                 ok = self._do_pre_recognition(arena, request.waypoint_id, int(request.slot))
             elif task == "view_scan":
-                ok = self._do_view_scan(arena, request.waypoint_id, int(request.slot))
+                ok = self._do_view_scan(
+                    arena, request.waypoint_id, int(request.slot), int(request.layer)
+                )
             elif task in {"zero", "sorting_scan_a", "sorting_scan_b", "navigation_safe"}:
                 ok = self._move_named_pose(task)
             elif task == "pickup_observe":
@@ -637,12 +646,35 @@ class CompetitionManipulationBackend(Node):
             message=f"移动到 {area} 固定观察或预备位",
         )
         if area == "pickup":
-            return self._move_named_pose("pickup_observe", arena=arena, slot=slot)
-        if area in {"park_1", "park_2"}:
-            return self._move_named_pose("park_prepare", arena=arena, area=area)
-        raise ValueError(f"pre_recognition 不支持区域: {area}")
+            ok = self._move_named_pose("pickup_observe", arena=arena, slot=slot)
+        elif area in {"park_1", "park_2"}:
+            ok = self._move_named_pose("park_prepare", arena=arena, area=area)
+        else:
+            raise ValueError(f"pre_recognition 不支持区域: {area}")
+        if ok:
+            time.sleep(self.settle_before_observe_s)
+        return ok
 
-    def _do_view_scan(self, arena: str, area: str, slot: int = 0) -> bool:
+    def _load_view_scan_offsets(self) -> list[tuple[float, float, float]]:
+        # offsets_m 是扁平 (dx,dy,dz) 三元组序列；每 3 个数一组，逐次自检换视角。
+        raw = self.declare_parameter(
+            "view_scan.offsets_m",
+            [0.0, 0.0, 0.02, 0.0, 0.03, 0.0, -0.03, 0.0, 0.0],
+        ).value
+        values = [float(v) for v in (list(raw) if raw is not None else [])]
+        if len(values) >= 3 and len(values) % 3 == 0:
+            return [
+                (values[i], values[i + 1], values[i + 2])
+                for i in range(0, len(values), 3)
+            ]
+        return []
+
+    def _view_scan_offset(self, attempt: int) -> tuple[float, float, float]:
+        if self.view_scan_offsets_m:
+            return self.view_scan_offsets_m[int(attempt) % len(self.view_scan_offsets_m)]
+        return (self.view_scan_dx_m, self.view_scan_dy_m, self.view_scan_dz_m)
+
+    def _do_view_scan(self, arena: str, area: str, slot: int = 0, attempt: int = 0) -> bool:
         if not self.view_scan_enabled:
             self._set_status(
                 ManipulationStatus.STATE_RUNNING,
@@ -654,17 +686,17 @@ class CompetitionManipulationBackend(Node):
         start = self._current_pose()
         if start is None:
             return False
-        target = XYZ(
-            start.x + self.view_scan_dx_m,
-            start.y + self.view_scan_dy_m,
-            start.z + self.view_scan_dz_m,
-        )
+        dx, dy, dz = self._view_scan_offset(attempt)
+        target = XYZ(start.x + dx, start.y + dy, start.z + dz)
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="view_scan_move",
-            message=f"换视角到 ({target.x:.3f},{target.y:.3f},{target.z:.3f})",
+            message=f"换视角#{attempt} 到 ({target.x:.3f},{target.y:.3f},{target.z:.3f})",
         )
-        return self._move_position(target, suction_valid=False, suction_enable=False)
+        ok = self._move_position(target, suction_valid=False, suction_enable=False)
+        if ok:
+            time.sleep(self.settle_before_observe_s)
+        return ok
 
     def _do_pick(self, arena: str, slot: int, layer: int) -> bool:
         if slot not in (0, 1, 2, 3):
