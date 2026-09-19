@@ -15,7 +15,6 @@ from atlas_competition_config.config import (
     apply_manipulation_placement_overrides,
     load_optional_competition_config,
     resolve_arm_pose,
-    resolve_pickup_layer_z,
     resolve_placement_reference,
 )
 
@@ -32,7 +31,7 @@ try:
 
     from atlas_mission_interfaces.msg import ManipulationStatus
     from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
-    from mcu_comm_bridge.srv import SetArmJoints, SetArmPose, SetArmPosition
+    from mcu_comm_bridge.srv import SetArmJoints, SetArmPosition
     from vison_topic_interfaces.msg import PickTarget
 except ImportError:  # Unit tests exercise pure config helpers without ROS.
     rclpy = None
@@ -51,7 +50,6 @@ except ImportError:  # Unit tests exercise pure config helpers without ROS.
     CancelManipulation = None
     StartManipulation = None
     SetArmJoints = None
-    SetArmPose = None
     SetArmPosition = None
     PickTarget = None
 
@@ -68,17 +66,6 @@ class XYZ:
             + (self.y - other.y) ** 2
             + (self.z - other.z) ** 2
         )
-
-
-def pickup_target_spec(arm_motion: dict, arena: str, layer: int, slot: int = 0) -> dict[str, float]:
-    # 抓取姿态与观察位角度解耦：吸盘沿基座 -Z 轴垂直向下 (pitch=0, yaw=0)。
-    # 如需补偿工具安装偏角，在 competition.yaml 的 arm_motion.pick_orientation 微调。
-    orientation = arm_motion.get("pick_orientation") or {}
-    return {
-        "target_z_m": resolve_pickup_layer_z(arm_motion, arena, layer, slot),
-        "pitch_rad": float(orientation.get("pitch_rad", 0.0)),
-        "yaw_rad": float(orientation.get("yaw_rad", 0.0)),
-    }
 
 
 def compute_placement_target(
@@ -115,8 +102,6 @@ def compute_placement_target(
     )
 
 
-def compute_pick_contact_target(above: XYZ, target_z_m: float) -> XYZ:
-    return XYZ(above.x, above.y, float(target_z_m))
 
 
 class CompetitionManipulationBackend(Node):
@@ -159,9 +144,6 @@ class CompetitionManipulationBackend(Node):
         self.arm_position_service = str(
             self.declare_parameter("arm_position_service", "/mcu/set_arm_position").value
         )
-        self.arm_pose_service = str(
-            self.declare_parameter("arm_pose_service", "/mcu/set_arm_pose").value
-        )
         self.suction_service = str(
             self.declare_parameter("suction_service", "/mcu/set_suction").value
         )
@@ -183,35 +165,23 @@ class CompetitionManipulationBackend(Node):
         self.pick_target_settle_s = float(
             self.declare_parameter("pick_target_settle_s", 0.25).value
         )
-        self.pick_approach_m = float(
-            self.declare_parameter("pick_approach_m", 0.050).value
-        )
+        self.pick_lift_m = max(0.0, float(
+            self.declare_parameter("pick_lift_m", 0.050).value
+        ))
         self.suction_settle_s = float(
             self.declare_parameter("suction_settle_s", 0.45).value
         )
-        # 抓取接触后额外保持吸盘开启的时间。与放置释放后的 settle 分离，
-        # 避免为了延长吸取等待而拖慢每次放置动作。
+        # handeye_bridge 的 screw_pick 路径负责已验证的视觉->SetArmPose 接触动作；
+        # 本后端只等待其到位、开启吸盘并执行 3D 抬升。
         self.pick_suction_hold_s = float(
             self.declare_parameter("pick_suction_hold_s", 1.50).value
         )
-        # 比赛容错：5D 位姿命令优先，但不能因为 IK 无解长期卡住。
-        # approach 无法获知 handeye_bridge 内部计算的 XYZ，因此只做快速 watchdog；
-        # descend/lift 已知目标 XYZ，可在 5D 失败后降级为 3D position。
         self.pick_motion_start_timeout_s = max(0.2, float(
-            self.declare_parameter("pick_recovery.motion_start_timeout_s", 2.0).value
+            self.declare_parameter("pick_bridge.motion_start_timeout_s", 2.0).value
         ))
-        self.pick_approach_timeout_s = max(self.pick_motion_start_timeout_s, float(
-            self.declare_parameter("pick_recovery.approach_timeout_s", 7.0).value
+        self.pick_bridge_timeout_s = max(self.pick_motion_start_timeout_s, float(
+            self.declare_parameter("pick_bridge.timeout_s", 10.0).value
         ))
-        self.pick_motion_timeout_s = max(self.pick_motion_start_timeout_s, float(
-            self.declare_parameter("pick_recovery.motion_timeout_s", 4.0).value
-        ))
-        self.pick_motion_start_delta_m = max(0.0005, float(
-            self.declare_parameter("pick_recovery.motion_start_delta_m", 0.003).value
-        ))
-        self.pick_allow_position_fallback = bool(
-            self.declare_parameter("pick_recovery.allow_position_fallback", True).value
-        )
         self.default_speed_rad_s = float(
             self.declare_parameter("default_speed_rad_s", 0.8).value
         )
@@ -305,7 +275,6 @@ class CompetitionManipulationBackend(Node):
         self.initial_pose_client = self.create_client(Trigger, self.initial_pose_service)
         self.arm_joints_client = self.create_client(SetArmJoints, self.arm_joints_service)
         self.arm_position_client = self.create_client(SetArmPosition, self.arm_position_service)
-        self.arm_pose_client = self.create_client(SetArmPose, self.arm_pose_service)
         self.suction_client = self.create_client(SetBool, self.suction_service)
         self.sorting_scan_a_srv = self.create_service(
             Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a,
@@ -580,45 +549,6 @@ class CompetitionManipulationBackend(Node):
                 self._pose_cv.wait(timeout=0.05)
         return None
 
-    def _wait_pose_target_watchdog(
-        self,
-        start: XYZ,
-        target: XYZ,
-        *,
-        timeout_s: float,
-        start_timeout_s: float,
-    ) -> str:
-        """等待到位，并区分“完全没动”和“动了但超时”。
-
-        MCU 当前只回“命令已入队”，不会把 ARM_NO_SOLUTION 直接反馈给 Pi。
-        因此用 /arm/pose 做快速 watchdog：若短时间内完全没有 TCP 运动，
-        视作 5D IK/命令执行失败，可安全切换到 3D fallback。
-        """
-        started_at = time.monotonic()
-        deadline = started_at + max(0.1, float(timeout_s))
-        start_deadline = started_at + max(0.1, float(start_timeout_s))
-        moved = False
-        stable = 0
-        with self._pose_cv:
-            while time.monotonic() < deadline:
-                if self._cancelled():
-                    return "cancelled"
-                current = self._latest_pose
-                if current is not None:
-                    current_copy = XYZ(current.x, current.y, current.z)
-                    if current_copy.distance(start) >= self.pick_motion_start_delta_m:
-                        moved = True
-                    if current_copy.distance(target) <= self.position_tolerance_m:
-                        stable += 1
-                        if stable >= max(1, self.stable_samples):
-                            return "reached"
-                    else:
-                        stable = 0
-                if not moved and time.monotonic() >= start_deadline:
-                    return "no_motion"
-                self._pose_cv.wait(timeout=0.05)
-        return "timeout" if moved else "no_motion"
-
     def _move_position(self, target: XYZ, *, suction_valid: bool, suction_enable: bool) -> bool:
         if self._cancelled():
             return False
@@ -634,112 +564,13 @@ class CompetitionManipulationBackend(Node):
             return False
         return self._wait_pose_target(target, self.motion_timeout_s)
 
-    def _move_pose(
-        self,
-        target: XYZ,
-        *,
-        pitch_rad: float,
-        yaw_rad: float,
-        suction_valid: bool,
-        suction_enable: bool,
-    ) -> bool:
-        """普通 5D 位姿移动；保留给非比赛恢复逻辑/单元测试使用。"""
+    def _set_suction(self, enabled: bool) -> bool:
         if self._cancelled():
             return False
-        req = SetArmPose.Request()
-        req.x_m = float(target.x)
-        req.y_m = float(target.y)
-        req.z_m = float(target.z)
-        req.pitch_rad = float(pitch_rad)
-        req.yaw_rad = float(yaw_rad)
-        req.speed_rad_s = float(self.default_speed_rad_s)
-        req.suction_valid = bool(suction_valid)
-        req.suction_enable = bool(suction_enable)
-        result = self._call_service(self.arm_pose_client, req)
-        if result is None or not result.success:
-            return False
-        return self._wait_pose_target(target, self.motion_timeout_s)
-
-    def _move_pick_pose_with_fallback(
-        self,
-        target: XYZ,
-        *,
-        pitch_rad: float,
-        yaw_rad: float,
-        suction_valid: bool,
-        suction_enable: bool,
-        phase: str,
-    ) -> bool:
-        """比赛抓取专用：5D 优先，失败时仅在 Pi 端退化到 3D。
-
-        不修改 MCU。5D 命令如果服务拒绝、短时间完全不动，或规定时间
-        内未到位，就尝试相同 XYZ 的 SetArmPosition。这样姿态约束是“优先项”，
-        而不是让整场任务卡死的硬门槛。
-        """
-        if self._cancelled():
-            return False
-        start = self._current_pose()
-        if start is None:
-            return False
-
-        req = SetArmPose.Request()
-        req.x_m = float(target.x)
-        req.y_m = float(target.y)
-        req.z_m = float(target.z)
-        req.pitch_rad = float(pitch_rad)
-        req.yaw_rad = float(yaw_rad)
-        req.speed_rad_s = float(self.default_speed_rad_s)
-        req.suction_valid = bool(suction_valid)
-        req.suction_enable = bool(suction_enable)
-
-        result = self._call_service(self.arm_pose_client, req)
-        wait_status = "service_failed"
-        if result is not None and result.success:
-            wait_status = self._wait_pose_target_watchdog(
-                start,
-                target,
-                timeout_s=self.pick_motion_timeout_s,
-                start_timeout_s=self.pick_motion_start_timeout_s,
-            )
-            if wait_status == "reached":
-                return True
-
-        if self._cancelled():
-            return False
-        if not self.pick_allow_position_fallback:
-            self.get_logger().error(
-                f"{phase}: 5D 抓取位姿失败({wait_status})，且 3D fallback 已关闭"
-            )
-            return False
-
-        self.get_logger().warn(
-            f"{phase}: 5D 抓取位姿失败({wait_status})，立即退化到 3D XYZ，优先保证流程继续"
-        )
-        start = self._current_pose()
-        if start is None:
-            return False
-        fallback = SetArmPosition.Request()
-        fallback.x_m = float(target.x)
-        fallback.y_m = float(target.y)
-        fallback.z_m = float(target.z)
-        fallback.speed_rad_s = float(self.default_speed_rad_s)
-        fallback.suction_valid = bool(suction_valid)
-        fallback.suction_enable = bool(suction_enable)
-        result = self._call_service(self.arm_position_client, fallback)
-        if result is None or not result.success:
-            return False
-        fallback_status = self._wait_pose_target_watchdog(
-            start,
-            target,
-            timeout_s=self.pick_motion_timeout_s,
-            start_timeout_s=self.pick_motion_start_timeout_s,
-        )
-        if fallback_status != "reached":
-            self.get_logger().error(
-                f"{phase}: 3D fallback 仍失败({fallback_status})，本货物交给任务层 deferred"
-            )
-            return False
-        return True
+        req = SetBool.Request()
+        req.data = bool(enabled)
+        result = self._call_service(self.suction_client, req)
+        return result is not None and bool(result.success)
 
     def _wait_joint_target(self, target: list[float], timeout_s: float) -> bool:
         deadline = time.monotonic() + timeout_s
@@ -998,69 +829,56 @@ class CompetitionManipulationBackend(Node):
 
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
-            step="select_pick_target",
-            message=f"选择角点 slot={slot}, layer={layer}",
+            step="screw_pick_target",
+            message=(
+                f"复用 handeye_bridge screw_pick: slot={slot}, layer={layer}; "
+                "高度与抓取姿态由 bridge_node.yaml 的实机验证参数决定"
+            ),
         )
-        spec = pickup_target_spec(self.arm_motion, arena, layer, slot)
         msg = PickTarget()
         msg.corner_index = int(slot)
         msg.layer = int(layer)
+        # 关键：比赛层只选择“抓哪个”。不要覆盖 screw_pick 已验证的
+        # plane height / initial pitch-yaw / target_z_offset。
         if hasattr(msg, "use_target_z"):
-            msg.use_target_z = True
-            msg.target_z_m = float(spec["target_z_m"])
+            msg.use_target_z = False
         if hasattr(msg, "use_orientation"):
-            msg.use_orientation = True
-            msg.pitch_rad = float(spec["pitch_rad"])
-            msg.yaw_rad = float(spec["yaw_rad"])
+            msg.use_orientation = False
         if hasattr(msg, "use_approach"):
-            msg.use_approach = True
-            msg.approach_m = float(self.pick_approach_m)
+            msg.use_approach = False
         self.pick_target_pub.publish(msg)
         time.sleep(max(0.0, self.pick_target_settle_s))
 
-        above = self._wait_for_motion_then_stable(
+        contact = self._wait_for_motion_then_stable(
             start,
-            self.pick_approach_timeout_s,
+            self.pick_bridge_timeout_s,
             self.pick_motion_start_timeout_s,
         )
-        if above is None:
+        if contact is None:
             self.get_logger().error(
-                "/pick_target 的 5D approach 未在 watchdog 时间内开始并稳定；"
-                "当前节点拿不到 handeye_bridge 内部计算的精确 XYZ，因此不盲目降级，交给任务层 deferred"
+                "screw_pick 目标未在 watchdog 时间内完成；本货物交给任务层 deferred"
             )
             return False
 
-        contact = compute_pick_contact_target(above, spec["target_z_m"])
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
-            step="pick_descend",
-            message=f"下降到标定吸取高度 z={contact.z:.3f} m 并打开吸盘",
+            step="pick_suction",
+            message=(
+                f"视觉验证抓取位已到达 ({contact.x:.3f},{contact.y:.3f},{contact.z:.3f})m，"
+                "开启吸盘并等待真空建立"
+            ),
         )
-        if not self._move_pick_pose_with_fallback(
-            contact,
-            pitch_rad=spec["pitch_rad"],
-            yaw_rad=spec["yaw_rad"],
-            suction_valid=True,
-            suction_enable=True,
-            phase="pick_descend",
-        ):
+        if not self._set_suction(True):
             return False
-
-        # 到达接触高度后不要立刻抬升，给真空建立和吸盘贴合留出时间。
         time.sleep(max(0.0, self.pick_suction_hold_s))
+
+        lift = XYZ(contact.x, contact.y, contact.z + self.pick_lift_m)
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="pick_lift",
-            message=f"吸附后回到抓取接近位 z={above.z:.3f} m",
+            message=f"保持当前抓取姿态邻域，仅以 3D position IK 抬升 {self.pick_lift_m:.3f} m",
         )
-        return self._move_pick_pose_with_fallback(
-            above,
-            pitch_rad=spec["pitch_rad"],
-            yaw_rad=spec["yaw_rad"],
-            suction_valid=True,
-            suction_enable=True,
-            phase="pick_lift",
-        )
+        return self._move_position(lift, suction_valid=True, suction_enable=True)
 
     def _place_target(
         self, arena: str, park: str, slot: int, existing_layer: int
@@ -1093,10 +911,7 @@ class CompetitionManipulationBackend(Node):
         if not self._move_position(target, suction_valid=True, suction_enable=True):
             return False
 
-        req = SetBool.Request()
-        req.data = False
-        result = self._call_service(self.suction_client, req)
-        if result is None or not result.success:
+        if not self._set_suction(False):
             return False
         time.sleep(max(0.0, self.suction_settle_s))
 

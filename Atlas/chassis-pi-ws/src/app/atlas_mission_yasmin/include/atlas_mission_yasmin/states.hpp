@@ -150,13 +150,6 @@ public:
   std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
 };
 
-class ObserveParkState final : public RuntimeState
-{
-public:
-  explicit ObserveParkState(Runtime::SharedPtr runtime);
-  std::string execute(yasmin::Blackboard::SharedPtr blackboard) override;
-};
-
 class PlaceState final : public RuntimeState
 {
 public:

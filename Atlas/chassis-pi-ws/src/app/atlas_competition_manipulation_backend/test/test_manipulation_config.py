@@ -85,28 +85,6 @@ def _arm_motion_config():
     }
 
 
-def test_pickup_target_spec_uses_layer_height_and_vertical_orientation():
-    from atlas_competition_manipulation_backend.backend import pickup_target_spec
-
-    spec = pickup_target_spec(_arm_motion_config(), "A", 2)
-
-    assert spec["target_z_m"] == 0.08
-    assert spec["pitch_rad"] == 0.0
-    assert spec["yaw_rad"] == 0.0
-
-
-def test_pickup_target_spec_uses_configured_pick_orientation():
-    from atlas_competition_manipulation_backend.backend import pickup_target_spec
-
-    motion = _arm_motion_config()
-    motion["pick_orientation"] = {"pitch_rad": -0.1, "yaw_rad": 0.2}
-    spec = pickup_target_spec(motion, "A", 2)
-
-    assert spec["target_z_m"] == 0.08
-    assert spec["pitch_rad"] == -0.1
-    assert spec["yaw_rad"] == 0.2
-
-
 def test_compute_placement_target_uses_arena_reference_slot_and_layer():
     from atlas_competition_manipulation_backend.backend import compute_placement_target
 
@@ -125,9 +103,7 @@ def test_compute_placement_target_uses_arena_reference_slot_and_layer():
 
 
 def test_four_observations_and_four_placement_points_use_selected_slot():
-    from atlas_competition_manipulation_backend.backend import (
-        compute_placement_target, pickup_target_spec,
-    )
+    from atlas_competition_manipulation_backend.backend import compute_placement_target
 
     motion = _arm_motion_config()
     pickup = motion["arenas"]["A"]["pickup"]
@@ -142,10 +118,6 @@ def test_four_observations_and_four_placement_points_use_selected_slot():
         {"configured": True, "x_m": 0.1 + slot * 0.1, "y_m": 0.2, "first_layer_z_m": 0.03}
         for slot in range(4)
     ]
-    spec = pickup_target_spec(motion, "A", 2, 3)
-    assert spec["target_z_m"] == pytest.approx(0.05)
-    assert spec["pitch_rad"] == 0.0
-    assert spec["yaw_rad"] == 0.0
     target = compute_placement_target(motion, {"enabled": True, "layer_step_m": 0.05}, "A", "park_1", 3, 0)
     assert (target.x, target.y, target.z) == pytest.approx((0.4, 0.2, 0.03))
 
@@ -181,74 +153,20 @@ def test_pre_recognition_reports_status_and_moves_to_pickup_observe(monkeypatch)
     assert move_calls == [("pickup_observe", "A", "", 3)]
 
 
-def test_pick_contact_target_descends_to_calibrated_layer_z_not_relative_magic_distance():
-    from atlas_competition_manipulation_backend.backend import XYZ, compute_pick_contact_target
-
-    above = XYZ(0.2, -0.1, 0.18)
-    contact = compute_pick_contact_target(above, 0.12)
-
-    assert contact == XYZ(0.2, -0.1, 0.12)
-
-
-def test_move_pose_sends_five_dof_target_and_suction(monkeypatch):
-    import atlas_competition_manipulation_backend.backend as backend
-
-    class DummySetArmPose:
-        class Request:
-            pass
-
-    monkeypatch.setattr(backend, "SetArmPose", DummySetArmPose)
-    node = object.__new__(backend.CompetitionManipulationBackend)
-    node.default_speed_rad_s = 0.8
-    node.motion_timeout_s = 30.0
-    node.arm_pose_client = object()
-    node._cancelled = lambda: False
-    captured = {}
-
-    def call_service(client, req):
-        captured["client"] = client
-        captured["req"] = req
-        return type("Result", (), {"success": True})()
-
-    node._call_service = call_service
-    node._wait_pose_target = lambda target, timeout: captured.update(
-        target=target, timeout=timeout
-    ) or True
-
-    target = backend.XYZ(0.2, -0.1, 0.12)
-    assert node._move_pose(
-        target,
-        pitch_rad=-0.11,
-        yaw_rad=0.23,
-        suction_valid=True,
-        suction_enable=True,
-    ) is True
-
-    req = captured["req"]
-    assert (req.x_m, req.y_m, req.z_m) == pytest.approx((0.2, -0.1, 0.12))
-    assert req.pitch_rad == pytest.approx(-0.11)
-    assert req.yaw_rad == pytest.approx(0.23)
-    assert req.speed_rad_s == pytest.approx(0.8)
-    assert req.suction_valid is True
-    assert req.suction_enable is True
-    assert captured["target"] == target
-    assert captured["timeout"] == pytest.approx(30.0)
-
-
-def test_pick_descend_and_lift_keep_same_pose_constraint(monkeypatch):
+def test_pick_reuses_screw_pick_without_overriding_verified_bridge_parameters(monkeypatch):
     import atlas_competition_manipulation_backend.backend as backend
 
     class DummyPickTarget:
         def __init__(self):
             self.corner_index = 0
             self.layer = 0
-            self.use_target_z = False
-            self.target_z_m = 0.0
-            self.use_orientation = False
-            self.pitch_rad = 0.0
-            self.yaw_rad = 0.0
-            self.use_approach = False
-            self.approach_m = 0.0
+            self.use_target_z = True
+            self.target_z_m = 123.0
+            self.use_orientation = True
+            self.pitch_rad = 123.0
+            self.yaw_rad = 123.0
+            self.use_approach = True
+            self.approach_m = 123.0
 
     class DummyStatus:
         STATE_RUNNING = 1
@@ -256,114 +174,76 @@ def test_pick_descend_and_lift_keep_same_pose_constraint(monkeypatch):
     class DummyPublisher:
         def __init__(self):
             self.messages = []
-
         def publish(self, msg):
             self.messages.append(msg)
 
     monkeypatch.setattr(backend, "PickTarget", DummyPickTarget)
     monkeypatch.setattr(backend, "ManipulationStatus", DummyStatus)
-    monkeypatch.setattr(
-        backend,
-        "pickup_target_spec",
-        lambda _arm, _arena, _layer, _slot: {
-            "target_z_m": 0.12,
-            "pitch_rad": -0.10,
-            "yaw_rad": 0.20,
-        },
-    )
 
     node = object.__new__(backend.CompetitionManipulationBackend)
-    node.arm_motion = {}
-    node.motion_timeout_s = 30.0
     node.pick_target_settle_s = 0.0
-    node.pick_approach_m = 0.05
     node.pick_suction_hold_s = 0.0
-    node.pick_approach_timeout_s = 7.0
+    node.pick_lift_m = 0.05
+    node.pick_bridge_timeout_s = 10.0
     node.pick_motion_start_timeout_s = 2.0
     node.pick_target_pub = DummyPublisher()
-    node._current_pose = lambda: backend.XYZ(0.10, 0.00, 0.30)
-    node._wait_for_motion_then_stable = lambda _start, _timeout, _start_timeout=None: backend.XYZ(
-        0.20, -0.10, 0.17
+    node._current_pose = lambda: backend.XYZ(0.26, 0.03, 0.21)
+    node._wait_for_motion_then_stable = lambda *_args, **_kwargs: backend.XYZ(
+        0.31, -0.04, 0.073
     )
     node._set_status = lambda *_args, **_kwargs: None
-    node.get_logger = lambda: type(
-        "Logger", (), {"error": lambda self, _msg: None, "warn": lambda self, _msg: None}
-    )()
+    node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
+    suction = []
+    node._set_suction = lambda enabled: suction.append(enabled) or True
     moves = []
+    node._move_position = lambda target, **kwargs: moves.append((target, kwargs)) or True
 
-    def move_pose(target, **kwargs):
-        moves.append((target, kwargs))
-        return True
+    assert node._do_pick("B", 2, 2) is True
 
-    node._move_pick_pose_with_fallback = move_pose
-
-    assert node._do_pick("A", 2, 1) is True
-    assert len(moves) == 2
-
-    descend_target, descend = moves[0]
-    lift_target, lift = moves[1]
-    assert descend_target == backend.XYZ(0.20, -0.10, 0.12)
-    assert lift_target == backend.XYZ(0.20, -0.10, 0.17)
-    for params in (descend, lift):
-        assert params["pitch_rad"] == pytest.approx(-0.10)
-        assert params["yaw_rad"] == pytest.approx(0.20)
-        assert params["suction_valid"] is True
-        assert params["suction_enable"] is True
-    assert descend["phase"] == "pick_descend"
-    assert lift["phase"] == "pick_lift"
-
-    published = node.pick_target_pub.messages[0]
-    assert published.use_orientation is True
-    assert published.pitch_rad == pytest.approx(-0.10)
-    assert published.yaw_rad == pytest.approx(0.20)
+    assert len(node.pick_target_pub.messages) == 1
+    msg = node.pick_target_pub.messages[0]
+    assert msg.corner_index == 2
+    assert msg.layer == 2
+    assert msg.use_target_z is False
+    assert msg.use_orientation is False
+    assert msg.use_approach is False
+    assert suction == [True]
+    assert len(moves) == 1
+    lift, params = moves[0]
+    assert lift == backend.XYZ(0.31, -0.04, 0.123)
+    assert params["suction_valid"] is True
+    assert params["suction_enable"] is True
 
 
-def test_pick_pose_falls_back_to_position_when_5d_does_not_move(monkeypatch):
+def test_pick_bridge_no_motion_fails_locally_for_scheduler_defer(monkeypatch):
     import atlas_competition_manipulation_backend.backend as backend
 
-    class DummySetArmPose:
-        class Request:
+    class DummyPickTarget:
+        def __init__(self):
+            self.corner_index = 0
+            self.layer = 0
+            self.use_target_z = False
+            self.use_orientation = False
+            self.use_approach = False
+
+    class DummyStatus:
+        STATE_RUNNING = 1
+
+    class DummyPublisher:
+        def publish(self, _msg):
             pass
 
-    class DummySetArmPosition:
-        class Request:
-            pass
-
-    monkeypatch.setattr(backend, "SetArmPose", DummySetArmPose)
-    monkeypatch.setattr(backend, "SetArmPosition", DummySetArmPosition)
-
+    monkeypatch.setattr(backend, "PickTarget", DummyPickTarget)
+    monkeypatch.setattr(backend, "ManipulationStatus", DummyStatus)
     node = object.__new__(backend.CompetitionManipulationBackend)
-    node.default_speed_rad_s = 0.8
-    node.pick_motion_timeout_s = 4.0
+    node.pick_target_settle_s = 0.0
+    node.pick_bridge_timeout_s = 10.0
     node.pick_motion_start_timeout_s = 2.0
-    node.pick_allow_position_fallback = True
-    node.arm_pose_client = object()
-    node.arm_position_client = object()
-    node._cancelled = lambda: False
-    node._current_pose = lambda: backend.XYZ(0.1, 0.0, 0.2)
-    node.get_logger = lambda: type(
-        "Logger", (), {"warn": lambda self, _msg: None, "error": lambda self, _msg: None}
-    )()
+    node.pick_target_pub = DummyPublisher()
+    node._current_pose = lambda: backend.XYZ(0.2, 0.0, 0.3)
+    node._wait_for_motion_then_stable = lambda *_args, **_kwargs: None
+    node._set_status = lambda *_args, **_kwargs: None
+    node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
+    node._set_suction = lambda _enabled: (_ for _ in ()).throw(AssertionError("must not suction"))
 
-    calls = []
-
-    def call_service(client, req):
-        calls.append((client, req))
-        return type("Result", (), {"success": True})()
-
-    node._call_service = call_service
-    statuses = iter(["no_motion", "reached"])
-    node._wait_pose_target_watchdog = lambda *_args, **_kwargs: next(statuses)
-
-    target = backend.XYZ(0.2, -0.1, 0.12)
-    assert node._move_pick_pose_with_fallback(
-        target, pitch_rad=0.0, yaw_rad=0.0,
-        suction_valid=True, suction_enable=True, phase="pick_descend"
-    ) is True
-
-    assert len(calls) == 2
-    assert calls[0][0] is node.arm_pose_client
-    assert calls[1][0] is node.arm_position_client
-    assert isinstance(calls[0][1], DummySetArmPose.Request)
-    assert isinstance(calls[1][1], DummySetArmPosition.Request)
-    assert calls[1][1].suction_enable is True
+    assert node._do_pick("A", 0, 1) is False

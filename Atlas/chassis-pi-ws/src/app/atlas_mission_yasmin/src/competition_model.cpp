@@ -1,16 +1,6 @@
 // Copyright 2026 yangxuan
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 #include "atlas_mission_yasmin/competition_model.hpp"
 
@@ -42,13 +32,7 @@ void CompetitionModel::reset()
   park_1_layers_.fill(0);
   park_2_layers_.fill(0);
   delivered_total_ = 0;
-
-  pickup_phase_ = PickupPhase::kPrimaryFirstHalf;
-  pickup_round_ = 1;
-  pickup_slot_ = 0;
-  retry_begin_ = 0;
-  retry_end_ = 0;
-  retry_pass_progress_ = false;
+  pickup_scheduler_.reset();
 }
 
 bool CompetitionModel::valid_cargo(const std::string & cargo)
@@ -59,22 +43,6 @@ bool CompetitionModel::valid_cargo(const std::string & cargo)
 bool CompetitionModel::valid_park(const std::string & park)
 {
   return park == "park_1" || park == "park_2";
-}
-
-std::size_t CompetitionModel::slot_for_round(const uint8_t round)
-{
-  if (round < 1 || round > 8) {
-    return kInvalidSlot;
-  }
-  return static_cast<std::size_t>((round - 1U) / 2U);
-}
-
-uint8_t CompetitionModel::round_for_slot_layer(const std::size_t slot, const uint8_t layer)
-{
-  if (slot >= kSlotCount || (layer != kHighPickupLayer && layer != kLowPickupLayer)) {
-    return 0;
-  }
-  return static_cast<uint8_t>(slot * 2U + (layer == kHighPickupLayer ? 1U : 2U));
 }
 
 bool CompetitionModel::set_sorting_rule(
@@ -90,8 +58,6 @@ bool CompetitionModel::set_sorting_rule(
     return false;
   }
 
-  // One observation establishes the rule for the entire run. Repeated identical
-  // observations are harmless, but a conflicting result must not reroute cargo.
   if (!arena_.empty()) {
     return arena_ == arena && park_1_cargo_ == park_1_cargo &&
            park_2_cargo_ == park_2_cargo;
@@ -121,63 +87,9 @@ const std::string & CompetitionModel::destination_for(const std::string & cargo)
   return kEmptyDestination;
 }
 
-bool CompetitionModel::pickup_phase_is_retry() const
-{
-  return pickup_phase_ == PickupPhase::kRetryFirstHalf ||
-         pickup_phase_ == PickupPhase::kRetrySecondHalf;
-}
-
-bool CompetitionModel::pickup_group_has_remaining(
-  const std::size_t begin, const std::size_t end) const
-{
-  if (begin >= end || end > kSlotCount) {
-    return false;
-  }
-  for (std::size_t slot = begin; slot < end; ++slot) {
-    if (pickup_layers_[slot] > 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
-std::size_t CompetitionModel::first_remaining_slot(
-  const std::size_t begin, const std::size_t end) const
-{
-  if (begin >= end || end > kSlotCount) {
-    return kInvalidSlot;
-  }
-  for (std::size_t slot = begin; slot < end; ++slot) {
-    if (pickup_layers_[slot] > 0) {
-      return slot;
-    }
-  }
-  return kInvalidSlot;
-}
-
-std::size_t CompetitionModel::next_remaining_slot(
-  const std::size_t after, const std::size_t begin, const std::size_t end) const
-{
-  if (begin >= end || end > kSlotCount) {
-    return kInvalidSlot;
-  }
-  const std::size_t start = std::max(begin, after + 1U);
-  for (std::size_t slot = start; slot < end; ++slot) {
-    if (pickup_layers_[slot] > 0) {
-      return slot;
-    }
-  }
-  return kInvalidSlot;
-}
-
 std::size_t CompetitionModel::next_pickup_slot() const
 {
-  if (pickup_phase_ == PickupPhase::kComplete || pickup_phase_ == PickupPhase::kStalled ||
-    pickup_slot_ >= kSlotCount || pickup_layers_[pickup_slot_] == 0)
-  {
-    return kInvalidSlot;
-  }
-  return pickup_slot_;
+  return pickup_scheduler_.next_slot(pickup_layers_);
 }
 
 uint8_t CompetitionModel::pickup_layer(const std::size_t slot) const
@@ -187,190 +99,37 @@ uint8_t CompetitionModel::pickup_layer(const std::size_t slot) const
 
 uint8_t CompetitionModel::pickup_round() const
 {
-  return pickup_round_;
+  return pickup_scheduler_.nominal_round(pickup_layers_);
 }
 
 bool CompetitionModel::pickup_retry_phase() const
 {
-  return pickup_phase_is_retry();
-}
-
-bool CompetitionModel::pickup_stalled() const
-{
-  return pickup_phase_ == PickupPhase::kStalled;
+  return pickup_scheduler_.retry_phase();
 }
 
 bool CompetitionModel::pickup_schedule_complete() const
 {
-  return pickup_phase_ == PickupPhase::kComplete;
+  return pickup_scheduler_.complete();
 }
 
-void CompetitionModel::begin_second_half()
+uint8_t CompetitionModel::abandoned_total() const
 {
-  pickup_phase_ = PickupPhase::kPrimarySecondHalf;
-  pickup_round_ = 5;
-  pickup_slot_ = slot_for_round(pickup_round_);
-  retry_begin_ = 0;
-  retry_end_ = 0;
-  retry_pass_progress_ = false;
-}
-
-void CompetitionModel::finish_pickup_schedule()
-{
-  pickup_phase_ = PickupPhase::kComplete;
-  pickup_round_ = 0;
-  pickup_slot_ = kInvalidSlot;
-  retry_begin_ = 0;
-  retry_end_ = 0;
-  retry_pass_progress_ = false;
-}
-
-void CompetitionModel::enter_retry_phase(
-  const std::size_t begin, const std::size_t end, const PickupPhase phase)
-{
-  retry_begin_ = begin;
-  retry_end_ = end;
-  retry_pass_progress_ = false;
-  pickup_phase_ = phase;
-  pickup_slot_ = first_remaining_slot(begin, end);
-  if (pickup_slot_ >= kSlotCount) {
-    if (phase == PickupPhase::kRetryFirstHalf) {
-      begin_second_half();
-    } else {
-      finish_pickup_schedule();
-    }
-    return;
-  }
-  pickup_round_ = round_for_slot_layer(pickup_slot_, pickup_layers_[pickup_slot_]);
-}
-
-void CompetitionModel::advance_primary_after_attempt(
-  const bool success, const uint8_t attempted_layer)
-{
-  // Odd rounds are the normal high-layer pass. Whether they succeed or fail,
-  // the following even-round stage remains on the same physical slot.
-  if ((pickup_round_ % 2U) == 1U) {
-    ++pickup_round_;
-    pickup_slot_ = slot_for_round(pickup_round_);
-    return;
-  }
-
-  // If an odd-round high pick failed, the even round retries that high layer.
-  // On success, keep the same even-round stage once more so it can transport
-  // the low layer from the same point before moving on.
-  if (success && attempted_layer == kHighPickupLayer &&
-    pickup_slot_ < kSlotCount && pickup_layers_[pickup_slot_] == kLowPickupLayer)
-  {
-    return;
-  }
-
-  // Normal even-round low attempt, or an even-round high retry that failed:
-  // advance to the next physical point. At the 1..4 / 5..8 barriers, first
-  // clear deferred failures in the current half to avoid arm/cargo collision.
-  if (pickup_round_ == 4U) {
-    if (pickup_group_has_remaining(0, 2)) {
-      enter_retry_phase(0, 2, PickupPhase::kRetryFirstHalf);
-    } else {
-      begin_second_half();
-    }
-    return;
-  }
-
-  if (pickup_round_ == 8U) {
-    if (pickup_group_has_remaining(2, 4)) {
-      enter_retry_phase(2, 4, PickupPhase::kRetrySecondHalf);
-    } else {
-      finish_pickup_schedule();
-    }
-    return;
-  }
-
-  ++pickup_round_;
-  pickup_slot_ = slot_for_round(pickup_round_);
-}
-
-void CompetitionModel::finish_retry_pass()
-{
-  if (!pickup_group_has_remaining(retry_begin_, retry_end_)) {
-    if (pickup_phase_ == PickupPhase::kRetryFirstHalf) {
-      begin_second_half();
-    } else {
-      finish_pickup_schedule();
-    }
-    return;
-  }
-
-  if (!retry_pass_progress_) {
-    // Competition fail-soft policy: a whole deferred retry pass made no progress.
-    // Do not trap AUTO forever on one bad cargo/IK target. Leave the unresolved
-    // physical layers untouched in the model, abandon this half, and continue
-    // the remaining route. This favors completing the full competition flow.
-    if (pickup_phase_ == PickupPhase::kRetryFirstHalf) {
-      begin_second_half();
-    } else {
-      finish_pickup_schedule();
-    }
-    return;
-  }
-
-  retry_pass_progress_ = false;
-  pickup_slot_ = first_remaining_slot(retry_begin_, retry_end_);
-  if (pickup_slot_ >= kSlotCount) {
-    if (pickup_phase_ == PickupPhase::kRetryFirstHalf) {
-      begin_second_half();
-    } else {
-      finish_pickup_schedule();
-    }
-    return;
-  }
-  pickup_round_ = round_for_slot_layer(pickup_slot_, pickup_layers_[pickup_slot_]);
-}
-
-void CompetitionModel::advance_retry_after_attempt(const bool success)
-{
-  if (success) {
-    retry_pass_progress_ = true;
-  }
-
-  // After a successful high-layer retry, immediately stay at this physical
-  // point and transport its newly exposed low layer before moving away.
-  if (success && pickup_slot_ < kSlotCount && pickup_layers_[pickup_slot_] > 0) {
-    pickup_round_ = round_for_slot_layer(pickup_slot_, pickup_layers_[pickup_slot_]);
-    return;
-  }
-
-  const auto next = next_remaining_slot(pickup_slot_, retry_begin_, retry_end_);
-  if (next < kSlotCount) {
-    pickup_slot_ = next;
-    pickup_round_ = round_for_slot_layer(pickup_slot_, pickup_layers_[pickup_slot_]);
-    return;
-  }
-
-  finish_retry_pass();
+  return pickup_scheduler_.abandoned_total();
 }
 
 bool CompetitionModel::record_pick_failure(const std::size_t slot)
 {
-  if (slot >= pickup_layers_.size() || slot != pickup_slot_ || pickup_layers_[slot] == 0 ||
-    pickup_phase_ == PickupPhase::kComplete || pickup_phase_ == PickupPhase::kStalled)
-  {
+  if (slot >= pickup_layers_.size() || slot != next_pickup_slot() || pickup_layers_[slot] == 0) {
     return false;
   }
-
   const auto attempted_layer = pickup_layers_[slot];
-  if (pickup_phase_is_retry()) {
-    advance_retry_after_attempt(false);
-  } else {
-    advance_primary_after_attempt(false, attempted_layer);
-  }
-  return true;
+  return pickup_scheduler_.record_attempt(false, attempted_layer, pickup_layers_);
 }
 
 bool CompetitionModel::confirm_pick(const std::size_t slot, const std::string & cargo)
 {
-  if (!held_cargo_.empty() || slot >= pickup_layers_.size() || slot != pickup_slot_ ||
-    pickup_layers_[slot] == 0 || destination_for(cargo).empty() ||
-    pickup_phase_ == PickupPhase::kComplete || pickup_phase_ == PickupPhase::kStalled)
+  if (!held_cargo_.empty() || slot >= pickup_layers_.size() || slot != next_pickup_slot() ||
+    pickup_layers_[slot] == 0 || destination_for(cargo).empty())
   {
     return false;
   }
@@ -378,11 +137,10 @@ bool CompetitionModel::confirm_pick(const std::size_t slot, const std::string & 
   const auto attempted_layer = pickup_layers_[slot];
   --pickup_layers_[slot];
   held_cargo_ = cargo;
-
-  if (pickup_phase_is_retry()) {
-    advance_retry_after_attempt(true);
-  } else {
-    advance_primary_after_attempt(true, attempted_layer);
+  if (!pickup_scheduler_.record_attempt(true, attempted_layer, pickup_layers_)) {
+    ++pickup_layers_[slot];
+    held_cargo_.clear();
+    return false;
   }
   return true;
 }
@@ -419,8 +177,7 @@ bool CompetitionModel::can_place(const std::string & park, const std::string & c
 bool CompetitionModel::confirm_place(
   const std::string & park, const std::size_t slot, const std::string & cargo)
 {
-  if (!can_place(park, cargo) || slot >= kSlotCount || delivered_total_ >= kCargoTotal)
-  {
+  if (!can_place(park, cargo) || slot >= kSlotCount || delivered_total_ >= kCargoTotal) {
     return false;
   }
   auto & layers = park == "park_1" ? park_1_layers_ : park_2_layers_;
@@ -440,7 +197,7 @@ uint8_t CompetitionModel::delivered_total() const
 
 bool CompetitionModel::done() const
 {
-  return delivered_total_ >= kCargoTotal && pickup_phase_ == PickupPhase::kComplete;
+  return delivered_total_ >= kCargoTotal && pickup_scheduler_.complete();
 }
 
 }  // namespace atlas_mission_yasmin

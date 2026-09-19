@@ -149,9 +149,8 @@ competition:
             configured: true
 
   arm_motion:
-    pick_orientation:
-      pitch_rad: 0.0
-      yaw_rad: 0.0
+    # 抓取接触位的高度与姿态不在这里二次定义。比赛 PICK 仅发布 slot+layer，
+    # 直接复用 handeye_bridge/bridge_node.yaml 中 screw_pick 已实机验证参数。
     fixed_poses:
       zero:
         configured: true
@@ -381,90 +380,58 @@ competition:
             x_m: -0.067
             y_m: 0.43
             first_layer_z_m: -0.003
+
       B:
         pickup:
           observations:
           - configured: true
-            joints_rad:
-            - 2.991263
-            - 3.121651
-            - 5.198661
-            - 2.692136
-            - 3.219826
+            joints_rad: [2.991263, 3.121651, 5.198661, 2.692136, 3.219826]
             x_m: 0.26
             y_m: 0.038
             z_m: 0.212
             pitch_rad: 0.063371776
             yaw_rad: 0.072033193
             speed_rad_s: 0.5
-            layer_z_m:
-            - 0.02
-            - 0.062
+            layer_z_m: [0.02, 0.062]
             camera_to_plane1_distance_m: 0.192
             camera_to_plane2_distance_m: 0.15
           - configured: true
-            joints_rad:
-            - 3.406972
-            - 3.046486
-            - 5.14037
-            - 2.784175
-            - 3.250506
+            joints_rad: [3.406972, 3.046486, 5.14037, 2.784175, 3.250506]
             x_m: 0.242
             y_m: -0.067
             z_m: 0.239
             pitch_rad: 0.022060066
             yaw_rad: -0.374204339
             speed_rad_s: 0.5
-            layer_z_m:
-            - 0.028
-            - 0.068
+            layer_z_m: [0.028, 0.068]
             camera_to_plane1_distance_m: 0.211
             camera_to_plane2_distance_m: 0.171
           - configured: true
-            joints_rad:
-            - 3.360952
-            - 3.8687
-            - 4.061981
-            - 2.978991
-            - 3.250506
+            joints_rad: [3.360952, 3.8687, 4.061981, 2.978991, 3.250506]
             x_m: 0.405
             y_m: -0.092
             z_m: 0.239
             pitch_rad: -0.038961355
             yaw_rad: -0.328300703
             speed_rad_s: 0.5
-            layer_z_m:
-            - 0.015
-            - 0.061
+            layer_z_m: [0.015, 0.061]
             camera_to_plane1_distance_m: 0.224
             camera_to_plane2_distance_m: 0.178
           - configured: true
-            joints_rad:
-            - 2.991263
-            - 3.992952
-            - 4.074253
-            - 2.830195
-            - 3.250506
+            joints_rad: [2.991263, 3.992952, 4.074253, 2.830195, 3.250506]
             x_m: 0.432
             y_m: 0.064
             z_m: 0.193
             pitch_rad: -0.051116441
             yaw_rad: 0.041377665
             speed_rad_s: 0.5
-            layer_z_m:
-            - 0.022
-            - 0.074
+            layer_z_m: [0.022, 0.074]
             camera_to_plane1_distance_m: 0.171
             camera_to_plane2_distance_m: 0.119
         park_1:
           prepare:
             configured: true
-            joints_rad:
-            - 1.356039
-            - 3.40237
-            - 4.482292
-            - 3.072564
-            - 3.247438
+            joints_rad: [1.356039, 3.40237, 4.482292, 3.072564, 3.247438]
             x_m: -0.068
             y_m: 0.317
             z_m: 0.293
@@ -472,31 +439,14 @@ competition:
             yaw_rad: 1.679823581
             speed_rad_s: 0.5
           placement_points:
-          - configured: true
-            x_m: -0.072
-            y_m: 0.29
-            first_layer_z_m: 0.01
-          - configured: true
-            x_m: -0.075
-            y_m: 0.286
-            first_layer_z_m: 0.052
-          - configured: true
-            x_m: -0.069
-            y_m: 0.287
-            first_layer_z_m: 0.104
-          - configured: true
-            x_m: 0.072
-            y_m: 0.323
-            first_layer_z_m: 0.011
+          - {configured: true, x_m: -0.072, y_m: 0.29, first_layer_z_m: 0.01}
+          - {configured: true, x_m: -0.075, y_m: 0.286, first_layer_z_m: 0.052}
+          - {configured: true, x_m: -0.069, y_m: 0.287, first_layer_z_m: 0.104}
+          - {configured: true, x_m: 0.072, y_m: 0.323, first_layer_z_m: 0.011}
         park_2:
           prepare:
             configured: true
-            joints_rad:
-            - 4.735399
-            - 3.592583
-            - 4.316623
-            - 3.08637
-            - 3.248972
+            joints_rad: [4.735399, 3.592583, 4.316623, 3.08637, 3.248972]
             x_m: -0.01
             y_m: -0.363
             z_m: 0.273
@@ -504,22 +454,10 @@ competition:
             yaw_rad: -1.701246438
             speed_rad_s: 0.5
           placement_points:
-          - configured: true
-            x_m: 0.091
-            y_m: -0.344
-            first_layer_z_m: 0.012
-          - configured: true
-            x_m: 0.084
-            y_m: -0.347
-            first_layer_z_m: 0.061
-          - configured: true
-            x_m: 0.074
-            y_m: -0.348
-            first_layer_z_m: 0.102
-          - configured: true
-            x_m: -0.038
-            y_m: -0.336
-            first_layer_z_m: 0.015
+          - {configured: true, x_m: 0.091, y_m: -0.344, first_layer_z_m: 0.012}
+          - {configured: true, x_m: 0.084, y_m: -0.347, first_layer_z_m: 0.061}
+          - {configured: true, x_m: 0.074, y_m: -0.348, first_layer_z_m: 0.102}
+          - {configured: true, x_m: -0.038, y_m: -0.336, first_layer_z_m: 0.015}
 
   manipulation:
     placement:

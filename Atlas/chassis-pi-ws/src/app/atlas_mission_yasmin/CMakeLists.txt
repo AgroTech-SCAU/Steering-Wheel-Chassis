@@ -20,6 +20,7 @@ find_package(yasmin_ros REQUIRED)
 find_package(yasmin_viewer REQUIRED)
 
 add_library(atlas_mission_yasmin_runtime
+  src/pickup_scheduler.cpp
   src/competition_model.cpp
   src/machine.cpp
   src/runtime.cpp

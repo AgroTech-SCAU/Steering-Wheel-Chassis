@@ -304,13 +304,6 @@ std::string NavPickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
       "pickup schedule complete; unresolved cargo, if any, has been abandoned after retries");
     return outcomes::kRouteDone;
   }
-  if (runtime_->model().pickup_stalled()) {
-    runtime_->set_state(
-      MissionStatus::STATE_RUNNING, "NAV_PICKUP",
-      "deferred pickup retry pass made no progress");
-    return outcomes::kRecovery;
-  }
-
   const auto slot = runtime_->model().next_pickup_slot();
   if (slot >= CompetitionModel::kSlotCount) {
     return outcomes::kFailed;
@@ -325,8 +318,6 @@ std::string NavPickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
     " layer=" + layer_name + " phase=" + phase_name);
 
   blackboard->set<std::size_t>("pickup_slot", slot);
-  blackboard->set<std::size_t>("pickup_round", round);
-  blackboard->set<std::size_t>("pickup_layer", layer);
   return action_outcome(runtime_->navigate("pickup"));
 }
 
@@ -344,12 +335,8 @@ std::string ObservePickupState::execute(yasmin::Blackboard::SharedPtr blackboard
   if (slot >= CompetitionModel::kSlotCount) {
     return outcomes::kFailed;
   }
-  const auto layer = blackboard->contains("pickup_layer") ?
-    static_cast<uint8_t>(blackboard->get<std::size_t>("pickup_layer")) :
-    runtime_->model().pickup_layer(slot);
-  const auto round = blackboard->contains("pickup_round") ?
-    blackboard->get<std::size_t>("pickup_round") :
-    static_cast<std::size_t>(runtime_->model().pickup_round());
+  const auto layer = runtime_->model().pickup_layer(slot);
+  const auto round = static_cast<std::size_t>(runtime_->model().pickup_round());
   const auto layer_name = layer == CompetitionModel::kHighPickupLayer ? "high" : "low";
   runtime_->set_state(
     MissionStatus::STATE_RUNNING, "OBSERVE_PICKUP",
@@ -395,9 +382,7 @@ std::string PickState::execute(yasmin::Blackboard::SharedPtr blackboard)
     return outcomes::kFailed;
   }
   const auto cargo = blackboard->get<std::string>("cargo");
-  const auto layer = blackboard->contains("pickup_layer") ?
-    static_cast<uint8_t>(blackboard->get<std::size_t>("pickup_layer")) :
-    runtime_->model().pickup_layer(slot);
+  const auto layer = runtime_->model().pickup_layer(slot);
   const auto result = runtime_->manipulate("pickup", "pick", slot, layer, cargo);
   if (result != ActionResult::kSucceeded) {
     // Reset/recovery/shutdown are system-level events and must still propagate.
@@ -436,30 +421,6 @@ std::string NavParkState::execute(yasmin::Blackboard::SharedPtr blackboard)
     return outcomes::kRecovery;
   }
   return action_outcome(runtime_->navigate(park));
-}
-
-ObserveParkState::ObserveParkState(Runtime::SharedPtr runtime)
-: RuntimeState(
-    std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
-      outcomes::kShutdown})
-{
-}
-
-std::string ObserveParkState::execute(yasmin::Blackboard::SharedPtr blackboard)
-{
-  runtime_->set_state(MissionStatus::STATE_RUNNING, "OBSERVE_PARK", "");
-  if (!blackboard->contains("destination")) {
-    return outcomes::kFailed;
-  }
-  const auto park = blackboard->get<std::string>("destination");
-  const auto slot = get_slot(blackboard, "park_slot");
-  if (slot >= CompetitionModel::kSlotCount) {
-    return outcomes::kFailed;
-  }
-  const auto layer = runtime_->model().park_layer(park, slot);
-  const auto observation = runtime_->observe_with_recovery(park, slot, layer);
-  return action_outcome(observation.result);
 }
 
 PlaceState::PlaceState(Runtime::SharedPtr runtime)

@@ -73,9 +73,10 @@ ros2 launch handeye_bridge screw_pick.launch.py
 
 ## 5. 配置顺序
 
-桥节点本地参数（标定文件路径、初始位、工作空间和默认平面）在
-`handeye_bridge/config/bridge_node.yaml`。比赛抓取参数在顶层
-`atlas_competition_bringup/config/competition.yaml` 的 `competition.handeye_bridge`。
+桥节点本地参数（标定文件路径、初始位、工作空间和已实机验证的默认平面/抓取姿态）在
+`handeye_bridge/config/bridge_node.yaml`。顶层 `competition.handeye_bridge` 只覆盖比赛通用参数（如
+`target_z_offset_m`、同步门限与手动 XY 偏置）。正式比赛的 `PickTarget` 只选择 corner+layer，
+不再覆盖 plane Z、pitch/yaw 或 approach，因此与 `screw_pick.launch.py` 使用同一抓取 primitive。
 新设备或重新标定后，推荐按以下顺序配置。
 
 ### 5.1 标定文件
@@ -171,8 +172,9 @@ plane_heights_configured: true
 
 #### camera_to_plane 参数
 
-货物区每个 `competition.arm_motion.arenas.*.pickup.observations` 分别保存
-`camera_to_plane1_distance_m` 和 `camera_to_plane2_distance_m`。机械臂标定导出时计算：
+货物区每个 `competition.arm_motion.arenas.*.pickup.observations` 仍保存 slot-specific
+`layer_z_m`、`camera_to_plane1_distance_m` 和 `camera_to_plane2_distance_m` 作为标定记录与复核数据。
+正式抓取当前以 `bridge_node.yaml` 中已经实机验证的 plane1/plane2 为执行真值。机械臂标定导出时距离记录计算：
 
 ```text
 第 n 层距离 = 观察位 TCP 的 z_m - 第 n 层吸取接触高度 layer_z_m[n-1]

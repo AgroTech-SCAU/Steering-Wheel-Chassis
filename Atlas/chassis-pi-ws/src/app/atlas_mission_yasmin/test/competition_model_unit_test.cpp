@@ -159,12 +159,12 @@ TEST(CompetitionModelTest, RetryPassWithNoProgressAbandonsHalfAndContinuesRoute)
 
   // Full-flow priority: first-half retry made no progress, but AUTO enters
   // rounds 5..8 instead of stalling the entire mission.
-  EXPECT_FALSE(model.pickup_stalled());
   EXPECT_FALSE(model.pickup_retry_phase());
   EXPECT_EQ(model.pickup_round(), 5U);
   EXPECT_EQ(model.next_pickup_slot(), 2U);
   EXPECT_FALSE(model.done());
   EXPECT_FALSE(model.pickup_schedule_complete());
+  EXPECT_EQ(model.abandoned_total(), 4U);
 }
 
 TEST(CompetitionModelTest, FinalRetryNoProgressStillCompletesPickupSchedule)
@@ -188,8 +188,8 @@ TEST(CompetitionModelTest, FinalRetryNoProgressStillCompletesPickupSchedule)
   }
 
   EXPECT_TRUE(model.pickup_schedule_complete());
-  EXPECT_FALSE(model.pickup_stalled());
   EXPECT_GE(model.next_pickup_slot(), CompetitionModel::kSlotCount);
+  EXPECT_EQ(model.abandoned_total(), CompetitionModel::kCargoTotal);
   EXPECT_FALSE(model.done());  // no cargo delivered; schedule completion != perfect score
 }
 
