@@ -12,7 +12,7 @@ atlas_nav_direct_backend:
     odom_frame: odom
     base_frame: base_link
     control_rate_hz: 50.0
-    odom_timeout_s: 0.30
+    odom_timeout_s: 0.80
     default_waypoint_timeout_s: 30.0
 
     startup_localization:
