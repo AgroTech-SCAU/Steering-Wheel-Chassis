@@ -106,8 +106,8 @@ competition:
 
     arenas:
       A:
-        map: maps/test/ruikang.yaml
-        pbstream: maps/test/ruikang.pbstream
+        map: maps/ruikang_a_map/ruikang.yaml
+        pbstream: maps/ruikang_a_map/ruikang.pbstream
         waypoints:
           pickup:
             x: 1.289458
@@ -130,12 +130,12 @@ competition:
 
       B:
         # 临时复用 A 半场 正式比赛前必须替换
-        map: "maps/test/ruikang.yaml"
-        pbstream: "maps/test/ruikang.pbstream"
+        map: "maps/ruikang_b_map/ruikang_b.yaml"
+        pbstream: "maps/ruikang_b_map/ruikang_b.pbstream"
         waypoints:
-          pickup: {x: 1.19, y: 0.14, yaw: 0.0, configured: true}
-          park_1: {x: 0.70, y: -0.38, yaw: -2.133260731, configured: true}
-          park_2: {x: 0.53, y: 0.48, yaw: 0.998693443, configured: true}
+          pickup: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_1: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
+          park_2: {x: 0.0, y: 0.0, yaw: 0.0, configured: false}
 
   arm_motion:
     # 抓取时吸盘姿态：沿基座 -Z 轴垂直向下，与观察位 pitch/yaw 解耦。
