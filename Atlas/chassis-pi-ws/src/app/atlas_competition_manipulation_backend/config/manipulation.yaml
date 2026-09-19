@@ -26,10 +26,18 @@ atlas_competition_manipulation_backend:
     stable_samples: 5
 
     # /pick_target 使用标定层高计算 XY 并先到达吸取点上方
-    # 随后下降到标定层高吸取并原路抬回接近位；三段均保持同一 pitch/yaw 约束
+    # approach 优先 5D；下降/抬升先 5D，若姿态 IK 卡住则 Pi 端自动退化到 3D XYZ
     min_pick_target_motion_m: 0.005
     pick_target_settle_s: 0.25
     pick_approach_m: 0.050
+    # 抓取容错只发生在 Pi，不改 MCU。
+    # 2s 内完全不动就快速判定，避免继续等 30s；下降/抬升最多各尝试 4s。
+    pick_recovery:
+      motion_start_timeout_s: 2.0
+      approach_timeout_s: 7.0
+      motion_timeout_s: 4.0
+      motion_start_delta_m: 0.003
+      allow_position_fallback: true
     # 吸盘到达接触高度后保持开启的时间；避免真空尚未建立就立即抬升
     pick_suction_hold_s: 1.50
     # 放置释放后的静置时间，和抓取保持时间分开配置

@@ -278,20 +278,24 @@ def test_pick_descend_and_lift_keep_same_pose_constraint(monkeypatch):
     node.pick_target_settle_s = 0.0
     node.pick_approach_m = 0.05
     node.pick_suction_hold_s = 0.0
+    node.pick_approach_timeout_s = 7.0
+    node.pick_motion_start_timeout_s = 2.0
     node.pick_target_pub = DummyPublisher()
     node._current_pose = lambda: backend.XYZ(0.10, 0.00, 0.30)
-    node._wait_for_motion_then_stable = lambda _start, _timeout: backend.XYZ(
+    node._wait_for_motion_then_stable = lambda _start, _timeout, _start_timeout=None: backend.XYZ(
         0.20, -0.10, 0.17
     )
     node._set_status = lambda *_args, **_kwargs: None
-    node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
+    node.get_logger = lambda: type(
+        "Logger", (), {"error": lambda self, _msg: None, "warn": lambda self, _msg: None}
+    )()
     moves = []
 
     def move_pose(target, **kwargs):
         moves.append((target, kwargs))
         return True
 
-    node._move_pose = move_pose
+    node._move_pick_pose_with_fallback = move_pose
 
     assert node._do_pick("A", 2, 1) is True
     assert len(moves) == 2
@@ -305,8 +309,61 @@ def test_pick_descend_and_lift_keep_same_pose_constraint(monkeypatch):
         assert params["yaw_rad"] == pytest.approx(0.20)
         assert params["suction_valid"] is True
         assert params["suction_enable"] is True
+    assert descend["phase"] == "pick_descend"
+    assert lift["phase"] == "pick_lift"
 
     published = node.pick_target_pub.messages[0]
     assert published.use_orientation is True
     assert published.pitch_rad == pytest.approx(-0.10)
     assert published.yaw_rad == pytest.approx(0.20)
+
+
+def test_pick_pose_falls_back_to_position_when_5d_does_not_move(monkeypatch):
+    import atlas_competition_manipulation_backend.backend as backend
+
+    class DummySetArmPose:
+        class Request:
+            pass
+
+    class DummySetArmPosition:
+        class Request:
+            pass
+
+    monkeypatch.setattr(backend, "SetArmPose", DummySetArmPose)
+    monkeypatch.setattr(backend, "SetArmPosition", DummySetArmPosition)
+
+    node = object.__new__(backend.CompetitionManipulationBackend)
+    node.default_speed_rad_s = 0.8
+    node.pick_motion_timeout_s = 4.0
+    node.pick_motion_start_timeout_s = 2.0
+    node.pick_allow_position_fallback = True
+    node.arm_pose_client = object()
+    node.arm_position_client = object()
+    node._cancelled = lambda: False
+    node._current_pose = lambda: backend.XYZ(0.1, 0.0, 0.2)
+    node.get_logger = lambda: type(
+        "Logger", (), {"warn": lambda self, _msg: None, "error": lambda self, _msg: None}
+    )()
+
+    calls = []
+
+    def call_service(client, req):
+        calls.append((client, req))
+        return type("Result", (), {"success": True})()
+
+    node._call_service = call_service
+    statuses = iter(["no_motion", "reached"])
+    node._wait_pose_target_watchdog = lambda *_args, **_kwargs: next(statuses)
+
+    target = backend.XYZ(0.2, -0.1, 0.12)
+    assert node._move_pick_pose_with_fallback(
+        target, pitch_rad=0.0, yaw_rad=0.0,
+        suction_valid=True, suction_enable=True, phase="pick_descend"
+    ) is True
+
+    assert len(calls) == 2
+    assert calls[0][0] is node.arm_pose_client
+    assert calls[1][0] is node.arm_position_client
+    assert isinstance(calls[0][1], DummySetArmPose.Request)
+    assert isinstance(calls[1][1], DummySetArmPosition.Request)
+    assert calls[1][1].suction_enable is True

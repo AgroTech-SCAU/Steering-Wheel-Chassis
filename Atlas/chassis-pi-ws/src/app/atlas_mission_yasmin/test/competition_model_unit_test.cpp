@@ -141,7 +141,7 @@ TEST(CompetitionModelTest, LowLayerMissIsDeferredUntilRoundsOneToFourFinish)
   EXPECT_EQ(model.next_pickup_slot(), 2U);
 }
 
-TEST(CompetitionModelTest, RetryPassWithNoProgressStallsBeforeCollisionSensitiveSecondHalf)
+TEST(CompetitionModelTest, RetryPassWithNoProgressAbandonsHalfAndContinuesRoute)
 {
   CompetitionModel model;
   ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
@@ -157,9 +157,40 @@ TEST(CompetitionModelTest, RetryPassWithNoProgressStallsBeforeCollisionSensitive
   ASSERT_EQ(model.next_pickup_slot(), 1U);
   ASSERT_TRUE(model.record_pick_failure(1));
 
-  EXPECT_TRUE(model.pickup_stalled());
-  EXPECT_GE(model.next_pickup_slot(), CompetitionModel::kSlotCount);
+  // Full-flow priority: first-half retry made no progress, but AUTO enters
+  // rounds 5..8 instead of stalling the entire mission.
+  EXPECT_FALSE(model.pickup_stalled());
+  EXPECT_FALSE(model.pickup_retry_phase());
+  EXPECT_EQ(model.pickup_round(), 5U);
+  EXPECT_EQ(model.next_pickup_slot(), 2U);
   EXPECT_FALSE(model.done());
+  EXPECT_FALSE(model.pickup_schedule_complete());
+}
+
+TEST(CompetitionModelTest, FinalRetryNoProgressStillCompletesPickupSchedule)
+{
+  CompetitionModel model;
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+
+  // Abandon unresolved first half after its retry pass.
+  for (std::size_t i = 0; i < 6; ++i) {
+    const auto slot = model.next_pickup_slot();
+    ASSERT_LT(slot, CompetitionModel::kSlotCount);
+    ASSERT_TRUE(model.record_pick_failure(slot));
+  }
+  ASSERT_EQ(model.pickup_round(), 5U);
+
+  // Fail rounds 5..8 and then the deferred retry of slots 2..3.
+  for (std::size_t i = 0; i < 6; ++i) {
+    const auto slot = model.next_pickup_slot();
+    ASSERT_LT(slot, CompetitionModel::kSlotCount);
+    ASSERT_TRUE(model.record_pick_failure(slot));
+  }
+
+  EXPECT_TRUE(model.pickup_schedule_complete());
+  EXPECT_FALSE(model.pickup_stalled());
+  EXPECT_GE(model.next_pickup_slot(), CompetitionModel::kSlotCount);
+  EXPECT_FALSE(model.done());  // no cargo delivered; schedule completion != perfect score
 }
 
 TEST(CompetitionModelTest, RejectsInvalidSortingRule)

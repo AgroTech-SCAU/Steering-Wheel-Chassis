@@ -298,8 +298,10 @@ NavPickupState::NavPickupState(Runtime::SharedPtr runtime)
 
 std::string NavPickupState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
-  if (runtime_->model().done()) {
-    runtime_->set_state(MissionStatus::STATE_RUNNING, "NAV_PICKUP", "pickup schedule complete");
+  if (runtime_->model().pickup_schedule_complete()) {
+    runtime_->set_state(
+      MissionStatus::STATE_RUNNING, "NAV_PICKUP",
+      "pickup schedule complete; unresolved cargo, if any, has been abandoned after retries");
     return outcomes::kRouteDone;
   }
   if (runtime_->model().pickup_stalled()) {
@@ -380,7 +382,7 @@ std::string ObservePickupState::execute(yasmin::Blackboard::SharedPtr blackboard
 PickState::PickState(Runtime::SharedPtr runtime)
 : RuntimeState(
     std::move(runtime),
-    {outcomes::kOk, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
+    {outcomes::kOk, outcomes::kNext, outcomes::kFailed, outcomes::kReset, outcomes::kRecovery,
       outcomes::kShutdown})
 {
 }
@@ -398,7 +400,19 @@ std::string PickState::execute(yasmin::Blackboard::SharedPtr blackboard)
     runtime_->model().pickup_layer(slot);
   const auto result = runtime_->manipulate("pickup", "pick", slot, layer, cargo);
   if (result != ActionResult::kSucceeded) {
-    return action_outcome(result);
+    // Reset/recovery/shutdown are system-level events and must still propagate.
+    if (result == ActionResult::kReset || result == ActionResult::kRecovery ||
+      result == ActionResult::kShutdown)
+    {
+      return action_outcome(result);
+    }
+
+    // Pick-level failure/reject/timeout is cargo-local. Defer this physical layer
+    // without decrementing pickup_layers_ and continue the competition route.
+    runtime_->set_state(
+      MissionStatus::STATE_RUNNING, "PICK",
+      "pick failed/timeout; cargo deferred so AUTO can continue");
+    return runtime_->model().record_pick_failure(slot) ? outcomes::kNext : outcomes::kRecovery;
   }
   return runtime_->model().confirm_pick(slot, cargo) ? outcomes::kOk : outcomes::kFailed;
 }
@@ -488,7 +502,8 @@ std::string CheckDoneState::execute(yasmin::Blackboard::SharedPtr blackboard)
 {
   (void)blackboard;
   runtime_->set_state(MissionStatus::STATE_RUNNING, "CHECK_DONE", "");
-  return runtime_->model().done() ? outcomes::kRouteDone : outcomes::kNext;
+  return runtime_->model().pickup_schedule_complete() ?
+         outcomes::kRouteDone : outcomes::kNext;
 }
 
 ReportDoneState::ReportDoneState(Runtime::SharedPtr runtime)

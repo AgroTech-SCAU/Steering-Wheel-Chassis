@@ -57,6 +57,7 @@ public:
   uint8_t pickup_round() const;
   bool pickup_retry_phase() const;
   bool pickup_stalled() const;
+  bool pickup_schedule_complete() const;
   bool record_pick_failure(std::size_t slot);
   bool confirm_pick(std::size_t slot, const std::string & cargo);
 

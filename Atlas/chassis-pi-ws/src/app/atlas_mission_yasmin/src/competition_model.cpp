@@ -200,6 +200,11 @@ bool CompetitionModel::pickup_stalled() const
   return pickup_phase_ == PickupPhase::kStalled;
 }
 
+bool CompetitionModel::pickup_schedule_complete() const
+{
+  return pickup_phase_ == PickupPhase::kComplete;
+}
+
 void CompetitionModel::begin_second_half()
 {
   pickup_phase_ = PickupPhase::kPrimarySecondHalf;
@@ -296,11 +301,15 @@ void CompetitionModel::finish_retry_pass()
   }
 
   if (!retry_pass_progress_) {
-    // A complete deferred-retry pass made zero progress. Do not continue into
-    // the next half with cargo still standing in a collision-sensitive area.
-    pickup_phase_ = PickupPhase::kStalled;
-    pickup_round_ = 0;
-    pickup_slot_ = kInvalidSlot;
+    // Competition fail-soft policy: a whole deferred retry pass made no progress.
+    // Do not trap AUTO forever on one bad cargo/IK target. Leave the unresolved
+    // physical layers untouched in the model, abandon this half, and continue
+    // the remaining route. This favors completing the full competition flow.
+    if (pickup_phase_ == PickupPhase::kRetryFirstHalf) {
+      begin_second_half();
+    } else {
+      finish_pickup_schedule();
+    }
     return;
   }
 
