@@ -19,6 +19,7 @@ constexpr uint8_t MSG_MCU_FAULT_EVENT = 0x24u;
 constexpr uint8_t MSG_MCU_IMU = 0x25u;
 constexpr uint8_t MSG_MCU_ODOM = 0x26u;
 constexpr uint8_t MSG_MCU_ARM_STATE = 0x27u;
+constexpr uint8_t MSG_MCU_ARM_COMMAND_RESULT = 0x28u;
 
 constexpr uint8_t MSG_PI_HEARTBEAT = 0x30u;
 constexpr uint8_t MSG_PI_CONTROL = 0x31u;
@@ -37,6 +38,7 @@ constexpr uint16_t PAYLOAD_MCU_FAULT_EVENT_LEN = 8u;
 constexpr uint16_t PAYLOAD_MCU_IMU_LEN = 48u;
 constexpr uint16_t PAYLOAD_MCU_ODOM_LEN = 32u;
 constexpr uint16_t PAYLOAD_MCU_ARM_STATE_LEN = 48u;
+constexpr uint16_t PAYLOAD_MCU_ARM_COMMAND_RESULT_LEN = 7u;
 constexpr uint16_t PAYLOAD_PI_CONTROL_LEN = 38u;
 
 constexpr uint16_t PAYLOAD_PI_YAW_ACTION_LEN = 12u;

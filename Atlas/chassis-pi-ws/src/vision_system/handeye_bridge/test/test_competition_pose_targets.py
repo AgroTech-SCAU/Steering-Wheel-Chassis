@@ -71,3 +71,17 @@ def test_park_vision_pose_targets_include_only_configured_prepare_poses():
         ("park_1_prepare_a", (0.2, 0.1, 0.3)),
         ("park_2_prepare_a", (0.3, 0.1, 0.3)),
     ]
+
+
+def test_observation_axis_comes_from_calibrated_joints_not_legacy_rpy():
+    import numpy as np
+    from handeye_bridge.competition_pose_targets import calibrated_tool_axis
+    pose = _pose(.2)
+    arm_motion = {'arenas': {'A': {'pickup': {'observe': pose}}}}
+    targets = pickup_vision_pose_targets(arm_motion, include_axis=True)
+    np.testing.assert_allclose(targets[0][2], calibrated_tool_axis(pose))
+    pose['pitch_rad'] = 2.5
+    pose['yaw_rad'] = -2.3
+    np.testing.assert_allclose(pickup_vision_pose_targets(arm_motion, include_axis=True)[0][2], targets[0][2])
+    pose['joints_rad'][2] = .5
+    assert not np.allclose(pickup_vision_pose_targets(arm_motion, include_axis=True)[0][2], targets[0][2])

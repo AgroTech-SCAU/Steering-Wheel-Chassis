@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'calib'), ['../calib/fk_utils.py', '../calib/robot_params.yaml']),
     ],
     install_requires=['setuptools', 'PyYAML', 'numpy', 'opencv-python'],
     zip_safe=True,

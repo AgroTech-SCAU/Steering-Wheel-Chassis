@@ -9,6 +9,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectionCenter.msg"
   "msg/DetectionCenterArray.msg"
   "msg/PickTarget.msg"
+  "msg/PickResult.msg"
   DEPENDENCIES std_msgs
 )
 

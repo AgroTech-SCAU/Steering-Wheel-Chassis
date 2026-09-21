@@ -37,12 +37,18 @@ handeye_bridge:
     initial_x_m: 0.2820          # 已实测: ros2 topic echo /arm/pose 读取FK位置
     initial_y_m: -0.0110           # 已实测
     initial_z_m: 0.3570           # 已实测
-    initial_pitch_rad: -3.063   # FK四元数反算: R=Rz(yaw)*Ry(pitch)
-    initial_yaw_rad: -3.112     # FK四元数反算
+    initial_pitch_rad: -1.5707963267948966  # base-frame tool z points down
+    initial_yaw_rad: 0.0  # azimuth is free for a vertical tool axis
     initial_speed_rad_s: 1.0
     # MCU接受命令后，/arm/pose连续满足这些条件才发布ready=true
     initial_position_tolerance_m: 0.020
     initial_stable_samples: 5
+    vision_axis_tolerance_deg: 5.0
+    vision_stable_window_s: 0.2
+    vision_stable_displacement_m: 0.001
+    vision_pose_max_age_s: 0.3
+    arm_result_timeout_s: 2.0
+    pick_approach_timeout_s: 15.0
     initial_move_timeout_s: 15.0
 
     # ── Workspace 安全校验 ──

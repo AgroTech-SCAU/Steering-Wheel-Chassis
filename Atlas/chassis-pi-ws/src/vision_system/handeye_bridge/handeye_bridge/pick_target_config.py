@@ -26,3 +26,13 @@ def pick_command_z(msg, plane_z: float, default_offset_m: float) -> float:
     if offset < 0.0:
         raise ValueError("approach_m must be >= 0")
     return float(plane_z) + offset
+
+
+def tool_axis_angles(transform):
+    """Encode detection-synchronized tool z in base coordinates"""
+    import math
+    x, y, z = (float(v) for v in transform[:3, 2])
+    if not all(math.isfinite(v) for v in (x, y, z)) or math.hypot(x, y, z) < 1e-10:
+        raise ValueError("invalid tool axis")
+    horizontal = math.hypot(x, y)
+    return math.atan2(z, horizontal), (math.atan2(y, x) if horizontal > 1e-10 else 0.0)

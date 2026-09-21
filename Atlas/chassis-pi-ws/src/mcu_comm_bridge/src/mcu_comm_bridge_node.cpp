@@ -38,6 +38,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 
 #include "mcu_comm_bridge/msg/auto_task_event.hpp"
+#include "mcu_comm_bridge/msg/arm_command_result.hpp"
 #include "mcu_comm_bridge/msg/mcu_status.hpp"
 #include "mcu_comm_bridge/srv/estop.hpp"
 #include "mcu_comm_bridge/srv/report_mission_result.hpp"
@@ -549,6 +550,8 @@ private:
         arm_joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>(arm_joint_state_topic_, rclcpp::QoS(20));
         arm_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(arm_pose_topic_, rclcpp::QoS(20));
         arm_pose_position_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(arm_pose_position_topic_, rclcpp::QoS(20));
+        arm_command_result_pub_ = create_publisher<::mcu_comm_bridge::msg::ArmCommandResult>(
+            "/mcu/arm_command_result", rclcpp::QoS(20).reliable());
         mcu_status_pub_ = create_publisher<::mcu_comm_bridge::msg::McuStatus>(
             mcu_status_topic_,
             rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
@@ -770,6 +773,9 @@ private:
                 case MSG_MCU_ARM_STATE:
                     handle_arm_state(frame);
                     break;
+                case MSG_MCU_ARM_COMMAND_RESULT:
+                    handle_arm_command_result(frame);
+                    break;
                 case MSG_MCU_STATUS:
                     handle_status(frame);
                     break;
@@ -790,6 +796,17 @@ private:
         catch(const std::exception& e) {
             RCLCPP_WARN(get_logger(), "failed to handle msg_id=0x%02X: %s", frame.msg_id, e.what());
         }
+    }
+
+    void handle_arm_command_result(const Frame& frame) {
+        if(frame.payload.size() != PAYLOAD_MCU_ARM_COMMAND_RESULT_LEN) {
+            return;
+        }
+        ::mcu_comm_bridge::msg::ArmCommandResult message;
+        message.command_seq = read_u16_le(frame.payload, 0);
+        message.result = frame.payload[2] <= message.UNKNOWN ? frame.payload[2] : message.UNKNOWN;
+        message.arm_status = read_i32_le(frame.payload, 3);
+        arm_command_result_pub_->publish(message);
     }
 
     void handle_imu(const Frame& frame) {
@@ -2099,6 +2116,7 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr arm_pose_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr arm_pose_position_pub_;
     rclcpp::Publisher<::mcu_comm_bridge::msg::McuStatus>::SharedPtr mcu_status_pub_;
+    rclcpp::Publisher<::mcu_comm_bridge::msg::ArmCommandResult>::SharedPtr arm_command_result_pub_;
     rclcpp::Publisher<::mcu_comm_bridge::msg::AutoTaskEvent>::SharedPtr auto_task_event_pub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr brake_srv_;

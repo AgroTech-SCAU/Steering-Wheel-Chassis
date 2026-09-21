@@ -1,0 +1,30 @@
+...........................................................              [100%]
+59 passed in 0.68s
+PICK A0     pos_err=0.000069 m tool_err=0.000 deg q=[3.1680 3.8034 5.4040 1.7379 2.3560]
+PICK A1     pos_err=0.000098 m tool_err=0.000 deg q=[3.5155 3.8959 5.1810 1.8684 2.3522]
+PICK A2     pos_err=0.000057 m tool_err=0.000 deg q=[3.4078 4.3517 4.1827 2.4110 2.3474]
+PICK A3     pos_err=0.000075 m tool_err=0.000 deg q=[3.0834 4.5715 3.7203 2.6535 2.3492]
+PICK B0     pos_err=0.000083 m tool_err=0.000 deg q=[3.0749 3.7930 5.4300 1.7222 2.3651]
+PICK B1     pos_err=0.000098 m tool_err=0.000 deg q=[3.4470 3.7828 5.4557 1.7067 2.3596]
+PICK B2     pos_err=0.000093 m tool_err=0.000 deg q=[3.3899 4.3071 4.2772 2.3611 2.3476]
+PICK B3     pos_err=0.000070 m tool_err=0.000 deg q=[3.0435 4.3966 4.0878 2.4610 2.3470]
+PLACE A_P1   pos_err=0.000053 m tool_err=0.079 deg
+PLACE A_P2   pos_err=0.000056 m tool_err=0.000 deg
+PLACE B_P1   pos_err=0.000055 m tool_err=0.000 deg
+PLACE B_P2   pos_err=0.000100 m tool_err=0.000 deg
+ALL TESTS PASSED
+PASS arm command results: mapping, immediate failures, timeout, cancellation, duplicate replay
+PASS arm command runtime gates: not-ready and all non-AutoPi modes
+PASS arm command result frame validation and wire round trip
+PASS CompetitionModelTest.NormalFlowUsesPairedPointsAndHighThenLowLayers
+PASS CompetitionModelTest.OddRoundMissMakesEvenRoundRetryHighThenRepeatEvenForLow
+PASS CompetitionModelTest.TwoHighMissesAdvanceToNextPointAndRetryBeforeRoundFive
+PASS CompetitionModelTest.LowLayerMissIsDeferredUntilRoundsOneToFourFinish
+PASS CompetitionModelTest.RetryPassWithNoProgressAbandonsHalfAndContinuesRoute
+PASS CompetitionModelTest.FinalRetryNoProgressStillCompletesPickupSchedule
+PASS CompetitionModelTest.DeferredAttemptKeepsItsSlotAcrossReportingQueries
+PASS CompetitionModelTest.DeferredLowFailurePreservesLayersAndAbandonsOnlyAfterNoProgressPass
+PASS CompetitionModelTest.RejectsInvalidSortingRule
+PASS CompetitionModelTest.SortingRuleCannotBeOverwrittenDuringRun
+PASS CompetitionModelTest.CargoCannotBeConfirmedInWrongPark
+11 tests, 0 failed

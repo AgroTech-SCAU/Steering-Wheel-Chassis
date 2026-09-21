@@ -243,6 +243,8 @@ std::optional<uint16_t> BinaryFrameParser::expected_payload_length(uint8_t msg_i
             return PAYLOAD_MCU_ODOM_LEN;
         case MSG_MCU_ARM_STATE:
             return PAYLOAD_MCU_ARM_STATE_LEN;
+        case MSG_MCU_ARM_COMMAND_RESULT:
+            return PAYLOAD_MCU_ARM_COMMAND_RESULT_LEN;
         case MSG_PI_CONTROL:
             return PAYLOAD_PI_CONTROL_LEN;
         case MSG_PI_ARM_ACTION:

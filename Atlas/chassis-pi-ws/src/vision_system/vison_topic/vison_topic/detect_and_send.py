@@ -72,6 +72,7 @@ CONFIG = {
     "vision_pose_gate": {
         "required": True,
         "ready_topic": "/vision_pose_ready",
+        "max_ready_age_s": 0.5,
     },
 
     # ── 性能优化 ──
@@ -589,6 +590,9 @@ class VisionDetectServer:
         self._require_vision_pose = bool(
             CONFIG["vision_pose_gate"]["required"])
         self._vision_pose_ready = not self._require_vision_pose
+        self._vision_pose_received_at = None
+        self._capture_started_at = None
+        self._discard_next_frame = True
 
         # ── ROS2 ──
         if not rclpy.ok():
@@ -605,7 +609,8 @@ class VisionDetectServer:
             DetectionCenterArray, centers_topic, 10)
 
         # bridge使用TRANSIENT_LOCAL发布，视觉节点晚启动也能立即收到最后状态。
-        ready_qos = QoSProfile(depth=1)
+        # Preserve false→true transitions while an inference callback is busy
+        ready_qos = QoSProfile(depth=10)
         ready_qos.reliability = ReliabilityPolicy.RELIABLE
         ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         ready_topic = detection_gate_ready_topic(CONFIG)
@@ -641,11 +646,30 @@ class VisionDetectServer:
 
     # ── 定时器控制 ──────────────────────────────────────────
 
+    def _vision_pose_is_fresh(self) -> bool:
+        if not self._require_vision_pose:
+            return True
+        if not self._vision_pose_ready or self._vision_pose_received_at is None:
+            return False
+        age = time.monotonic() - self._vision_pose_received_at
+        return 0.0 <= age <= float(CONFIG["vision_pose_gate"]["max_ready_age_s"])
+
+    def _clear_detection_cache(self) -> None:
+        # Call with _lock held so an invalidated observation cannot retain a best frame
+        self._latest_detections = []
+        self._best_detections = []
+        self._best_score = -1.0
+        self._best_frame_stamp = None
+        self._discard_next_frame = True
+
     def _on_vision_pose_ready(self, msg) -> None:
         ready = bool(msg.data)
         with self._lock:
             was_ready = self._vision_pose_ready
             self._vision_pose_ready = ready
+            self._vision_pose_received_at = time.monotonic()
+            if self._require_vision_pose and not ready:
+                self._clear_detection_cache()
             running = self._running
         if ready and not was_ready:
             self._node.get_logger().info("机械臂合法视觉观察位已就绪，允许启动检测")
@@ -666,18 +690,20 @@ class VisionDetectServer:
             )
             self._running = True
             self._start_time = time.time()
+            self._capture_started_at = time.monotonic()
+            self._discard_next_frame = True
             self._total_frames = 0
             self._total_detections = 0
             self._skip_counter = 0
             self._last_status_time = time.time()
             self._last_publish_time = 0.0
-            self._best_detections = []
-            self._best_score = -1.0
-            self._best_frame_stamp = None
+            self._clear_detection_cache()
             self._node.get_logger().info(f"━━━ 持续检测已启动 ({rate_hz} Hz) ━━━")
 
     def _stop_detection(self) -> None:
         with self._lock:
+            self._clear_detection_cache()
+            self._capture_started_at = None
             if not self._running:
                 self._node.get_logger().warn("检测未在运行")
                 return
@@ -696,6 +722,13 @@ class VisionDetectServer:
     def _detection_tick(self) -> None:
         """定时器回调：采集 → 推理 → 发布 → 缓存"""
         now = time.time()
+        with self._lock:
+            if not self._running:
+                return
+            if not self._vision_pose_is_fresh():
+                self._clear_detection_cache()
+                return
+            capture_started_at = self._capture_started_at
 
         # 1. 采集
         ret, frame = self._cap.read()
@@ -718,16 +751,17 @@ class VisionDetectServer:
                 except Exception as e:
                     self._node.get_logger().error(f"重连失败: {e}")
                 with self._lock:
-                    self._latest_detections = []
-                    self._best_detections = []
-                    self._best_score = -1.0
-                    self._best_frame_stamp = None
+                    self._clear_detection_cache()
             return
 
         self._camera_fail_count = 0
         # USB 相机没有硬件时间戳时，以 read() 返回后的 ROS 时钟作为该帧时间。
         # 配合单帧缓冲和机械臂静止约束，可避免把旧检测与新位姿直接组合。
         frame_stamp = self._node.get_clock().now().to_msg()
+        # A stopped camera can retain one frame from the preceding observation
+        if self._discard_next_frame:
+            self._discard_next_frame = False
+            return
 
         # 2. 跳帧
         self._skip_counter += 1
@@ -786,6 +820,11 @@ class VisionDetectServer:
         # 5. 缓存（保留置信度之和最高的一组，避免最后一帧为空丢失前面有效数据）
         frame_score = sum(d.conf for d in detections)
         with self._lock:
+            if not self._running or capture_started_at != self._capture_started_at:
+                return
+            if not self._vision_pose_is_fresh():
+                self._clear_detection_cache()
+                return
             self._latest_detections = detections
             self._latest_infer_ms = infer_ms
             self._total_detections += len(detections)
@@ -870,7 +909,7 @@ class VisionDetectServer:
         if request.start:
             with self._lock:
                 was_running = self._running
-                vision_ready = self._vision_pose_ready
+                vision_ready = self._vision_pose_is_fresh()
             allowed, message = detection_gate_rejection(
                 require_vision_pose=self._require_vision_pose,
                 vision_pose_ready=vision_ready,
@@ -890,6 +929,13 @@ class VisionDetectServer:
         # ── 停止 ──
         with self._lock:
             was_running = self._running
+            vision_ready = self._vision_pose_is_fresh()
+            best = list(self._best_detections) if vision_ready else []
+            best_frame_stamp = self._best_frame_stamp if vision_ready else None
+            best_score = self._best_score
+            infer_ms = self._latest_infer_ms
+            total_frames = self._total_frames
+            total_dets = self._total_detections
         self._stop_detection()
 
         if not was_running:
@@ -898,12 +944,11 @@ class VisionDetectServer:
             response.count = 0
             return response
 
-        with self._lock:
-            best = list(self._best_detections)
-            best_frame_stamp = self._best_frame_stamp
-            infer_ms = self._latest_infer_ms
-            total_frames = self._total_frames
-            total_dets = self._total_detections
+        if not vision_ready:
+            response.success = False
+            response.message = "视觉观察位已失效或状态过期，已清除检测结果"
+            response.count = 0
+            return response
 
         # 停止后重发最佳帧。header.stamp仍是原始图像时间，bridge据此复用
         # 实时阶段缓存的对应机械臂位姿，避免与停止时的当前位姿错误配对。
@@ -961,7 +1006,7 @@ class VisionDetectServer:
         response.message = (
             f"检测已停止 — {elapsed:.1f}s / "
             f"{total_frames}帧 / {total_dets}目标 / "
-            f"最佳帧 {len(safe_u)}个 (score={self._best_score:.2f}) / 推理 {infer_ms:.0f}ms"
+            f"最佳帧 {len(safe_u)}个 (score={best_score:.2f}) / 推理 {infer_ms:.0f}ms"
         )
         self._node.get_logger().info(response.message)
         return response

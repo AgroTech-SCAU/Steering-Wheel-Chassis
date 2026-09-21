@@ -20,6 +20,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AutoTaskEvent.msg"
+  "msg/ArmCommandResult.msg"
   "msg/McuStatus.msg"
   "srv/Estop.srv"
   "srv/ReportMissionResult.srv"
@@ -94,4 +95,11 @@ install(DIRECTORY launch config
 
 ament_export_include_directories(include)
 ament_export_dependencies(rosidl_default_runtime)
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(arm_command_result_test test/arm_command_result_test.cpp)
+  target_link_libraries(arm_command_result_test mcu_comm_bridge_codec)
+  add_test(NAME arm_command_result_test COMMAND arm_command_result_test)
+endif()
+
 ament_package()

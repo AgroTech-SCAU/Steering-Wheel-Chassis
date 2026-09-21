@@ -181,22 +181,26 @@ def test_pick_reuses_screw_pick_without_overriding_verified_bridge_parameters(mo
     monkeypatch.setattr(backend, "ManipulationStatus", DummyStatus)
 
     node = object.__new__(backend.CompetitionManipulationBackend)
+    node._next_pick_id = 100
+    node._cancelled = lambda: False
     node.pick_target_settle_s = 0.0
     node.pick_suction_hold_s = 0.0
     node.pick_lift_m = 0.05
+    node.motion_timeout_s = 30.0
     node.pick_bridge_timeout_s = 10.0
     node.pick_motion_start_timeout_s = 2.0
     node.pick_target_pub = DummyPublisher()
     node._current_pose = lambda: backend.XYZ(0.26, 0.03, 0.21)
-    node._wait_for_motion_then_stable = lambda *_args, **_kwargs: backend.XYZ(
-        0.31, -0.04, 0.073
-    )
+    from types import SimpleNamespace
+    node._wait_pick_result = lambda *_args: SimpleNamespace(
+        x_m=0.31, y_m=-0.04, z_m=0.073, pitch_rad=-1.57, yaw_rad=0.0)
+    node._wait_pose_target = lambda *_args, **_kwargs: True
     node._set_status = lambda *_args, **_kwargs: None
     node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
     suction = []
     node._set_suction = lambda enabled: suction.append(enabled) or True
     moves = []
-    node._move_position = lambda target, **kwargs: moves.append((target, kwargs)) or True
+    node._move_pose = lambda target, **kwargs: moves.append((target, kwargs)) or True
 
     assert node._do_pick("B", 2, 2) is True
 
@@ -211,11 +215,13 @@ def test_pick_reuses_screw_pick_without_overriding_verified_bridge_parameters(mo
     assert len(moves) == 1
     lift, params = moves[0]
     assert lift == backend.XYZ(0.31, -0.04, 0.123)
+    assert params["direction"] == (-1.57, 0.0)
+    assert msg.request_id == 101
     assert params["suction_valid"] is True
     assert params["suction_enable"] is True
 
 
-def test_pick_bridge_no_motion_fails_locally_for_scheduler_defer(monkeypatch):
+def test_pick_bridge_rejection_fails_locally_for_scheduler_defer(monkeypatch):
     import atlas_competition_manipulation_backend.backend as backend
 
     class DummyPickTarget:
@@ -236,12 +242,15 @@ def test_pick_bridge_no_motion_fails_locally_for_scheduler_defer(monkeypatch):
     monkeypatch.setattr(backend, "PickTarget", DummyPickTarget)
     monkeypatch.setattr(backend, "ManipulationStatus", DummyStatus)
     node = object.__new__(backend.CompetitionManipulationBackend)
+    node._next_pick_id = 100
+    node._cancelled = lambda: False
     node.pick_target_settle_s = 0.0
+    node.motion_timeout_s = 30.0
     node.pick_bridge_timeout_s = 10.0
     node.pick_motion_start_timeout_s = 2.0
     node.pick_target_pub = DummyPublisher()
     node._current_pose = lambda: backend.XYZ(0.2, 0.0, 0.3)
-    node._wait_for_motion_then_stable = lambda *_args, **_kwargs: None
+    node._wait_pick_result = lambda *_args: None
     node._set_status = lambda *_args, **_kwargs: None
     node.get_logger = lambda: type("Logger", (), {"error": lambda self, _msg: None})()
     node._set_suction = lambda _enabled: (_ for _ in ()).throw(AssertionError("must not suction"))

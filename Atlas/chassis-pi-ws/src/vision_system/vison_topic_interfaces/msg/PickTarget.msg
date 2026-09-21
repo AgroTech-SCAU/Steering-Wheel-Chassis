@@ -1,3 +1,8 @@
+# Correlates this request with /pick_result
+uint32 request_id
+# Cancel continuation for this request; does not stop already accepted arm motion
+bool cancel
+
 # 选择用哪个角 + 第几层高度
 int32 corner_index
 int32 layer
@@ -6,7 +11,8 @@ int32 layer
 bool use_target_z
 float64 target_z_m
 
-# true 时使用本消息携带的抓取姿态
+# Legacy fields retained for source migration; all nodes must rebuild this message
+# handeye uses detection-synchronized tool z
 bool use_orientation
 float64 pitch_rad
 float64 yaw_rad

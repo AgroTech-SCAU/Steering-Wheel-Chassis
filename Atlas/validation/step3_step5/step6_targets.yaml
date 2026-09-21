@@ -1,0 +1,294 @@
+description: Pickup 保持 seed 工具轴，place 工具轴竖直向下，所有目标均未真机验证
+targets:
+- name: A.obs0
+  seed_joints_rad:
+  - 3.095574
+  - 3.115515
+  - 4.819768
+  - 3.006603
+  - 3.144661
+  target_xyz_m:
+  - 0.294904
+  - -0.009302
+  - 0.034
+  pitch_rad: -1.5595637509375833
+  yaw_rad: 0.9395062448401437
+  hardware_result: NOT_RUN
+- name: A.obs1
+  seed_joints_rad:
+  - 3.489807
+  - 3.255108
+  - 4.910273
+  - 2.759632
+  - 3.136991
+  target_xyz_m:
+  - 0.309328
+  - -0.122994
+  - 0.034
+  pitch_rad: -1.5454181370202955
+  yaw_rad: 0.0011465741622223048
+  hardware_result: NOT_RUN
+- name: A.obs2
+  seed_joints_rad:
+  - 3.380894
+  - 3.965341
+  - 3.805807
+  - 3.097108
+  - 3.138525
+  target_xyz_m:
+  - 0.440655
+  - -0.121734
+  - 0.034
+  pitch_rad: -1.489713233397421
+  yaw_rad: -0.13168624479921856
+  hardware_result: NOT_RUN
+- name: A.obs3
+  seed_joints_rad:
+  - 3.035748
+  - 4.172428
+  - 3.71837
+  - 3.009671
+  - 3.138525
+  target_xyz_m:
+  - 0.483341
+  - 0.026655
+  - 0.034
+  pitch_rad: -1.5216182889948395
+  yaw_rad: 0.2837488344802652
+  hardware_result: NOT_RUN
+- name: A.park_1.slot0
+  seed_joints_rad: &id001
+  - 4.819768
+  - 3.443787
+  - 4.497632
+  - 2.885418
+  - 3.143127
+  target_xyz_m:
+  - 0.049
+  - -0.283
+  - 0.019
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_1.slot1
+  seed_joints_rad: *id001
+  target_xyz_m:
+  - -0.047
+  - -0.289
+  - 0.016
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_1.slot2
+  seed_joints_rad: *id001
+  target_xyz_m:
+  - 0.04
+  - -0.365
+  - 0.008
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_1.slot3
+  seed_joints_rad: *id001
+  target_xyz_m:
+  - -0.09
+  - -0.367
+  - 0.003
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_2.slot0
+  seed_joints_rad: &id002
+  - 1.438874
+  - 3.49901
+  - 4.279807
+  - 3.207554
+  - 3.143127
+  target_xyz_m:
+  - -0.046
+  - 0.349
+  - 0.015
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_2.slot1
+  seed_joints_rad: *id002
+  target_xyz_m:
+  - 0.078
+  - 0.369
+  - 0.014
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_2.slot2
+  seed_joints_rad: *id002
+  target_xyz_m:
+  - 0.029
+  - 0.422
+  - 0.005
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: A.park_2.slot3
+  seed_joints_rad: *id002
+  target_xyz_m:
+  - -0.067
+  - 0.43
+  - -0.003
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.obs0
+  seed_joints_rad:
+  - 2.991263
+  - 3.121651
+  - 5.198661
+  - 2.692136
+  - 3.219826
+  target_xyz_m:
+  - 0.289905
+  - 0.017851
+  - 0.034
+  pitch_rad: -1.5072602694226467
+  yaw_rad: -3.13956162896608
+  hardware_result: NOT_RUN
+- name: B.obs1
+  seed_joints_rad:
+  - 3.406972
+  - 3.046486
+  - 5.14037
+  - 2.784175
+  - 3.250506
+  target_xyz_m:
+  - 0.272209
+  - -0.087384
+  - 0.034
+  pitch_rad: -1.5475766875023893
+  yaw_rad: 2.448850981508466
+  hardware_result: NOT_RUN
+- name: B.obs2
+  seed_joints_rad:
+  - 3.360952
+  - 3.8687
+  - 4.061981
+  - 2.978991
+  - 3.250506
+  target_xyz_m:
+  - 0.434948
+  - -0.111819
+  - 0.034
+  pitch_rad: -1.5294348762799805
+  yaw_rad: 0.015517388416060462
+  hardware_result: NOT_RUN
+- name: B.obs3
+  seed_joints_rad:
+  - 2.991263
+  - 3.992952
+  - 4.074253
+  - 2.830195
+  - 3.250506
+  target_xyz_m:
+  - 0.46232
+  - 0.043967
+  - 0.034
+  pitch_rad: -1.5174234055201279
+  yaw_rad: 0.3317059273386145
+  hardware_result: NOT_RUN
+- name: B.park_1.slot0
+  seed_joints_rad: &id003
+  - 1.356039
+  - 3.40237
+  - 4.482292
+  - 3.072564
+  - 3.247438
+  target_xyz_m:
+  - -0.072
+  - 0.29
+  - 0.01
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_1.slot1
+  seed_joints_rad: *id003
+  target_xyz_m:
+  - -0.075
+  - 0.286
+  - 0.052
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_1.slot2
+  seed_joints_rad: *id003
+  target_xyz_m:
+  - -0.069
+  - 0.287
+  - 0.104
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_1.slot3
+  seed_joints_rad: *id003
+  target_xyz_m:
+  - 0.072
+  - 0.323
+  - 0.011
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_2.slot0
+  seed_joints_rad: &id004
+  - 4.735399
+  - 3.592583
+  - 4.316623
+  - 3.08637
+  - 3.248972
+  target_xyz_m:
+  - 0.091
+  - -0.344
+  - 0.012
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_2.slot1
+  seed_joints_rad: *id004
+  target_xyz_m:
+  - 0.084
+  - -0.347
+  - 0.061
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_2.slot2
+  seed_joints_rad: *id004
+  target_xyz_m:
+  - 0.074
+  - -0.348
+  - 0.102
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN
+- name: B.park_2.slot3
+  seed_joints_rad: *id004
+  target_xyz_m:
+  - -0.038
+  - -0.336
+  - 0.015
+  approach_m: 0.06
+  pitch_rad: -1.5707963267948966
+  yaw_rad: 0.0
+  hardware_result: NOT_RUN

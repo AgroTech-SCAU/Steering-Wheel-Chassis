@@ -171,14 +171,29 @@ typedef struct {
 } SerialArmJointSolutions;
 
 /**
+ * @brief IK 姿态误差与角速度雅可比的表达坐标系
+ *
+ * `BASE` 保持传统行为：`rx/ry/rz` 表示在基座坐标系中的旋转分量
+ * `TOOL` 将旋转误差和角速度雅可比左乘当前末端 `R^T`，因此
+ * `rx/ry/rz` 分别表示绕当前工具 x/y/z 轴的旋转分量
+ */
+typedef enum {
+    SERIAL_ARM_ANGULAR_FRAME_BASE = 0,
+    SERIAL_ARM_ANGULAR_FRAME_TOOL,
+} SerialArmAngularFrame;
+
+/**
  * @brief 自动推断出的 IK 任务行信息
  *
  * `row` 的含义为：
  * `0=x, 1=y, 2=z, 3=rx, 4=ry, 5=rz`
+ *
+ * 位置行始终使用基座坐标系；姿态行使用 `angular_frame` 指定的坐标系
  */
 typedef struct {
     uint8_t task_dim;
     uint8_t row[SERIAL_ARM_TASK_MAX_DIM];
+    SerialArmAngularFrame angular_frame;
 } SerialArmTaskInfo;
 
 /**
@@ -332,6 +347,24 @@ typedef struct SerialArmKineInterface {
      */
     SerialArmStatus(*pose_from_xyz_rpy)(float x, float y, float z,
         float roll, float pitch, float yaw, SerialArmPose* pose);
+    /**
+     * @brief 由目标位置和工具 +Z 轴方向构造目标位姿
+     *
+     * `pitch` 为工具 +Z 轴相对基座 XY 平面的仰角，`yaw` 为其在基座 XY
+     * 平面投影的方位角。自由的工具轴自旋从 `reference` 继承，并通过将
+     * 当前工具轴最小旋转到目标方向来生成完整姿态
+     *
+     * @param x 目标 x，单位 m
+     * @param y 目标 y，单位 m
+     * @param z 目标 z，单位 m
+     * @param pitch 工具 +Z 轴仰角，单位 rad；竖直向下为 `-pi/2`
+     * @param yaw 工具 +Z 轴方位角，单位 rad
+     * @param reference 用于继承自由自旋的参考末端姿态
+     * @param pose 输出目标位姿
+     * @return SerialArmStatus 运动学状态码
+     */
+    SerialArmStatus(*pose_from_xyz_tool_direction)(float x, float y, float z,
+        float pitch, float yaw, const SerialArmPose* reference, SerialArmPose* pose);
 } SerialArmKineInterface;
 
 /**
@@ -374,5 +407,7 @@ SerialArmStatus s_serial_arm_rpy_to_quat(const SerialArmRPY rpy, SerialArmQuater
 SerialArmStatus s_serial_arm_quat_to_rpy(const SerialArmQuaternion quat, SerialArmRPY* rpy);
 SerialArmStatus s_serial_arm_pose_from_xyz_rpy(float x, float y, float z,
     float roll, float pitch, float yaw, SerialArmPose* pose);
+SerialArmStatus s_serial_arm_pose_from_xyz_tool_direction(float x, float y, float z,
+    float pitch, float yaw, const SerialArmPose* reference, SerialArmPose* pose);
 
 #endif

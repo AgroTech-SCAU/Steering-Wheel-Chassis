@@ -12,7 +12,10 @@ atlas_competition_manipulation_backend:
     arm_pose_topic: "/arm/pose"
     arm_joint_state_topic: "/arm/joint_states"
     arm_joints_service: "/mcu/set_arm_joints"
-    arm_position_service: "/mcu/set_arm_position"
+    arm_pose_service: "/mcu/set_arm_pose"
+    arm_result_timeout_s: 3.0
+    pose_feedback_timeout_s: 0.5
+    tool_axis_tolerance_deg: 3.0
     suction_service: "/mcu/set_suction"
 
     # 低层服务应尽快确认收件；到位等待单独计算，适配慢速抬臂。
@@ -24,14 +27,14 @@ atlas_competition_manipulation_backend:
     stable_samples: 5
 
     # 抓取直接复用 handeye_bridge/screw_pick 已实机验证链路。
-    # 本节点只发布 corner+layer，不覆盖 bridge 的平面高度、姿态和 target_z_offset。
+    # 本节点只发布 corner+layer，不覆盖 bridge 的平面高度、target_z_offset，工具轴由检测帧姿态提取。
     min_pick_target_motion_m: 0.005
     pick_target_settle_s: 0.25
     pick_lift_m: 0.050
     pick_bridge:
       motion_start_timeout_s: 2.0
       timeout_s: 10.0
-    # bridge 到达接触位后开启吸盘并等待真空建立，再仅用 3D position IK 抬升。
+    # bridge 到达接触位后开启吸盘并等待真空建立，再保持工具轴用 5D IK 抬升。
     pick_suction_hold_s: 1.50
     # 放置释放后的静置时间，和抓取保持时间分开配置
     suction_settle_s: 0.45

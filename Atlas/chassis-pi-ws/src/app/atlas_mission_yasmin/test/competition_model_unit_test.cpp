@@ -193,6 +193,60 @@ TEST(CompetitionModelTest, FinalRetryNoProgressStillCompletesPickupSchedule)
   EXPECT_FALSE(model.done());  // no cargo delivered; schedule completion != perfect score
 }
 
+TEST(CompetitionModelTest, DeferredAttemptKeepsItsSlotAcrossReportingQueries)
+{
+  CompetitionModel model;
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  ASSERT_TRUE(model.pickup_retry_phase());
+
+  const auto attempted_slot = model.next_pickup_slot();
+  ASSERT_EQ(attempted_slot, 0U);
+  for (unsigned i = 0; i < 10; ++i) {
+    EXPECT_EQ(model.next_pickup_slot(), attempted_slot);
+    EXPECT_EQ(model.pickup_round(), 1U);
+    EXPECT_EQ(model.pickup_layer(attempted_slot), 2U);
+    EXPECT_TRUE(model.pickup_retry_phase());
+  }
+  EXPECT_FALSE(model.record_pick_failure(1));
+  EXPECT_EQ(model.next_pickup_slot(), attempted_slot);
+  ASSERT_TRUE(model.record_pick_failure(attempted_slot));
+  EXPECT_EQ(model.pickup_layer(attempted_slot), 2U);
+  EXPECT_EQ(model.next_pickup_slot(), 1U);
+  EXPECT_EQ(model.abandoned_total(), 0U);
+}
+
+TEST(CompetitionModelTest, DeferredLowFailurePreservesLayersAndAbandonsOnlyAfterNoProgressPass)
+{
+  CompetitionModel model;
+  ASSERT_TRUE(model.set_sorting_rule("A", "gear", "t_bolt"));
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  ASSERT_TRUE(model.pickup_retry_phase());
+
+  confirm_current_delivery(model, "gear");
+  ASSERT_EQ(model.pickup_layer(0), 1U);
+  ASSERT_EQ(model.next_pickup_slot(), 0U);
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  EXPECT_EQ(model.abandoned_total(), 0U);
+  EXPECT_TRUE(model.pickup_retry_phase());
+  ASSERT_EQ(model.next_pickup_slot(), 0U);
+
+  ASSERT_TRUE(model.record_pick_failure(0));
+  ASSERT_TRUE(model.record_pick_failure(1));
+  EXPECT_EQ(model.pickup_layer(0), 1U);
+  EXPECT_EQ(model.pickup_layer(1), 2U);
+  EXPECT_EQ(model.abandoned_total(), 3U);
+  EXPECT_EQ(model.next_pickup_slot(), 2U);
+  EXPECT_FALSE(model.pickup_retry_phase());
+}
+
 TEST(CompetitionModelTest, RejectsInvalidSortingRule)
 {
   CompetitionModel model;

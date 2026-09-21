@@ -31,6 +31,7 @@ const SerialArmKineInterface serial_arm_kine_instance = {
     .rpy_to_quat = s_serial_arm_rpy_to_quat,
     .quat_to_rpy = s_serial_arm_quat_to_rpy,
     .pose_from_xyz_rpy = s_serial_arm_pose_from_xyz_rpy,
+    .pose_from_xyz_tool_direction = s_serial_arm_pose_from_xyz_tool_direction,
 };
 
 /**
@@ -60,6 +61,7 @@ static void s_pose_to_rotation(const SerialArmPose* pose, float R[3][3]);
 static void s_extract_rotation(const SerialArmTransform* T, float R[3][3]);
 static void s_rotation_error(const float Rd[3][3], const float R[3][3], float eo[3]);
 static void s_angular_jacobian_col(const float R[3][3], const float R2[3][3], float omega[3], float eps);
+static void s_rotate_base_to_tool(const float R[3][3], const float base[3], float tool[3]);
 static void s_compute_full_error(const SerialArmPose* target, const SerialArmTransform* current_T, float err6[6]);
 static void s_compute_full_jacobian(const float q[SERIAL_ARM_MAX_DOF], float J6[6][SERIAL_ARM_MAX_DOF], float eps);
 static void s_auto_select_task_rows(void);
@@ -463,6 +465,105 @@ SerialArmStatus s_serial_arm_pose_from_xyz_rpy(float x, float y, float z,
     return s_serial_arm_rpy_to_quat(rpy, &pose->orientation);
 }
 
+SerialArmStatus s_serial_arm_pose_from_xyz_tool_direction(float x, float y, float z,
+                                                          float pitch, float yaw,
+                                                          const SerialArmPose* reference,
+                                                          SerialArmPose* pose) {
+    float R[3][3];
+    float qn;
+    float current_z[3];
+    float target_z[3];
+    float cross[3];
+    float dot;
+    SerialArmQuaternion q_ref;
+    SerialArmQuaternion q_delta;
+    SerialArmQuaternion q_target;
+
+    if(reference == NULL || pose == NULL)
+        return SERIAL_ARM_STATUS_ERROR;
+    if(!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(pitch) || !isfinite(yaw))
+        return SERIAL_ARM_STATUS_INVALID_POSE;
+    if(pitch < -0.5f * M_PI - 1e-6f || pitch > 0.5f * M_PI + 1e-6f)
+        return SERIAL_ARM_STATUS_INVALID_POSE;
+
+    q_ref = reference->orientation;
+    qn = sqrtf(q_ref.w * q_ref.w + q_ref.x * q_ref.x + q_ref.y * q_ref.y + q_ref.z * q_ref.z);
+    if(qn < 1e-9f || !isfinite(qn))
+        return SERIAL_ARM_STATUS_INVALID_POSE;
+    q_ref.w /= qn;
+    q_ref.x /= qn;
+    q_ref.y /= qn;
+    q_ref.z /= qn;
+
+    SerialArmPose normalized_reference = *reference;
+    normalized_reference.orientation = q_ref;
+    s_pose_to_rotation(&normalized_reference, R);
+
+    current_z[0] = R[0][2];
+    current_z[1] = R[1][2];
+    current_z[2] = R[2][2];
+
+    target_z[0] = cosf(pitch) * cosf(yaw);
+    target_z[1] = cosf(pitch) * sinf(yaw);
+    target_z[2] = sinf(pitch);
+
+    dot = s_clampf(current_z[0] * target_z[0] +
+                   current_z[1] * target_z[1] +
+                   current_z[2] * target_z[2], -1.0f, 1.0f);
+
+    cross[0] = current_z[1] * target_z[2] - current_z[2] * target_z[1];
+    cross[1] = current_z[2] * target_z[0] - current_z[0] * target_z[2];
+    cross[2] = current_z[0] * target_z[1] - current_z[1] * target_z[0];
+
+    if(dot > 1.0f - 1e-7f) {
+        q_delta.w = 1.0f;
+        q_delta.x = 0.0f;
+        q_delta.y = 0.0f;
+        q_delta.z = 0.0f;
+    }
+    else if(dot < -1.0f + 1e-6f) {
+        /* 反平行时最短旋转轴不唯一，选当前工具 x 轴以保持结果连续可解释 */
+        q_delta.w = 0.0f;
+        q_delta.x = R[0][0];
+        q_delta.y = R[1][0];
+        q_delta.z = R[2][0];
+    }
+    else {
+        q_delta.w = 1.0f + dot;
+        q_delta.x = cross[0];
+        q_delta.y = cross[1];
+        q_delta.z = cross[2];
+        qn = sqrtf(q_delta.w * q_delta.w + q_delta.x * q_delta.x +
+                   q_delta.y * q_delta.y + q_delta.z * q_delta.z);
+        if(qn < 1e-9f || !isfinite(qn))
+            return SERIAL_ARM_STATUS_INVALID_POSE;
+        q_delta.w /= qn;
+        q_delta.x /= qn;
+        q_delta.y /= qn;
+        q_delta.z /= qn;
+    }
+
+    /* q_target = q_delta * q_ref，q_delta 在基座坐标系中左乘参考姿态 */
+    q_target.w = q_delta.w * q_ref.w - q_delta.x * q_ref.x - q_delta.y * q_ref.y - q_delta.z * q_ref.z;
+    q_target.x = q_delta.w * q_ref.x + q_delta.x * q_ref.w + q_delta.y * q_ref.z - q_delta.z * q_ref.y;
+    q_target.y = q_delta.w * q_ref.y - q_delta.x * q_ref.z + q_delta.y * q_ref.w + q_delta.z * q_ref.x;
+    q_target.z = q_delta.w * q_ref.z + q_delta.x * q_ref.y - q_delta.y * q_ref.x + q_delta.z * q_ref.w;
+
+    qn = sqrtf(q_target.w * q_target.w + q_target.x * q_target.x +
+               q_target.y * q_target.y + q_target.z * q_target.z);
+    if(qn < 1e-9f || !isfinite(qn))
+        return SERIAL_ARM_STATUS_INVALID_POSE;
+
+    pose->position.x = x;
+    pose->position.y = y;
+    pose->position.z = z;
+    pose->orientation.w = q_target.w / qn;
+    pose->orientation.x = q_target.x / qn;
+    pose->orientation.y = q_target.y / qn;
+    pose->orientation.z = q_target.z / qn;
+    return SERIAL_ARM_STATUS_SUCCESS;
+}
+
 // ! ========================= 私 有 函 数 实 现 ========================= ! //
 
 static float s_clampf(float v, float lo, float hi) {
@@ -655,15 +756,90 @@ static void s_extract_rotation(const SerialArmTransform* T, float R[3][3]) {
 
 static void s_rotation_error(const float Rd[3][3], const float R[3][3], float eo[3]) {
     float Re[3][3] = { { 0.0f } };
+    float skew[3];
+    float cos_theta;
+    float theta;
+    float sin_theta;
+
     for(uint8_t i = 0u; i < 3u; i++) {
         for(uint8_t j = 0u; j < 3u; j++) {
             for(uint8_t k = 0u; k < 3u; k++)
                 Re[i][j] += Rd[i][k] * R[j][k];
         }
     }
-    eo[0] = 0.5f * (Re[2][1] - Re[1][2]);
-    eo[1] = 0.5f * (Re[0][2] - Re[2][0]);
-    eo[2] = 0.5f * (Re[1][0] - Re[0][1]);
+
+    skew[0] = 0.5f * (Re[2][1] - Re[1][2]);
+    skew[1] = 0.5f * (Re[0][2] - Re[2][0]);
+    skew[2] = 0.5f * (Re[1][0] - Re[0][1]);
+    cos_theta = s_clampf(0.5f * (Re[0][0] + Re[1][1] + Re[2][2] - 1.0f), -1.0f, 1.0f);
+    theta = acosf(cos_theta);
+
+    if(theta < 1e-5f) {
+        /* log(R) 在零角附近的一阶极限 */
+        eo[0] = skew[0];
+        eo[1] = skew[1];
+        eo[2] = skew[2];
+        return;
+    }
+
+    if(M_PI - theta < 1e-4f) {
+        /* theta≈pi 时 skew 项趋近零，从对称部分恢复旋转轴 */
+        float axis[3] = { 0.0f, 0.0f, 0.0f };
+        float xx = s_clampf(0.5f * (Re[0][0] + 1.0f), 0.0f, 1.0f);
+        float yy = s_clampf(0.5f * (Re[1][1] + 1.0f), 0.0f, 1.0f);
+        float zz = s_clampf(0.5f * (Re[2][2] + 1.0f), 0.0f, 1.0f);
+
+        if(xx >= yy && xx >= zz) {
+            axis[0] = sqrtf(xx);
+            if(axis[0] > 1e-6f) {
+                axis[1] = (Re[0][1] + Re[1][0]) / (4.0f * axis[0]);
+                axis[2] = (Re[0][2] + Re[2][0]) / (4.0f * axis[0]);
+            }
+        }
+        else if(yy >= zz) {
+            axis[1] = sqrtf(yy);
+            if(axis[1] > 1e-6f) {
+                axis[0] = (Re[0][1] + Re[1][0]) / (4.0f * axis[1]);
+                axis[2] = (Re[1][2] + Re[2][1]) / (4.0f * axis[1]);
+            }
+        }
+        else {
+            axis[2] = sqrtf(zz);
+            if(axis[2] > 1e-6f) {
+                axis[0] = (Re[0][2] + Re[2][0]) / (4.0f * axis[2]);
+                axis[1] = (Re[1][2] + Re[2][1]) / (4.0f * axis[2]);
+            }
+        }
+
+        float axis_norm = sqrtf(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        if(axis_norm < 1e-6f) {
+            axis[0] = 1.0f;
+            axis[1] = 0.0f;
+            axis[2] = 0.0f;
+        }
+        else {
+            axis[0] /= axis_norm;
+            axis[1] /= axis_norm;
+            axis[2] /= axis_norm;
+        }
+
+        if(axis[0] * skew[0] + axis[1] * skew[1] + axis[2] * skew[2] < 0.0f) {
+            axis[0] = -axis[0];
+            axis[1] = -axis[1];
+            axis[2] = -axis[2];
+        }
+
+        eo[0] = theta * axis[0];
+        eo[1] = theta * axis[1];
+        eo[2] = theta * axis[2];
+        return;
+    }
+
+    sin_theta = sinf(theta);
+    float scale = theta / sin_theta;
+    eo[0] = scale * skew[0];
+    eo[1] = scale * skew[1];
+    eo[2] = scale * skew[2];
 }
 
 static void s_angular_jacobian_col(const float R[3][3], const float R2[3][3], float omega[3], float eps) {
@@ -671,13 +847,19 @@ static void s_angular_jacobian_col(const float R[3][3], const float R2[3][3], fl
     for(uint8_t i = 0u; i < 3u; i++) {
         for(uint8_t j = 0u; j < 3u; j++) {
             for(uint8_t k = 0u; k < 3u; k++)
-                dR[i][j] += R[k][i] * R2[k][j];
+                dR[i][j] += R2[i][k] * R[j][k];
         }
     }
     float inv2eps = 1.0f / (2.0f * eps);
     omega[0] = (dR[2][1] - dR[1][2]) * inv2eps;
     omega[1] = (dR[0][2] - dR[2][0]) * inv2eps;
     omega[2] = (dR[1][0] - dR[0][1]) * inv2eps;
+}
+
+static void s_rotate_base_to_tool(const float R[3][3], const float base[3], float tool[3]) {
+    tool[0] = R[0][0] * base[0] + R[1][0] * base[1] + R[2][0] * base[2];
+    tool[1] = R[0][1] * base[0] + R[1][1] * base[1] + R[2][1] * base[2];
+    tool[2] = R[0][2] * base[0] + R[1][2] * base[1] + R[2][2] * base[2];
 }
 
 static void s_compute_full_error(const SerialArmPose* target, const SerialArmTransform* current_T, float err6[6]) {
@@ -692,6 +874,14 @@ static void s_compute_full_error(const SerialArmPose* target, const SerialArmTra
     s_pose_to_rotation(target, Rd);
     s_extract_rotation(current_T, R);
     s_rotation_error(Rd, R, &err6[3]);
+
+    if(s_task.angular_frame == SERIAL_ARM_ANGULAR_FRAME_TOOL) {
+        float tool_error[3];
+        s_rotate_base_to_tool(R, &err6[3], tool_error);
+        err6[3] = tool_error[0];
+        err6[4] = tool_error[1];
+        err6[5] = tool_error[2];
+    }
 }
 
 static void s_compute_full_jacobian(const float q[SERIAL_ARM_MAX_DOF], float J6[6][SERIAL_ARM_MAX_DOF], float eps) {
@@ -717,6 +907,13 @@ static void s_compute_full_jacobian(const float q[SERIAL_ARM_MAX_DOF], float J6[
 
         float omega[3] = { 0.0f };
         s_angular_jacobian_col(R, R2, omega, eps);
+        if(s_task.angular_frame == SERIAL_ARM_ANGULAR_FRAME_TOOL) {
+            float tool_omega[3];
+            s_rotate_base_to_tool(R, omega, tool_omega);
+            omega[0] = tool_omega[0];
+            omega[1] = tool_omega[1];
+            omega[2] = tool_omega[2];
+        }
         J6[3][c] = omega[0];
         J6[4][c] = omega[1];
         J6[5][c] = omega[2];
@@ -835,6 +1032,9 @@ static bool s_validate_task_info(const SerialArmTaskInfo* info) {
     if(info->task_dim == 0u || info->task_dim > SERIAL_ARM_TASK_MAX_DIM)
         return false;
     if(info->task_dim > s_model.dof)
+        return false;
+    if(info->angular_frame != SERIAL_ARM_ANGULAR_FRAME_BASE &&
+       info->angular_frame != SERIAL_ARM_ANGULAR_FRAME_TOOL)
         return false;
 
     for(uint8_t i = 0u; i < info->task_dim; i++) {

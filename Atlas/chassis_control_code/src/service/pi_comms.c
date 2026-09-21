@@ -23,6 +23,7 @@
 #define PI_COMMS_WARN_LOG_PERIOD_MS 1000u
 #define PI_COMMS_PENDING_RETRY_MS 100u
 #define PI_COMMS_PENDING_WARN_RETRY_COUNT 10u
+#define PI_COMMS_ARM_RESULT_CACHE_SIZE 16u
 
 #define PI_COMMS_PAYLOAD_CONTROL_LEN 38u
 #define PI_COMMS_PAYLOAD_ARM_ACTION_LEN 8u
@@ -54,6 +55,16 @@ static bool s_pi_comms_suction_control_pending = false;
 static bool s_pi_comms_arm_command_seq_valid = false;
 static bool s_pi_comms_arm_command_seq_consumed = false;
 static uint16_t s_pi_comms_arm_command_seq = 0u;
+/* Bounded replay window covers retries even after intervening commands */
+typedef struct {
+    bool valid;
+    bool tx_pending;
+    uint16_t command_seq;
+    PiCommsArmResult result;
+    int32_t arm_status;
+} PiCommsArmResultCache;
+static PiCommsArmResultCache s_pi_comms_arm_results[PI_COMMS_ARM_RESULT_CACHE_SIZE];
+static uint8_t s_pi_comms_arm_result_next = 0u;
 static PiCommsArmAction s_pi_comms_arm_action = { 0 };
 static bool s_pi_comms_estop_pending = false;
 static PiCommsEstopEvent s_pi_comms_estop_event = { 0 };
@@ -117,6 +128,8 @@ PiCommsStatus pi_comms_init(const PiCommsConfig* config) {
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
     pi_comms_reset_arm_control_state();
+    memset(s_pi_comms_arm_results, 0, sizeof(s_pi_comms_arm_results));
+    s_pi_comms_arm_result_next = 0u;
     memset(&s_pi_comms_suction_control, 0, sizeof(s_pi_comms_suction_control));
     s_pi_comms_suction_control_rx_ms = 0u;
     s_pi_comms_suction_control_pending = false;
@@ -178,6 +191,13 @@ void pi_comms_process(void) {
     }
 
     pi_comms_process_pending_event();
+    for(uint8_t i = 0u; i < PI_COMMS_ARM_RESULT_CACHE_SIZE; ++i) {
+        PiCommsArmResultCache* cached = &s_pi_comms_arm_results[i];
+        if(cached->valid && cached->tx_pending) {
+            (void)pi_comms_send_arm_command_result(cached->command_seq, cached->result, cached->arm_status);
+            break;
+        }
+    }
 }
 
 bool pi_comms_is_online(void) {
@@ -452,6 +472,48 @@ bool pi_comms_send_ack(uint8_t ack_msg_id, uint8_t ack_seq, uint16_t code) {
     return pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ACK, pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
 }
 
+static PiCommsArmResultCache* pi_comms_find_arm_result(uint16_t command_seq) {
+    for(uint8_t i = 0u; i < PI_COMMS_ARM_RESULT_CACHE_SIZE; ++i) {
+        if(s_pi_comms_arm_results[i].valid && s_pi_comms_arm_results[i].command_seq == command_seq) {
+            return &s_pi_comms_arm_results[i];
+        }
+    }
+    return NULL;
+}
+
+bool pi_comms_send_arm_command_result(uint16_t command_seq, PiCommsArmResult result, int32_t arm_status) {
+    uint8_t payload[7] = { 0 };
+    PiCommsArmResultCache* cached = pi_comms_find_arm_result(command_seq);
+    if(cached == NULL) {
+        cached = &s_pi_comms_arm_results[s_pi_comms_arm_result_next];
+        s_pi_comms_arm_result_next = (s_pi_comms_arm_result_next + 1u) % PI_COMMS_ARM_RESULT_CACHE_SIZE;
+    }
+    cached->valid = true;
+    cached->command_seq = command_seq;
+    cached->result = result;
+    cached->arm_status = arm_status;
+    binary_frame_write_u16_le(payload, command_seq);
+    payload[2] = (uint8_t)result;
+    binary_frame_write_i32_le(&payload[3], arm_status);
+    cached->tx_pending = !pi_comms_send_frame(BINARY_FRAME_MSG_MCU_ARM_COMMAND_RESULT,
+                                            pi_comms_next_tx_seq(), 0u, payload, sizeof(payload));
+    return !cached->tx_pending;
+}
+
+bool pi_comms_report_arm_result(uint16_t command_seq, ArmStatus arm_status) {
+    PiCommsArmResult result;
+    switch(arm_status) {
+        case ARM_OK: result = PI_COMMS_ARM_RESULT_ACCEPTED; break;
+        case ARM_NO_SOLUTION: result = PI_COMMS_ARM_RESULT_NO_SOLUTION; break;
+        case ARM_INVALID_PARAM:
+        case ARM_OUT_OF_LIMIT: result = PI_COMMS_ARM_RESULT_INVALID_PARAM; break;
+        case ARM_KINEMATICS_FAILED: result = PI_COMMS_ARM_RESULT_KINEMATICS_FAILED; break;
+        case ARM_SERVO_FAILED: result = PI_COMMS_ARM_RESULT_SERVO_FAILED; break;
+        default: result = PI_COMMS_ARM_RESULT_UNKNOWN; break;
+    }
+    return pi_comms_send_arm_command_result(command_seq, result, (int32_t)arm_status);
+}
+
 bool pi_comms_get_stats(PiCommsStats* stats) {
     if(stats == NULL) {
         return false;
@@ -462,6 +524,9 @@ bool pi_comms_get_stats(PiCommsStats* stats) {
 }
 
 void pi_comms_clear_controls(void) {
+    if(s_pi_comms_arm_control_pending) {
+        (void)pi_comms_send_arm_command_result(s_pi_comms_arm_control.command_seq, PI_COMMS_ARM_RESULT_UNKNOWN, -1);
+    }
     memset(&s_pi_comms_chassis_control, 0, sizeof(s_pi_comms_chassis_control));
     memset(&s_pi_comms_yaw_action, 0, sizeof(s_pi_comms_yaw_action));
     pi_comms_reset_arm_control_state();
@@ -883,7 +948,8 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
         s_pi_comms_chassis_control.stamp_ms = now_ms;
     }
 
-    if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_SUCTION_VALID) != 0u) {
+    if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_SUCTION_VALID) != 0u &&
+       (control_mask & BINARY_FRAME_PI_CONTROL_MASK_ARM_VALID) == 0u) {
         s_pi_comms_suction_control.valid = true;
         s_pi_comms_suction_control.enable = payload[36] ? true : false;
         s_pi_comms_suction_control.stamp_ms = binary_frame_read_u32_le(&payload[0]);
@@ -893,7 +959,19 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
     }
 
     if((control_mask & BINARY_FRAME_PI_CONTROL_MASK_ARM_VALID) != 0u) {
-        if(!pi_comms_arm_mode_from_wire(payload[5], &parsed_arm.mode)) {
+        const uint16_t command_seq = binary_frame_read_u16_le(&payload[6]);
+        PiCommsArmResultCache* cached = pi_comms_find_arm_result(command_seq);
+        if(cached != NULL) {
+            (void)pi_comms_send_arm_command_result(command_seq, cached->result, cached->arm_status);
+        }
+        else if(s_pi_comms_arm_command_seq_valid && s_pi_comms_arm_command_seq == command_seq) {
+            /* A retry cannot change an already queued or executing command */
+            if(!s_pi_comms_arm_command_seq_consumed) {
+                s_pi_comms_arm_control_rx_ms = now_ms;
+            }
+        }
+        else if(!pi_comms_arm_mode_from_wire(payload[5], &parsed_arm.mode)) {
+            (void)pi_comms_report_arm_result(command_seq, ARM_INVALID_PARAM);
             pi_comms_warn_limited("PI_COMMS control dropped: unsupported arm mode");
         }
         else {
@@ -938,12 +1016,16 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
 
             arm_valid = pi_comms_arm_control_is_finite(&parsed_arm);
             if(!arm_valid) {
+                (void)pi_comms_report_arm_result(command_seq, ARM_INVALID_PARAM);
                 pi_comms_warn_limited("PI_COMMS control dropped: invalid arm target");
             }
             else {
-                s_pi_comms_arm_control = parsed_arm;
-                s_pi_comms_arm_control_rx_ms = now_ms;
                 if(!s_pi_comms_arm_command_seq_valid || s_pi_comms_arm_command_seq != parsed_arm.command_seq) {
+                    if(s_pi_comms_arm_control_pending) {
+                        (void)pi_comms_send_arm_command_result(s_pi_comms_arm_control.command_seq, PI_COMMS_ARM_RESULT_UNKNOWN, -1);
+                    }
+                    s_pi_comms_arm_control = parsed_arm;
+                    s_pi_comms_arm_control_rx_ms = now_ms;
                     s_pi_comms_arm_command_seq_valid = true;
                     s_pi_comms_arm_command_seq = parsed_arm.command_seq;
                     s_pi_comms_arm_command_seq_consumed = false;
@@ -953,6 +1035,7 @@ static void pi_comms_handle_control(const BinaryFrameView* frame) {
                              (unsigned int)parsed_arm.command_seq);
                 }
                 else if(!s_pi_comms_arm_command_seq_consumed) {
+                    s_pi_comms_arm_control_rx_ms = now_ms;
                     s_pi_comms_arm_control_pending = true;
                 }
             }

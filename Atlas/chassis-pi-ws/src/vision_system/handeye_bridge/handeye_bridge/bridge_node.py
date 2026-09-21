@@ -31,21 +31,22 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
-from vison_topic_interfaces.msg import DetectionCenterArray, PickTarget
+from vison_topic_interfaces.msg import DetectionCenterArray, PickTarget, PickResult
 
 from atlas_competition_config.config import (
     apply_handeye_scan_overrides,
+    resolve_arm_pose, CompetitionConfigError,
     load_optional_competition_config,
 )
 
 try:
-    from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position
-    from .pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
-    from .competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets
+    from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position, vision_pose_for_transform, direction_axis, tcp_is_stable
+    from .pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection, tool_axis_angles
+    from .competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets, calibrated_tool_axis
 except ImportError:  # 兼容直接运行源码文件
-    from vision_pose_gate import VisionPoseTarget, vision_pose_for_position
-    from pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection
-    from competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets
+    from vision_pose_gate import VisionPoseTarget, vision_pose_for_position, vision_pose_for_transform, direction_axis, tcp_is_stable
+    from pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection, tool_axis_angles
+    from competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets, calibrated_tool_axis
 
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
 _SetArmPose = None
@@ -149,7 +150,7 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("initial_x_m", 0.0)
         self.declare_parameter("initial_y_m", 0.0)
         self.declare_parameter("initial_z_m", 0.0)
-        self.declare_parameter("initial_pitch_rad", 0.0)
+        self.declare_parameter("initial_pitch_rad", -np.pi / 2)
         self.declare_parameter("initial_yaw_rad", 0.0)
         self.declare_parameter("initial_speed_rad_s", 0.3)
         self.declare_parameter("sorting_scan_a.configured", False)
@@ -173,6 +174,13 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("workspace_z_min_m", -0.20)
         self.declare_parameter("workspace_z_max_m", 0.50)
         self.declare_parameter("initial_pose_departure_tolerance_m", 0.03)
+        self.declare_parameter("vision_axis_tolerance_deg", 5.0)
+        self.declare_parameter("vision_stable_window_s", 0.2)
+        self.declare_parameter("vision_stable_displacement_m", 0.001)
+        self.declare_parameter("vision_pose_max_age_s", 0.3)
+        self.declare_parameter("arm_result_timeout_s", 2.0)
+        self.declare_parameter("pick_approach_timeout_s", 15.0)
+        self._sorting_scan_axes = {}
         self._sorting_scan_overrides = self._load_sorting_scan_overrides()
         self._competition_pickup_vision_targets = self._load_pickup_vision_targets()
 
@@ -235,6 +243,7 @@ class HandEyeBridgeNode(Node):
         self._initial_command_accepted = False
         self._initial_pose_ready = False
         self._vision_pose_ready = False
+        self._vision_ready_since_ns = 0
         self._current_vision_pose_name = ""
         self._initial_stable_count = 0
         self._initial_target_xyz: Optional[np.ndarray] = None
@@ -251,6 +260,9 @@ class HandEyeBridgeNode(Node):
         self._vision_pose_received_count = 0
         self._vision_last_distance_m = float("inf")
         self._vision_last_diag_ns = 0
+        self._arm_pending = {}
+        self._early_arm_results = OrderedDict()
+        self._active_pick = None
         self._pending_pose_futures: list = []  # 防止 future GC 导致回调丢失
         self._calibration_ready = self._intrinsics_valid and self._handeye_valid
         if not self._calibration_ready:
@@ -268,6 +280,13 @@ class HandEyeBridgeNode(Node):
         self.pose_sub = self.create_subscription(
             PoseStamped, pose_topic, self._on_pose, 20)
 
+        self.pick_result_pub = self.create_publisher(PickResult, "/pick_result", 10)
+        from mcu_comm_bridge.msg import ArmCommandResult
+        self.arm_result_sub = self.create_subscription(
+            ArmCommandResult, "/mcu/arm_command_result", self._on_arm_command_result, 20)
+        self._arm_result_timer = self.create_timer(0.05, self._check_arm_results)
+        self._pose_freshness_timer = self.create_timer(0.1, self._check_pose_freshness)
+
         # ── 服务客户端（持久化，避免回调内 create_client 的 DDS 竞态）──
         self._arm_pose_cli = None
         try:
@@ -279,7 +298,7 @@ class HandEyeBridgeNode(Node):
                 f"无法创建 SetArmPose 客户端 (mcu_comm_bridge 未安装?): {exc}")
 
         # ── 初始位置服务与状态 ──
-        ready_qos = QoSProfile(depth=1)
+        ready_qos = QoSProfile(depth=10)
         ready_qos.reliability = ReliabilityPolicy.RELIABLE
         ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         ready_topic = str(self.get_parameter("initial_pose_ready_topic").value)
@@ -337,7 +356,19 @@ class HandEyeBridgeNode(Node):
         )
         if competition is None:
             return {}
-        return apply_handeye_scan_overrides({}, competition.vision)
+        overrides = apply_handeye_scan_overrides({}, competition.vision)
+        for key in ("sorting_scan_a", "sorting_scan_b"):
+            try:
+                pose = resolve_arm_pose(competition.arm_motion, key)
+                axis = calibrated_tool_axis(pose)
+                self._sorting_scan_axes[key] = axis
+                transform = np.eye(4)
+                transform[:3, 2] = axis
+                pitch, yaw = tool_axis_angles(transform)
+                overrides.setdefault(key, {}).update(pitch_rad=pitch, yaw_rad=yaw)
+            except CompetitionConfigError:
+                continue
+        return overrides
 
     def _load_pickup_vision_targets(self) -> list[tuple[str, tuple[float, float, float]]]:
         competition = load_optional_competition_config(
@@ -346,8 +377,8 @@ class HandEyeBridgeNode(Node):
         if competition is None:
             return []
         return (
-            pickup_vision_pose_targets(competition.arm_motion) +
-            park_vision_pose_targets(competition.arm_motion)
+            pickup_vision_pose_targets(competition.arm_motion, include_axis=True) +
+            park_vision_pose_targets(competition.arm_motion, include_axis=True)
         )
 
     def _scan_value(self, key: str, field: str):
@@ -474,6 +505,14 @@ class HandEyeBridgeNode(Node):
         self.initial_ready_pub.publish(msg)
 
     def _publish_vision_ready(self, ready: bool, pose_name: str = "") -> None:
+        if self._vision_pose_ready and (not ready or pose_name != self._current_vision_pose_name):
+            self._latest_detections = None
+            self._latest_detection_stamp_ns = None
+            self._latest_detection_received_ns = None
+            self._latest_detection_is_final_best = False
+            self._detection_pose_cache.clear()
+        if ready and not self._vision_pose_ready:
+            self._vision_ready_since_ns = int(self.get_clock().now().nanoseconds)
         self._vision_pose_ready = bool(ready)
         self._current_vision_pose_name = pose_name if ready else ""
         msg = Bool()
@@ -722,7 +761,9 @@ class HandEyeBridgeNode(Node):
             self._initial_last_distance_m = distance_m
             tolerance_m = float(
                 self.get_parameter("initial_position_tolerance_m").value)
-            if distance_m <= tolerance_m:
+            _, _, _, pitch, yaw, _ = self._initial_pose_command()
+            if distance_m <= tolerance_m and self._pose_history and self._observation_is_stable(
+                    self._pose_history[-1][1], self._initial_target_xyz, pitch, yaw):
                 self._initial_stable_count += 1
             else:
                 self._initial_stable_count = 0
@@ -747,7 +788,7 @@ class HandEyeBridgeNode(Node):
                 self._initial_move_pending = False
                 self._initial_target_xyz = None
                 self._publish_initial_ready(True)
-                self._publish_vision_ready(True, "initial")
+                # Readiness is published only by the pose/axis/stability gate
                 self.get_logger().info(
                     f"机械臂已到达初始位置并稳定 {required} 帧 "
                     f"(位置误差 {distance_m * 1000.0:.1f} mm)，允许启动视觉检测")
@@ -777,14 +818,14 @@ class HandEyeBridgeNode(Node):
     def _vision_pose_targets(self) -> list[VisionPoseTarget]:
         targets = []
         if self._competition_pickup_vision_targets:
-            for name, xyz in self._competition_pickup_vision_targets:
+            for name, xyz, axis in self._competition_pickup_vision_targets:
                 targets.append(VisionPoseTarget(
-                    name, True, np.array(xyz, dtype=np.float64)))
+                    name, True, np.array(xyz, dtype=np.float64), np.array(axis)))
         elif self._initial_pose_configured():
             try:
                 init_x, init_y, init_z, _pitch, _yaw, _speed = self._initial_pose_command()
                 targets.append(VisionPoseTarget(
-                    "initial", True, np.array([init_x, init_y, init_z], dtype=np.float64)))
+                    "initial", True, np.array([init_x, init_y, init_z], dtype=np.float64), direction_axis(_pitch, _yaw)))
             except ValueError:
                 pass
         for key in ("sorting_scan_a", "sorting_scan_b"):
@@ -792,24 +833,45 @@ class HandEyeBridgeNode(Node):
             try:
                 x, y, z, _pitch, _yaw, _speed = self._sorting_scan_command(key)
                 targets.append(VisionPoseTarget(
-                    key, configured, np.array([x, y, z], dtype=np.float64)))
+                    key, configured, np.array([x, y, z], dtype=np.float64),
+                    self._sorting_scan_axes.get(key, direction_axis(_pitch, _yaw))))
             except ValueError:
                 targets.append(VisionPoseTarget(
                     key, False, np.array([0.0, 0.0, 0.0], dtype=np.float64)))
         return targets
 
-    def _refresh_vision_pose_ready(self, position: np.ndarray) -> None:
-        tolerance_m = float(
-            self.get_parameter("initial_pose_departure_tolerance_m").value)
-        pose_name = vision_pose_for_position(
-            position, self._vision_pose_targets(), tolerance_m)
-        if pose_name is None:
-            if self._vision_pose_ready:
-                self.get_logger().warn(
-                    "机械臂离开所有合法视觉观察位，视觉检测门禁已关闭")
+    def _observation_is_stable(self, transform, xyz, pitch, yaw):
+        now_ns = int(self.get_clock().now().nanoseconds)
+        target = VisionPoseTarget("requested", True, xyz, direction_axis(pitch, yaw))
+        return tcp_is_stable(
+            self._pose_history, now_ns,
+            float(self.get_parameter("vision_stable_window_s").value),
+            float(self.get_parameter("vision_stable_displacement_m").value),
+            float(self.get_parameter("vision_pose_max_age_s").value)) and vision_pose_for_transform(
+                transform, [target], float(self.get_parameter("initial_position_tolerance_m").value),
+                float(self.get_parameter("vision_axis_tolerance_deg").value)) is not None
+
+    def _refresh_vision_pose_ready(self, transform: np.ndarray) -> None:
+        now_ns = int(self.get_clock().now().nanoseconds)
+        stable = tcp_is_stable(
+            self._pose_history, now_ns,
+            float(self.get_parameter("vision_stable_window_s").value),
+            float(self.get_parameter("vision_stable_displacement_m").value),
+            float(self.get_parameter("vision_pose_max_age_s").value))
+        pose_name = vision_pose_for_transform(
+            transform, self._vision_pose_targets(),
+            float(self.get_parameter("initial_pose_departure_tolerance_m").value),
+            float(self.get_parameter("vision_axis_tolerance_deg").value)) if stable else None
+        if pose_name and self._current_vision_pose_name and pose_name != self._current_vision_pose_name:
             self._publish_vision_ready(False)
-            return
-        self._publish_vision_ready(True, pose_name)
+        self._publish_vision_ready(pose_name is not None, pose_name or "")
+
+    def _check_pose_freshness(self) -> None:
+        now_ns = int(self.get_clock().now().nanoseconds)
+        max_age_ns = float(self.get_parameter("vision_pose_max_age_s").value) * 1e9
+        if not self._pose_history or not 0 <= now_ns - self._pose_history[-1][0] <= max_age_ns:
+            self._publish_vision_ready(False)
+            self._publish_initial_ready(False)
 
     def _update_sorting_scan_pose_state(self, position: np.ndarray) -> None:
         if not self._vision_move_pending:
@@ -821,7 +883,9 @@ class HandEyeBridgeNode(Node):
         self._vision_last_distance_m = distance_m
         tolerance_m = float(
             self.get_parameter("initial_position_tolerance_m").value)
-        if distance_m <= tolerance_m:
+        _, _, _, pitch, yaw, _ = self._sorting_scan_command(self._vision_target_name)
+        if distance_m <= tolerance_m and self._pose_history and self._observation_is_stable(
+                self._pose_history[-1][1], self._vision_target_xyz, pitch, yaw):
             self._vision_stable_count += 1
         else:
             self._vision_stable_count = 0
@@ -845,7 +909,7 @@ class HandEyeBridgeNode(Node):
             self._vision_target_xyz = None
             self._vision_target_name = ""
             self._publish_initial_ready(False)
-            self._publish_vision_ready(True, target_name)
+            # Readiness is published only by the pose/axis/stability gate
             self.get_logger().info(
                 f"机械臂已到达 {target_name} 并稳定 {required} 帧，允许启动视觉检测")
 
@@ -867,17 +931,25 @@ class HandEyeBridgeNode(Node):
         T = _quat_to_matrix(q.x, q.y, q.z, q.w,
                             np.array([p.x, p.y, p.z], dtype=np.float64))
         if np.isfinite(T).all():
+            if self._pose_history and stamp_ns <= self._pose_history[-1][0]:
+                return
             self._pose_history.append((stamp_ns, T))
             self._update_initial_pose_state(T[:3, 3])
             self._update_sorting_scan_pose_state(T[:3, 3])
             if not self._initial_move_pending and not self._vision_move_pending:
-                self._refresh_vision_pose_ready(T[:3, 3])
+                self._refresh_vision_pose_ready(T)
+            self._check_pick_approach(T, stamp_ns)
 
     def _on_detections(self, msg: DetectionCenterArray) -> None:
         """缓存检测结果，并保存该帧在基座系计算所需的原始机械臂位姿。"""
+        if not self._vision_pose_ready:
+            return
         stamp_ns = self._stamp_to_ns(msg.header.stamp)
         if stamp_ns <= 0:
             self.get_logger().warn("/detection_centers 没有有效 header.stamp，忽略该帧")
+            return
+
+        if stamp_ns < self._vision_ready_since_ns:
             return
 
         # 实时帧到达时立即缓存它对应的机械臂位姿。停止时重发的最佳帧仍使用
@@ -915,10 +987,32 @@ class HandEyeBridgeNode(Node):
         return transform, abs(pose_stamp_ns - stamp_ns) / 1e6
 
     def _on_pick_target(self, msg: PickTarget) -> None:
+        try:
+            self._process_pick_target(msg)
+        except (ValueError, TypeError, IndexError) as exc:
+            self.get_logger().error(f"Invalid pick request: {exc}")
+            self._publish_pick_result(int(getattr(msg, "request_id", 0)), False, "INVALID_PARAM")
+
+    def _process_pick_target(self, msg: PickTarget) -> None:
         """
         收到选择指令: msg.corner_index (0=TL/1=TR/2=BR/3=BL), msg.layer (1/2/3)
         匹配对应角的检测目标 → 射线求交得(x,y) → Z 取 yaml 高度 → setpose
         """
+        request_id = int(getattr(msg, "request_id", 0))
+        if bool(getattr(msg, "cancel", False)):
+            pick = self._active_pick
+            if pick is not None and pick["request_id"] == request_id:
+                self._finish_pick(pick, False, "CANCELLED", pick["seq"])
+            return
+        if self._active_pick is not None:
+            self._publish_pick_result(request_id, False, "BUSY")
+            return
+        now_ns = int(self.get_clock().now().nanoseconds)
+        if (not self._vision_pose_ready or not self._pose_history or
+                not 0 <= now_ns - self._pose_history[-1][0] <= float(
+                    self.get_parameter("vision_pose_max_age_s").value) * 1e9):
+            self._publish_pick_result(request_id, False, "POSE_NOT_READY")
+            return
         corner = msg.corner_index
         layer = msg.layer
 
@@ -928,6 +1022,7 @@ class HandEyeBridgeNode(Node):
 
         if not self._calibration_ready:
             self.get_logger().error("标定未就绪，拒绝计算和发送目标")
+            self._publish_pick_result(request_id, False, "CALIBRATION_NOT_READY")
             return
 
         # 校验层号
@@ -938,25 +1033,27 @@ class HandEyeBridgeNode(Node):
             self.get_logger().warn(f"无效 layer={msg.layer}, 回退到 layer={layer}")
 
         default_plane_z = float(self.get_parameter(f"plane{layer}_z_m").value)
-        default_pitch = float(self.get_parameter("initial_pitch_rad").value)
-        default_yaw = float(self.get_parameter("initial_yaw_rad").value)
+        default_pitch, default_yaw = -np.pi / 2, 0.0
         plane_z, target_pitch, target_yaw, explicit_target_z = resolve_pick_target_parameters(
             msg, default_plane_z, default_pitch, default_yaw
         )
 
         if self._latest_detections is None or len(self._latest_detections.detections) == 0:
             self.get_logger().warn("尚无检测数据 (/detection_centers)")
+            self._publish_pick_result(request_id, False, "NO_DETECTION")
             return
 
         detection_stamp_ns = self._latest_detection_stamp_ns
         if detection_stamp_ns is None:
             self.get_logger().warn("检测帧没有可用时间戳")
+            self._publish_pick_result(request_id, False, "POSE_SYNC_FAILED")
             return
         now_ns = int(self.get_clock().now().nanoseconds)
         if self._latest_detection_is_final_best:
             received_ns = self._latest_detection_received_ns
             if received_ns is None:
                 self.get_logger().warn("最终最佳帧缺少本地接收时间")
+                self._publish_pick_result(request_id, False, "STALE_DETECTION")
                 return
             detection_age_s = (now_ns - received_ns) / 1e9
             max_age_s = float(self.get_parameter("final_best_valid_s").value)
@@ -969,6 +1066,7 @@ class HandEyeBridgeNode(Node):
             self.get_logger().warn(
                 f"{age_name}已过期或时钟异常: age={detection_age_s:.3f}s, "
                 f"允许 0~{max_age_s:.3f}s")
+            self._publish_pick_result(request_id, False, "STALE_DETECTION")
             return
 
         cached_pose = self._detection_pose_cache.get(detection_stamp_ns)
@@ -981,7 +1079,11 @@ class HandEyeBridgeNode(Node):
             self.get_logger().warn(
                 f"检测帧无法匹配机械臂位姿: dt={sync_dt_ms:.1f}ms > "
                 f"{max_sync_dt_ms:.1f}ms")
+            self._publish_pick_result(request_id, False, "POSE_SYNC_FAILED")
             return
+
+        # The detected frame fixes the tool direction, including tilted observations
+        target_pitch, target_yaw = tool_axis_angles(T_base_gripper)
 
         # 按 corner_index 匹配
         match = select_pick_detection(self._latest_detections.detections, corner)
@@ -992,6 +1094,7 @@ class HandEyeBridgeNode(Node):
                 f"未找到 corner_index={corner} 的检测目标, "
                 f"可用角: {available}"
             )
+            self._publish_pick_result(request_id, False, "NO_DETECTION")
             return
 
         px_x, px_y = match.u, match.v
@@ -1004,6 +1107,7 @@ class HandEyeBridgeNode(Node):
             # ═══ PnP 深度模式: 用 4 角点 + 已知物理间距求解 ═══
             pnp_result = self._pnp_solve_depth(self._latest_detections)
             if pnp_result is None:
+                self._publish_pick_result(request_id, False, "PNP_REJECTED")
                 return
             T_camera_target, depth_m, pnp_diag = pnp_result
 
@@ -1016,11 +1120,13 @@ class HandEyeBridgeNode(Node):
                 self.get_logger().warn(
                     f"PnP 重投影误差过大: {pnp_diag['reproj_px']:.3f}px > "
                     f"{max_reproj}px, 拒绝 (可能检测框不准或间距参数填错)")
+                self._publish_pick_result(request_id, False, "PNP_REJECTED")
                 return
             if not (min_d <= depth_m <= max_d):
                 self.get_logger().warn(
                     f"PnP 深度不合理: {depth_m*1000:.0f}mm, "
                     f"允许范围 [{min_d*1000:.0f}, {max_d*1000:.0f}]mm, 拒绝")
+                self._publish_pick_result(request_id, False, "PNP_REJECTED")
                 return
 
             # 目标角点在目标坐标系中的 3D 位置
@@ -1047,6 +1153,7 @@ class HandEyeBridgeNode(Node):
             P_base = self._ray_plane_intersect(
                 px_x, px_y, plane_z, T_base_gripper)
             if P_base is None:
+                self._publish_pick_result(request_id, False, "PROJECTION_REJECTED")
                 return
 
             x, y = float(P_base[0]), float(P_base[1])
@@ -1084,26 +1191,32 @@ class HandEyeBridgeNode(Node):
         z_min = float(self.get_parameter("workspace_z_min_m").value)
         z_max = float(self.get_parameter("workspace_z_max_m").value)
         dist_xy = float(np.sqrt(x * x + y * y))
-        if dist_xy > max_xy or not (z_min <= z <= z_max):
+        if not np.isfinite([x, y, z]).all() or dist_xy > max_xy or not (z_min <= z <= z_max):
             self.get_logger().error(
                 f"计算位置 ({x:.3f},{y:.3f},{z:.3f}) 超出 workspace: "
                 f"XY距离={dist_xy:.2f}m (上限{max_xy:.2f}m), "
                 f"Z范围=[{z_min:.2f},{z_max:.2f}]m — "
                 f"可能是检测框在图像边缘导致坐标偏移，已拒绝发送")
+            self._publish_pick_result(request_id, False, "WORKSPACE_REJECTED")
             return
 
-        if auto_send:
-            if (
-                depth_mode == "manual"
-                and not explicit_target_z
-                and not bool(self.get_parameter("plane_heights_configured").value)
-            ):
-                self.get_logger().error(
-                    "plane_heights_configured=false，平面高度尚未确认，拒绝自动发送")
-            else:
-                self._send_pose(
-                    x, y, z, speed, pitch=target_pitch, yaw=target_yaw
-                )
+        if not auto_send:
+            self._publish_pick_result(request_id, False, "AUTO_SEND_DISABLED")
+            return
+        if depth_mode == "manual" and not explicit_target_z and not bool(
+                self.get_parameter("plane_heights_configured").value):
+            self._publish_pick_result(request_id, False, "HEIGHTS_NOT_CONFIGURED")
+            return
+        use_approach = bool(getattr(msg, "use_approach", False)) and float(getattr(msg, "approach_m", 0.0)) > 0.0
+        contact_z = z - float(msg.approach_m) if use_approach else z
+        if not z_min <= contact_z <= z_max:
+            self._publish_pick_result(request_id, False, "WORKSPACE_REJECTED")
+            return
+        pick = dict(request_id=request_id, x=x, y=y, z=contact_z, pitch=target_pitch,
+                    yaw=target_yaw, speed=speed, approach_z=z, stage="approach" if use_approach else "contact",
+                    accepted=False, seq=0, deadline_ns=0)
+        self._active_pick = pick
+        self._send_pick_stage(pick)
 
     # ── 射线-平面求交 ──
 
@@ -1282,6 +1395,7 @@ class HandEyeBridgeNode(Node):
         yaw: float = 0.0,
         label: str = "目标位置",
         on_complete: Optional[Callable[[bool], None]] = None,
+        on_result=None,
     ) -> bool:
         if self._arm_pose_cli is None:
             self.get_logger().error(
@@ -1308,44 +1422,124 @@ class HandEyeBridgeNode(Node):
             f"pitch_rad={req.pitch_rad} yaw_rad={req.yaw_rad} "
             f"speed_rad_s={req.speed_rad_s}")
 
-        future = self._arm_pose_cli.call_async(req)
+        token = object()
+        now_ns = int(self.get_clock().now().nanoseconds)
+        self._arm_pending[token] = dict(seq=None, sent_ns=now_ns,
+            deadline_ns=now_ns + int(float(self.get_parameter("arm_result_timeout_s").value) * 1e9),
+            done=on_complete, result=on_result)
+        try:
+            future = self._arm_pose_cli.call_async(req)
+        except Exception:
+            self._arm_pending.pop(token, None)
+            return False
         self._pending_pose_futures.append(future)
         future.add_done_callback(
             lambda f, _x=x, _y=y, _z=z, _label=label, _done=on_complete:
-            self._on_pose_result(f, _x, _y, _z, _label, _done))
+            self._on_pose_result(f, _x, _y, _z, _label, _done, token=token))
         self._pending_pose_futures[:] = [
             pf for pf in self._pending_pose_futures if not pf.done()]
         return True
 
-    def _on_pose_result(
-        self,
-        future,
-        x: float,
-        y: float,
-        z: float,
-        label: str = "目标位置",
-        on_complete: Optional[Callable[[bool], None]] = None,
-    ) -> None:
-        success = False
+    def _on_pose_result(self, future, x, y, z, label="目标位置", on_complete=None, *, token=None):
+        pending = self._arm_pending.get(token)
+        if pending is None:
+            return
         try:
-            result = future.result()
-            if result is not None and result.success:
-                success = True
-                self.get_logger().info(
-                    f"→ MCU OK ({label}): x={x:.4f} y={y:.4f} z={z:.4f} m  "
-                    f"seq={result.command_seq}")
-            else:
-                msg = result.message if result else "无响应"
-                self.get_logger().error(
-                    f"→ MCU FAIL ({label}): {msg}  "
-                    f"(x={x:.4f} y={y:.4f} z={z:.4f})")
-        except Exception as e:
-            self.get_logger().error(
-                f"→ MCU 调用异常 ({label}): {e}  "
-                f"(x={x:.4f} y={y:.4f} z={z:.4f})")
-        finally:
-            if on_complete is not None:
-                on_complete(success)
+            response = future.result()
+            if response is None or not response.success:
+                self._finish_arm_result(token, False, "MCU_REJECTED", 0)
+                return
+            seq = int(response.command_seq)
+            pending["seq"] = seq
+            early = self._early_arm_results.pop(seq, None)
+            if early is not None and early[0] >= pending["sent_ns"]:
+                self._on_arm_command_result(early[1])
+        except Exception as exc:
+            self.get_logger().error(f"SetArmPose response failed: {exc}")
+            self._finish_arm_result(token, False, "MCU_REJECTED", 0)
+
+    def _finish_arm_result(self, token, success, reason, seq):
+        pending = self._arm_pending.pop(token, None)
+        if pending is None:
+            return
+        if pending["done"] is not None:
+            pending["done"](success)
+        if pending["result"] is not None:
+            pending["result"](success, reason, seq)
+
+    def _on_arm_command_result(self, msg):
+        seq = int(msg.command_seq)
+        for token, pending in list(self._arm_pending.items()):
+            if pending["seq"] == seq:
+                result = int(msg.result)
+                reason = "ACCEPTED" if result == 0 else "MCU_TIMEOUT" if result == 5 else "MCU_REJECTED"
+                self.get_logger().info(f"ARM seq={seq} result={result} status={msg.arm_status}")
+                self._finish_arm_result(token, result == 0, reason, seq)
+                return
+        if any(p["seq"] is None for p in self._arm_pending.values()):
+            self._early_arm_results[seq] = (int(self.get_clock().now().nanoseconds), msg)
+            while len(self._early_arm_results) > 64:
+                self._early_arm_results.popitem(last=False)
+
+    def _check_arm_results(self):
+        now_ns = int(self.get_clock().now().nanoseconds)
+        for token, pending in list(self._arm_pending.items()):
+            if now_ns >= pending["deadline_ns"]:
+                self._finish_arm_result(token, False, "MCU_TIMEOUT", pending["seq"] or 0)
+        pick = self._active_pick
+        if pick is not None and pick["accepted"] and now_ns >= pick["deadline_ns"]:
+            self._finish_pick(pick, False, "APPROACH_TIMEOUT", pick["seq"])
+
+    def _publish_pick_result(self, request_id, success, reason, seq=0, target=None):
+        msg = PickResult()
+        msg.request_id, msg.command_seq = int(request_id), int(seq)
+        msg.success, msg.reason = bool(success), reason
+        if success and target is not None:
+            msg.x_m, msg.y_m, msg.z_m = target["x"], target["y"], target["z"]
+            msg.pitch_rad, msg.yaw_rad = target["pitch"], target["yaw"]
+        self.pick_result_pub.publish(msg)
+
+    def _finish_pick(self, pick, success, reason, seq):
+        if self._active_pick is not pick:
+            return
+        self._active_pick = None
+        self._publish_pick_result(pick["request_id"], success, reason, seq, pick)
+
+    def _send_pick_stage(self, pick):
+        z = pick["approach_z"] if pick["stage"] == "approach" else pick["z"]
+        sent = self._send_pose(pick["x"], pick["y"], z, pick["speed"],
+            pitch=pick["pitch"], yaw=pick["yaw"],
+            on_result=lambda ok, reason, seq: self._on_pick_command_result(pick, ok, reason, seq))
+        if not sent:
+            self._finish_pick(pick, False, "MCU_UNAVAILABLE", 0)
+
+    def _on_pick_command_result(self, pick, success, reason, seq):
+        if self._active_pick is not pick:
+            return
+        if not success or pick["stage"] == "contact":
+            self._finish_pick(pick, success, reason, seq)
+            return
+        pick["accepted"], pick["seq"] = True, seq
+        pick["accepted_ns"] = int(self.get_clock().now().nanoseconds)
+        pick["deadline_ns"] = pick["accepted_ns"] + int(
+            float(self.get_parameter("pick_approach_timeout_s").value) * 1e9)
+
+    def _check_pick_approach(self, transform, stamp_ns):
+        pick = self._active_pick
+        if pick is None or not pick["accepted"]:
+            return
+        now_ns = int(self.get_clock().now().nanoseconds)
+        if stamp_ns < pick["accepted_ns"] or not 0 <= now_ns - stamp_ns <= float(
+                self.get_parameter("vision_pose_max_age_s").value) * 1e9:
+            return
+        target = VisionPoseTarget("approach", True,
+            np.array([pick["x"], pick["y"], pick["approach_z"]]), direction_axis(pick["pitch"], pick["yaw"]))
+        if vision_pose_for_transform(transform, [target],
+                float(self.get_parameter("initial_position_tolerance_m").value),
+                float(self.get_parameter("vision_axis_tolerance_deg").value)) is None:
+            return
+        pick["stage"], pick["accepted"] = "contact", False
+        self._send_pick_stage(pick)
 
 
 def main(args=None):

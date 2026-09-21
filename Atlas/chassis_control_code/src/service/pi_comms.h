@@ -7,6 +7,7 @@
  */
 
 #include "serial_arm/five_dof_arm_kine.h"
+#include "arm.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,6 +19,21 @@ typedef enum {
     PI_COMMS_STATUS_INVALID_PARAM,
     PI_COMMS_STATUS_DEPENDENCY_MISSING
 } PiCommsStatus;
+
+/* ACCEPTED means IK/servo command accepted, not motion completed */
+typedef enum {
+    PI_COMMS_ARM_RESULT_ACCEPTED = 0,
+    PI_COMMS_ARM_RESULT_NO_SOLUTION = 1,
+    PI_COMMS_ARM_RESULT_INVALID_PARAM = 2,
+    PI_COMMS_ARM_RESULT_KINEMATICS_FAILED = 3,
+    PI_COMMS_ARM_RESULT_SERVO_FAILED = 4,
+    PI_COMMS_ARM_RESULT_TIMEOUT = 5,
+    PI_COMMS_ARM_RESULT_UNKNOWN = 6
+} PiCommsArmResult;
+
+/* arm_status is the original ArmStatus, or -1 when execution never started */
+bool pi_comms_send_arm_command_result(uint16_t command_seq, PiCommsArmResult result, int32_t arm_status);
+bool pi_comms_report_arm_result(uint16_t command_seq, ArmStatus arm_status);
 
 typedef struct {
     bool (*write)(const char* data, uint32_t len);
@@ -49,6 +65,7 @@ typedef struct {
     float x;
     float y;
     float z;
+    /* 工具 +Z 轴方向：pitch 为 [-pi/2, pi/2] 仰角，yaw 为基座 XY 平面方位角 */
     float pitch;
     float yaw;
 } PiCommsArmPose5dTarget;
@@ -60,6 +77,7 @@ typedef struct {
 } PiCommsArmPositionTarget;
 
 typedef struct {
+    /* 与 POSE_5D 相同，表示工具 +Z 轴方向，不是末端 RPY 欧拉角 */
     float pitch;
     float yaw;
 } PiCommsArmOrientation2dTarget;

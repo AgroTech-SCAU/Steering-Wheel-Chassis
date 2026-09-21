@@ -239,6 +239,13 @@ static bool app_runtime_apply_safety(void) {
     const AppManualMode manual_mode = app_fsm_get_manual_mode();
     bool allow_control = true;
 
+    if(state != APP_FSM_STATE_AUTO_PI) {
+        PiCommsArmControl command;
+        if(pi_comms_take_arm_control(&command)) {
+            (void)pi_comms_send_arm_command_result(command.command_seq, PI_COMMS_ARM_RESULT_UNKNOWN, -1);
+        }
+    }
+
     if(state == APP_FSM_STATE_IDLE || state == APP_FSM_STATE_FINISHED) {
         (void)app_control_stop_all();
         return false;
@@ -319,6 +326,10 @@ static bool app_runtime_apply_safety(void) {
         }
 
         if(!arm.is_ready() && app_runtime_pi_arm_cmd_pending()) {
+            PiCommsArmControl command;
+            if(pi_comms_take_arm_control(&command)) {
+                (void)pi_comms_report_arm_result(command.command_seq, ARM_NOT_INITIALIZED);
+            }
             app_runtime_raise_fault_once(APP_FAULT_SOURCE_ARM,
                                          APP_FAULT_LEVEL_RECOVERABLE,
                                          APP_RUNTIME_ARM_NOT_READY_FAULT_CODE);

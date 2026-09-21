@@ -165,12 +165,12 @@ extern const struct ArmInterface {
      */
     ArmStatus (*move_pose)(const FiveDofArmPose* target, float speed_rad_s);
     /**
-     * @brief 按目标位姿求逆解并执行运动，仅使用 5D 约束
+     * @brief 按目标位置和工具轴方向求逆解并执行运动，仅使用 5D 约束
      * @param x 目标 x，单位 m
      * @param y 目标 y，单位 m
      * @param z 目标 z，单位 m
-     * @param pitch 目标 pitch，单位 rad
-     * @param yaw 目标 yaw，单位 rad
+     * @param pitch 工具 +Z 轴相对基座 XY 平面的仰角，单位 rad；竖直向下为 -pi/2
+     * @param yaw 工具 +Z 轴在基座 XY 平面投影的方位角，单位 rad
      * @param speed_rad_s 目标速度，单位 rad/s
      * @return ArmStatus 服务状态码
      */
@@ -184,6 +184,13 @@ extern const struct ArmInterface {
      * @return ArmStatus 服务状态码
      */
     ArmStatus (*move_position)(float x, float y, float z, float speed_rad_s);
+    /**
+     * @brief 仅修改工具 +Z 轴方向并保持当前位置
+     * @param pitch 工具 +Z 轴相对基座 XY 平面的仰角，单位 rad；竖直向下为 -pi/2
+     * @param yaw 工具 +Z 轴在基座 XY 平面投影的方位角，单位 rad
+     * @param speed_rad_s 目标速度，单位 rad/s
+     * @return ArmStatus 服务状态码
+     */
     ArmStatus (*move_orientation_2d)(float pitch, float yaw, float speed_rad_s);
     /**
      * @brief 运动到目标末端姿态，保持当前末端位置
@@ -310,6 +317,13 @@ ArmStatus arm_move_pose_5d(float x, float y, float z, float pitch, float yaw, fl
  * @return ArmStatus 服务状态码
  */
 ArmStatus arm_move_position(float x, float y, float z, float speed_rad_s);
+/**
+ * @brief 仅修改工具 +Z 轴方向并保持当前位置
+ * @param pitch 工具 +Z 轴相对基座 XY 平面的仰角，单位 rad；竖直向下为 -pi/2
+ * @param yaw 工具 +Z 轴在基座 XY 平面投影的方位角，单位 rad
+ * @param speed_rad_s 目标速度，单位 rad/s
+ * @return ArmStatus 服务状态码
+ */
 ArmStatus arm_move_orientation_2d(float pitch, float yaw, float speed_rad_s);
 
 /**
