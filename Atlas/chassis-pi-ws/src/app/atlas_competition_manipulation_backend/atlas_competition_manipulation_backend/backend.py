@@ -210,7 +210,7 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("default_speed_rad_s", 0.8).value
         )
         self.joint_tolerance_rad = float(
-            self.declare_parameter("joint_tolerance_rad", 0.06).value
+            self.declare_parameter("joint_tolerance_rad", 0.10).value
         )
         self.pose_validation_tolerance_m = float(
             self.declare_parameter("pose_validation_tolerance_m", 0.08).value

@@ -39,7 +39,9 @@ atlas_competition_manipulation_backend:
     # 放置释放后的静置时间，和抓取保持时间分开配置
     suction_settle_s: 0.45
     default_speed_rad_s: 0.8
-    joint_tolerance_rad: 0.06
+    # 到位判断放宽到与 handeye_bridge 的 5° 轴容差同级(≈5.7°)，
+    # 避免舵机回程差/微抖把"已到位"误判成超时。TCP 位置另有 pose_validation 把关。
+    joint_tolerance_rad: 0.10
     pose_validation_tolerance_m: 0.08
 
     # 到位后静置时间：机械臂完全静止后再开始视觉检测，避免"还没稳定就开"
