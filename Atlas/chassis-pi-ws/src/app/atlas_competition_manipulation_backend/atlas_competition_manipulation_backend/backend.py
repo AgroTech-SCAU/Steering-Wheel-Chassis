@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Optional
 
@@ -449,6 +450,7 @@ class CompetitionManipulationBackend(Node):
                 if item is not None and item[0] >= since:
                     msg = item[1]
                     if int(msg.result) == 0:
+                        self.get_logger().info(f"机械臂命令已接受 seq={seq}")
                         return True
                     code = int(msg.result)
                     reason = names[code] if 0 <= code < len(names) else "UNKNOWN"
@@ -458,6 +460,10 @@ class CompetitionManipulationBackend(Node):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._last_failure = f"MCU_TIMEOUT seq={seq}"
+                    self.get_logger().error(
+                        f"等待机械臂接受超时 seq={seq}：MCU 未回 /mcu/arm_command_result "
+                        f"(命令可能没发出或 MCU 没跑运动回路)"
+                    )
                     return False
                 self._result_cv.wait(timeout=min(.05, remaining))
         return False
@@ -675,28 +681,86 @@ class CompetitionManipulationBackend(Node):
 
     def _wait_joint_target(self, target: list[float], timeout_s: float, since: float) -> bool:
         deadline = time.monotonic() + timeout_s
+        next_diagnostic = time.monotonic() + 5.0
         stable = 0
         last_sample = since
+        saw_fresh_feedback = False
+        last_error = math.inf
+        last_errors = None
+        last_joints = None
         with self._joint_cv:
             while time.monotonic() < deadline:
                 if self._cancelled():
                     return False
                 if (self._latest_joints is not None and self._latest_joint_time > last_sample and
                         time.monotonic() - self._latest_joint_time <= self.pose_feedback_timeout_s):
+                    saw_fresh_feedback = True
                     last_sample = self._latest_joint_time
-                    error = max(abs(a - b) for a, b in zip(self._latest_joints, target))
+                    # 关节角必须按 2π 归一化后比较：零位 q2 目标≈2π(6.28)，
+                    # 而舵机反馈常回绕到 0 附近，直接相减会永远到不了位。
+                    errors = [
+                        abs((a - b + math.pi) % (2.0 * math.pi) - math.pi)
+                        for a, b in zip(self._latest_joints, target)
+                    ]
+                    error = max(errors)
+                    last_error = error
+                    last_errors = errors
+                    last_joints = list(self._latest_joints)
                     if error <= self.joint_tolerance_rad:
                         stable += 1
                         if stable >= max(1, self.stable_samples):
                             return True
                     else:
                         stable = 0
+                # The mission watchdog can cancel before this wait expires.
+                # Report feedback while waiting so cancellation cannot hide it.
+                now = time.monotonic()
+                if now >= next_diagnostic:
+                    feedback_age = (
+                        f"{now - self._latest_joint_time:.2f}s"
+                        if self._latest_joints is not None else "none"
+                    )
+                    self.get_logger().warn(
+                        f"等待关节到位 elapsed={now - since:.1f}s "
+                        f"fresh_received={saw_fresh_feedback} feedback_age={feedback_age} "
+                        f"target={[round(v, 3) for v in target]} "
+                        f"actual={[round(v, 3) for v in (last_joints or [])]} "
+                        f"error={[round(v, 3) for v in (last_errors or [])]} "
+                        f"tol={self.joint_tolerance_rad:.3f}rad "
+                        f"stable={stable}/{max(1, self.stable_samples)}"
+                    )
+                    next_diagnostic = now + 5.0
                 self._joint_cv.wait(timeout=0.05)
+        if not saw_fresh_feedback:
+            # 区分两种卡死：反馈从没新鲜过（MCU/舵机数据断了） vs 到位但差一点点（关节超差）
+            self._last_failure = (
+                "JOINT_FEEDBACK_TIMEOUT：等待关节到位期间没有收到任何新鲜反馈，"
+                "说明 /arm/joint_states 没在更新（MCU 运动/传感回路未运行或串口数据断了）"
+            )
+            self.get_logger().error(
+                f"关节到位超时(无反馈) target={[round(v, 3) for v in target]} "
+                f"tol={self.joint_tolerance_rad:.3f}rad timeout={timeout_s:.1f}s"
+            )
+        else:
+            self._last_failure = (
+                f"JOINT_ARRIVAL_TIMEOUT max_error={last_error:.3f}rad "
+                f"(tol={self.joint_tolerance_rad:.3f}rad)"
+            )
+            self.get_logger().error(
+                f"关节到位超时(未收敛) target={[round(v, 3) for v in target]} "
+                f"actual={[round(v, 3) for v in (last_joints or [])]} "
+                f"error={[round(e, 3) for e in (last_errors or [])]} "
+                f"timeout={timeout_s:.1f}s"
+            )
         return False
 
     def _move_named_pose(self, pose_name: str, arena: str = "", area: str = "", slot: int = 0) -> bool:
         pose = resolve_arm_pose(
             self.arm_motion, pose_name, arena=arena or None, area=area or None, slot=slot
+        )
+        self.get_logger().info(
+            f"下发关节目标 {pose_name}: arena={arena or '-'} slot={slot} "
+            f"joints_rad={[round(float(v), 4) for v in pose['joints_rad']]}"
         )
         req = SetArmJoints.Request()
         req.joints_rad = [float(v) for v in pose["joints_rad"]]
@@ -817,6 +881,11 @@ class CompetitionManipulationBackend(Node):
         self._last_failure = ""
         try:
             arena = str(getattr(request, "arena", "") or "").strip().upper()
+            self.get_logger().info(
+                f"机械臂任务开始 task={task!r} arena={arena!r} "
+                f"waypoint={request.waypoint_id!r} slot={int(request.slot)} "
+                f"layer={int(request.layer)}"
+            )
             if task == "pre_recognition":
                 ok = self._do_pre_recognition(arena, request.waypoint_id, int(request.slot))
             elif task == "view_scan":
@@ -860,7 +929,10 @@ class CompetitionManipulationBackend(Node):
                     message=f"{task} 执行失败: {self._last_failure or '未到位'}",
                 )
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().exception(f"机械臂任务异常: {exc}")
+            # RcutilsLogger does not provide logging.Logger.exception().
+            self.get_logger().error(
+                f"机械臂任务异常: {exc}\n{traceback.format_exc()}"
+            )
             if not self._cancelled():
                 self._set_status(
                     ManipulationStatus.STATE_FAILED,
@@ -873,7 +945,7 @@ class CompetitionManipulationBackend(Node):
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="move_to_observe_pose",
-            message=f"移动到 {area} 固定观察或预备位",
+            message=f"移动到 {arena} {area} slot={slot} 固定观察或预备位",
         )
         if area == "pickup":
             ok = self._move_named_pose("pickup_observe", arena=arena, slot=slot)

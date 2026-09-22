@@ -14,7 +14,7 @@ def node():
     n._cancelled = lambda: False
     n.arm_result_timeout_s = 0.02
     n._last_failure = ''
-    n.get_logger = lambda: NS(error=lambda msg: None)
+    n.get_logger = lambda: NS(error=lambda msg: None, info=lambda msg: None, warn=lambda msg: None)
     return n
 
 
@@ -152,3 +152,32 @@ def test_pose_callback_rejects_stale_and_duplicate_source_stamps():
     assert n._latest_pose is not None
     n._on_arm_pose(msg)
     assert n._latest_pose_time==received
+
+
+def _joint_node(joints):
+    n=node(); n._joint_cv=threading.Condition()
+    n._latest_joints=joints
+    n._latest_joint_time=time.monotonic()
+    n.pose_feedback_timeout_s=.5
+    n.joint_tolerance_rad=.06
+    n.stable_samples=1
+    return n
+
+
+def test_joint_target_2pi_wrap_is_detected_as_arrival():
+    # q2 目标≈2π(6.28)，舵机反馈常回绕到 0 附近；直接相减会永远判不到位。
+    target=[3.1217, 1.5723, 6.2801, 3.1631, 3.2183]
+    wrapped=[3.1217, 1.5723, 0.0, 3.1631, 3.2183]
+    n=_joint_node(wrapped)
+    since=time.monotonic()-0.01
+    assert n._wait_joint_target(target, 0.5, since)
+
+
+def test_joint_target_real_error_still_times_out():
+    # 2π 归一化不能把真实超差也一起放过。
+    target=[3.1217, 1.5723, 6.2801, 3.1631, 3.2183]
+    off=[3.1217, 1.5723, 6.0, 3.1631, 3.2183]  # q2 差 0.28rad，远超 0.06rad 容差
+    n=_joint_node(off)
+    since=time.monotonic()-0.01
+    assert not n._wait_joint_target(target, 0.05, since)
+    assert 'JOINT_ARRIVAL_TIMEOUT' in n._last_failure

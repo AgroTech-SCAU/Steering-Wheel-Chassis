@@ -148,7 +148,13 @@ def test_pre_recognition_reports_status_and_moves_to_pickup_observe(monkeypatch)
 
     assert node._do_pre_recognition("A", "pickup", 3) is True
     assert status_calls == [
-        (1, {"step": "move_to_observe_pose", "message": "移动到 pickup 固定观察或预备位"})
+        (
+            1,
+            {
+                "step": "move_to_observe_pose",
+                "message": "移动到 A pickup slot=3 固定观察或预备位",
+            },
+        )
     ]
     assert move_calls == [("pickup_observe", "A", "", 3)]
 
