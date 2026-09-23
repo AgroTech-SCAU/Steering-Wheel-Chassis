@@ -77,6 +77,8 @@ static ms_t s_stop_arm_retry_last_ms = 0u;
 static ms_t s_stop_arm_fail_log_last_ms = 0u;
 static ms_t s_arm_rejected_log_timer = 0u;
 static ms_t s_command_invalid_log_timer = 0u;
+static bool s_remote_arm_suction_log_valid = false;
+static bool s_last_remote_arm_suction_enable = false;
 
 // ! ========================= 私 有 函 数 声 明 ========================= ! //
 
@@ -269,6 +271,8 @@ void app_control_init(void) {
     s_stop_arm_fail_log_last_ms = 0u;
     s_arm_rejected_log_timer = 0u;
     s_command_invalid_log_timer = 0u;
+    s_remote_arm_suction_log_valid = false;
+    s_last_remote_arm_suction_enable = false;
 }
 
 AppControlResult app_control_apply_manual_chassis_pc_arm(void) {
@@ -577,35 +581,53 @@ static AppControlResult app_control_apply_remote_chassis(const RemoteState* stat
 static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
     const uint16_t swb = state->rc_data.channel[REMOTE_CH_SWB];
     const uint16_t swc = state->rc_data.channel[REMOTE_CH_SWC];
+    const uint16_t vra = state->rc_data.channel[REMOTE_CH_VRA];
     const uint16_t vrb = state->rc_data.channel[REMOTE_CH_VRB];
     const float ch_left_x = app_control_channel_to_norm(state->rc_data.channel[REMOTE_CH_LEFT_X], REMOTE_DEADBAND);
     const float ch_right_y = app_control_channel_to_norm(state->rc_data.channel[REMOTE_CH_RIGHT_Y], REMOTE_DEADBAND);
     const float ch_right_x = app_control_channel_to_norm(state->rc_data.channel[REMOTE_CH_RIGHT_X], REMOTE_DEADBAND);
+    const bool suction_enable = (vra <= REMOTE_VR_LOW_THRESHOLD);
     const RemoteArmSpeedLimit speed_limit = app_control_get_arm_speed_limit(swb);
     const FiveDofArmJointArray* current_joints;
     const FiveDofArmPose* current_pose;
-    AppControlResult result = APP_CONTROL_RESULT_SKIPPED;
+    SuctionPinState suction_pin_state = { 0 };
+    AppControlResult result = app_control_result_from_arm(ARM_OK,
+                                                          suction_set(suction_enable),
+                                                          "remote arm suction set");
+
+    if(!s_remote_arm_suction_log_valid || s_last_remote_arm_suction_enable != suction_enable) {
+        (void)suction_get_pin_state(&suction_pin_state);
+        log_info("APP_CONTROL remote arm VRA suction %s: vra=%u threshold=%u pin1=%u pin2=%u",
+                 suction_enable ? "on" : "off",
+                 (unsigned int)vra,
+                 (unsigned int)REMOTE_VR_LOW_THRESHOLD,
+                 suction_pin_state.pin1_high ? 1u : 0u,
+                 suction_pin_state.pin2_high ? 1u : 0u);
+        s_remote_arm_suction_log_valid = true;
+        s_last_remote_arm_suction_enable = suction_enable;
+    }
 
     if(!arm.is_ready()) {
         s_last_arm_swc = swc;
         log_warn("APP_CONTROL remote arm skipped: arm not ready");
-        return APP_CONTROL_RESULT_SKIPPED;
+        return app_control_merge_result(result, APP_CONTROL_RESULT_SKIPPED);
     }
 
     if(swc == REMOTE_SW_HIGH) {
-        AppControlResult result = APP_CONTROL_RESULT_SKIPPED;
+        AppControlResult arm_result = APP_CONTROL_RESULT_SKIPPED;
 
         if(s_last_arm_swc != REMOTE_SW_HIGH) {
-            result = app_control_result_from_arm(arm.move_servo_zero(speed_limit.servo_speed_rad_s), suction_set(false),
-                                                 "remote arm move_servo_zero");
+            arm_result = app_control_result_from_arm(arm.move_servo_zero(speed_limit.servo_speed_rad_s),
+                                                     SUCTION_RESULT_OK,
+                                                     "remote arm move_servo_zero");
         }
         s_last_arm_swc = swc;
-        return result;
+        return app_control_merge_result(result, arm_result);
     }
 
     if(vrb > REMOTE_VR_LOW_THRESHOLD) {
         s_last_arm_swc = swc;
-        return APP_CONTROL_RESULT_SKIPPED;
+        return app_control_merge_result(result, APP_CONTROL_RESULT_SKIPPED);
     }
 
     current_joints = arm.get_current_joints();
@@ -613,7 +635,7 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
     if(current_joints == NULL || current_pose == NULL) {
         s_last_arm_swc = swc;
         log_warn("APP_CONTROL remote arm skipped: arm state unavailable");
-        return APP_CONTROL_RESULT_SKIPPED;
+        return app_control_merge_result(result, APP_CONTROL_RESULT_SKIPPED);
     }
 
     if(swc == REMOTE_SW_LOW) {
@@ -626,14 +648,21 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
         target_joints.q[3] = current_joints->q[3] + ch_right_y * 5 * speed_limit.end_pitch_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         target_joints.q[4] = current_joints->q[4] + ch_right_x * 5 * speed_limit.end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
         s_last_arm_swc = swc;
-        return app_control_result_from_arm(arm.move_joints(&target_joints, speed_limit.servo_speed_rad_s), suction_set(false),
-                                           "remote arm move_joints");
+        return app_control_merge_result(result,
+                                        app_control_result_from_arm(arm.move_joints(&target_joints,
+                                                                                    speed_limit.servo_speed_rad_s),
+                                                                    SUCTION_RESULT_OK,
+                                                                    "remote arm move_joints"));
     }
 
     if(ch_left_x != 0.0f) {
         const float target_base_yaw = current_joints->q[0] + ch_left_x * 5 * speed_limit.base_end_yaw_rate_rad_s * REMOTE_CONTROL_PERIOD_S;
-        result = app_control_result_from_arm(arm.move_joint(0u, target_base_yaw, speed_limit.servo_speed_rad_s), suction_set(false),
-                                             "remote arm move_joint");
+        result = app_control_merge_result(result,
+                                          app_control_result_from_arm(arm.move_joint(0u,
+                                                                                    target_base_yaw,
+                                                                                    speed_limit.servo_speed_rad_s),
+                                                                      SUCTION_RESULT_OK,
+                                                                      "remote arm move_joint"));
         s_last_arm_swc = swc;
         if(result != APP_CONTROL_RESULT_OK) {
             return result;
@@ -657,7 +686,7 @@ static AppControlResult app_control_apply_remote_arm(const RemoteState* state) {
                                                                                           target_y,
                                                                                           target_z,
                                                                                           speed_limit.servo_speed_rad_s),
-                                                                        suction_set(false),
+                                                                        SUCTION_RESULT_OK,
                                                                         "remote arm move_position"));
         }
     }

@@ -10,9 +10,9 @@
 
 // 定义吸盘继电器控制引脚
 // 请根据实际硬件连接修改以下定义
-#define SUCTION_RELAY_PIN GPIO_PIN_9
-#define SUCTION_RELAY_PORT GPIOE
-#define SUCTION_RELAY_PIN2 GPIO_PIN_13
+#define SUCTION_RELAY_PIN GPIO_PIN_2
+#define SUCTION_RELAY_PORT GPIOA
+#define SUCTION_RELAY_PIN2 GPIO_PIN_9
 #define SUCTION_RELAY_PORT2 GPIOE
 
 // ! ========================= 变 量 声 明 ========================= ! //
@@ -57,4 +57,14 @@ SuctionResult suction_set(bool enable) {
 
 bool suction_get_state(void) {
     return s_suction_enabled;
+}
+
+bool suction_get_pin_state(SuctionPinState* out) {
+    if(out == 0) {
+        return false;
+    }
+
+    out->pin1_high = HAL_GPIO_ReadPin(SUCTION_RELAY_PORT, SUCTION_RELAY_PIN) == GPIO_PIN_SET;
+    out->pin2_high = HAL_GPIO_ReadPin(SUCTION_RELAY_PORT2, SUCTION_RELAY_PIN2) == GPIO_PIN_SET;
+    return true;
 }

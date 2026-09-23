@@ -19,6 +19,11 @@ typedef enum {
     SUCTION_RESULT_NOT_INITIALIZED
 } SuctionResult;
 
+typedef struct {
+    bool pin1_high;
+    bool pin2_high;
+} SuctionPinState;
+
 // ! ========================= 接 口 函 数 声 明 ========================= ! //
 
 /**
@@ -38,5 +43,7 @@ SuctionResult suction_set(bool enable);
  * @return bool true-吸盘已打开, false-吸盘已关闭
  */
 bool suction_get_state(void);
+
+bool suction_get_pin_state(SuctionPinState* out);
 
 #endif
