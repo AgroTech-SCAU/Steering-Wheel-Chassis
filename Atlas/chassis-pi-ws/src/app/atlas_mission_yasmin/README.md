@@ -4,9 +4,9 @@
 
 主流程：
 
-`WAIT_AUTO -> ARM_ZERO -> NAV_ORIGIN -> INSPECT_SORT_ZONE -> ARM_NAV_SAFE_INITIAL -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> ...`
+`WAIT_AUTO -> ARM_ZERO -> INSPECT_SORT_ZONE -> NAV_ORIGIN -> ARM_NAV_SAFE_INITIAL -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> ...`
 
-智能分拣区一次识别确定 `arena=A/B` 与 gear/t_bolt 的园区映射，导航后端按 arena 选择对应半图
+智能分拣区先由机械臂移动到观察位，一次识别确定 `arena=A/B` 与 gear/t_bolt 的园区映射；随后 `NAV_ORIGIN` 将该 arena 传给导航后端，只加载对应半图完成地图匹配与原点校正
 
 ## 货物调度
 

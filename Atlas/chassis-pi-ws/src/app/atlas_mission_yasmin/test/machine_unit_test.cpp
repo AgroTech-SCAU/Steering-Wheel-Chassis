@@ -47,9 +47,9 @@ TEST_F(MachineUnitTest, AutonomousMachineUsesSafeArmKeyframeTopology)
   }
 
   const auto & transitions = machine->get_transitions();
-  EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "NAV_ORIGIN");
-  EXPECT_EQ(transitions.at("NAV_ORIGIN").at("ok"), "INSPECT_SORT_ZONE");
-  EXPECT_EQ(transitions.at("INSPECT_SORT_ZONE").at("ok"), "ARM_NAV_SAFE_INITIAL");
+  EXPECT_EQ(transitions.at("ARM_ZERO").at("ok"), "INSPECT_SORT_ZONE");
+  EXPECT_EQ(transitions.at("INSPECT_SORT_ZONE").at("ok"), "NAV_ORIGIN");
+  EXPECT_EQ(transitions.at("NAV_ORIGIN").at("ok"), "ARM_NAV_SAFE_INITIAL");
   EXPECT_EQ(transitions.at("OBSERVE_PICKUP").at("next"), "ARM_NAV_SAFE_TO_PICKUP");
   EXPECT_EQ(transitions.at("PICK").at("ok"), "RETURN_PICKUP_OBSERVE");
   EXPECT_EQ(transitions.at("PICK").at("next"), "ARM_NAV_SAFE_TO_PICKUP");

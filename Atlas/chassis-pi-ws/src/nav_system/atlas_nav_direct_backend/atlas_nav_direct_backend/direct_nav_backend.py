@@ -298,6 +298,17 @@ class DirectNavBackend(Node):
             response.message = "waypoint_id is required"
             return response
 
+        try:
+            # Arena must be decided by the sorting observation before any
+            # navigation starts. Lock it here so origin localization can only
+            # load/match the already selected arena map.
+            arena = self.arena_lock.accept(request.arena)
+        except CompetitionConfigError as exc:
+            response.success = False
+            response.message = str(exc)
+            self.fail(3104, response.message)
+            return response
+
         timeout = float(request.timeout_s) if request.timeout_s > 0.0 else self.default_waypoint_timeout_s
         self.active_waypoint = waypoint_id
         self.active_timeout_s = timeout
@@ -312,17 +323,17 @@ class DirectNavBackend(Node):
         if waypoint_id == "origin":
             self.target_map = Pose2D(0.0, 0.0, 0.0)
             if self.frozen_map_to_odom is None:
-                if not self.begin_startup_localization(str(request.arena or "").strip().upper()):
+                if not self.begin_startup_localization(arena):
                     response.success = False
                     response.message = self.message
                     return response
                 response.success = True
-                response.message = "startup localization accepted"
+                response.message = f"startup localization accepted for arena {arena}"
                 self.publish_status()
                 return response
             self.begin_tracking_target()
             response.success = True
-            response.message = "origin correction accepted"
+            response.message = f"origin correction accepted for arena {arena}"
             return response
 
         if self.frozen_map_to_odom is None:
@@ -332,7 +343,6 @@ class DirectNavBackend(Node):
             return response
 
         try:
-            arena = self.arena_lock.accept(request.arena)
             semantic = resolve_navigation_waypoint(
                 self.competition.navigation,
                 arena,

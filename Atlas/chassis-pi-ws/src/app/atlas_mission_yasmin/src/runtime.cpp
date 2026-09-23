@@ -568,8 +568,10 @@ SortingResult Runtime::inspect_sorting_zone()
 
 ActionResult Runtime::navigate(const std::string & waypoint_id)
 {
-  // origin is intentionally executed before vision determines arena A/B.
-  if (waypoint_id != "origin" && model_.arena() != "A" && model_.arena() != "B") {
+  // All competition navigation, including origin localization, must use the
+  // arena determined by INSPECT_SORT_ZONE. This prevents startup localization
+  // from probing both maps before the arm/camera has classified A/B.
+  if (model_.arena() != "A" && model_.arena() != "B") {
     return ActionResult::kFailed;
   }
   const auto * target = waypoint(waypoint_id);

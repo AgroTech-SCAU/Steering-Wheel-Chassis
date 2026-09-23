@@ -40,9 +40,10 @@ def test_startup_localization_never_accepts_timeout_with_too_few_samples():
     assert "insufficient localization samples" in text
 
 
-def test_origin_request_can_limit_startup_localization_to_explicit_arena():
+def test_origin_request_requires_and_locks_explicit_arena_before_map_matching():
     text = (ROOT / "atlas_nav_direct_backend/direct_nav_backend.py").read_text()
-    assert "begin_startup_localization(str(request.arena or \"\").strip().upper())" in text
+    assert "arena = self.arena_lock.accept(request.arena)" in text
+    assert "begin_startup_localization(arena)" in text
     assert "localization_candidates(" in text
     assert "arena=arena" in text
 

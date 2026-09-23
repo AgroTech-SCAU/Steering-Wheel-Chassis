@@ -1,6 +1,6 @@
 # Atlas ：一次激光对齐 + Odom 直达
 
-正式比赛默认使用 `atlas_nav_direct_backend`。进入全自主后，第一次 `origin` 导航会临时启动 Cartographer 纯定位，通过已标定地图确认机器人相对中转区最优位姿（地图原点）的真实偏差；定位稳定后冻结 `map -> odom` 并关闭临时定位进程。若存在偏差，底盘先仅靠 MCU 融合 `/odom` 回到 `(0,0,0)`，成功后才开始原有智能分拣扫描。后续 `pickup / park_1 / park_2` 全部使用冻结坐标关系和 `/odom` 直接闭环，不再让 Navfn、DWB、costmap 或 BT Navigator 参与控制。
+正式比赛默认使用 `atlas_nav_direct_backend`。进入全自主后，机械臂/视觉先完成智能分拣观察并判定 `arena=A/B`；随后第一次 `origin` 导航只加载该 arena 对应的已标定地图与 pbstream，临时启动 Cartographer 纯定位完成地图匹配，确认机器人相对中转区最优位姿（地图原点）的真实偏差。定位稳定后冻结 `map -> odom` 并关闭临时定位进程；若存在偏差，底盘仅靠 MCU 融合 `/odom` 回到 `(0,0,0)`。后续 `pickup / park_1 / park_2` 全部使用冻结坐标关系和 `/odom` 直接闭环，不再让 Navfn、DWB、costmap 或 BT Navigator 参与控制。
 
 速度输出仍为 `/atlas/navigation/cmd_vel`，由 YASMIN 安全门控后转发到 `/motor_cmd_vel`。原 `atlas_nav_full_backend + at_nav2` 完整 Nav2 链路仍保留在仓库中作为备用和调试方案。
 
