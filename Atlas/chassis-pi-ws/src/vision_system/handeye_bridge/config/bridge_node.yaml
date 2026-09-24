@@ -39,8 +39,8 @@ handeye_bridge:
     initial_z_m: 0.3570           # 已实测
     initial_pitch_rad: -1.5707963267948966  # base-frame tool z points down
     initial_yaw_rad: 0.0  # azimuth is free for a vertical tool axis
-    # 与 MCU 上电调零 ARM_SERVO_SPEED_RAD_S 一致
-    initial_speed_rad_s: 3.14
+    # 与 MCU 遥控器机械臂高速档一致
+    initial_speed_rad_s: 50.24
     # MCU接受命令后，/arm/pose连续满足这些条件才发布ready=true
     initial_position_tolerance_m: 0.020
     initial_stable_samples: 5

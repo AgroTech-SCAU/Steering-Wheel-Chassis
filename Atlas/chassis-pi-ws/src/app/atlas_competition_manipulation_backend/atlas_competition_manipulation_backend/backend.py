@@ -236,7 +236,7 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("pick_bridge.timeout_s", 10.0).value
         ))
         self.default_speed_rad_s = float(
-            self.declare_parameter("default_speed_rad_s", 3.14).value
+            self.declare_parameter("default_speed_rad_s", 50.24).value
         )
         self.joint_tolerance_rad = float(
             self.declare_parameter("joint_tolerance_rad", 0.10).value

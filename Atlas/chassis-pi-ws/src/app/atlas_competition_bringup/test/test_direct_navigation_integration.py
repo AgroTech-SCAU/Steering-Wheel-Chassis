@@ -41,12 +41,12 @@ def test_nav_readme_explains_continuous_lidar_correction_and_odom_direct():
     assert "odom" in readme.lower()
 
 
-def test_autonomous_speed_profiles_match_mcu_remote_mid_chassis_and_arm_zeroing():
+def test_autonomous_speed_profiles_match_mcu_remote_mid_chassis_and_fast_arm():
     competition = yaml.safe_load((ROOT / "config/competition.yaml").read_text())["competition"]
     direct = competition["navigation"]["direct_control"]
     assert direct["max_linear_speed_m_s"] == 1.0
     assert direct["max_angular_speed_rad_s"] == 4.0
-    assert competition["handeye_bridge"]["default_speed_rad_s"] == 3.14
+    assert competition["handeye_bridge"]["default_speed_rad_s"] == 50.24
 
     def pose_speeds(value):
         if isinstance(value, dict):
@@ -61,14 +61,11 @@ def test_autonomous_speed_profiles_match_mcu_remote_mid_chassis_and_arm_zeroing(
 
     speeds = list(pose_speeds(competition["arm_motion"]))
     assert speeds
-    assert set(speeds) == {3.14}
+    assert set(speeds) == {50.24}
 
     mcu_control = (
         SRC.parents[1] / "chassis_control_code/src/app/app_control.c"
     ).read_text()
     assert "#define REMOTE_MID_MAX_VX_MPS 1.0f" in mcu_control
     assert "#define REMOTE_MID_MAX_WZ_RAD_S 4.0f" in mcu_control
-    arm_assembly = (
-        SRC.parents[1] / "chassis_control_code/src/service/assemble/assemble_arm.c"
-    ).read_text()
-    assert "#define ARM_SERVO_SPEED_RAD_S 3.14f" in arm_assembly
+    assert "limit.servo_speed_rad_s = 50.24f;" in mcu_control
