@@ -264,11 +264,15 @@ class ArmMotionCalibration(Node):
             try:
                 _joints, pose = self._snapshot()
                 p = pose.pose.position
+                q = pose.pose.orientation
+                pitch, yaw = quaternion_to_pitch_yaw(q.x, q.y, q.z, q.w)
                 result = {
                     "configured": True,
                     "x_m": round(float(p.x), 6),
                     "y_m": round(float(p.y), 6),
                     "first_layer_z_m": round(float(p.z), 6),
+                    "pitch_rad": round(float(pitch), 9),
+                    "yaw_rad": round(float(yaw), 9),
                 }
                 print(f"记录完成  {result}")
                 return result
@@ -351,7 +355,7 @@ class ArmMotionCalibration(Node):
             message = "原点对齐请求超时" if not future.done() else future.result().message
             raise RuntimeError(message)
 
-        print("正在进行一次激光对齐并回到地图原点 (0,0,0)")
+        print("正在建立激光定位并回到地图原点 (0,0,0)")
         terminal = {
             NavigationStatus.STATE_SUCCEEDED,
             NavigationStatus.STATE_FAILED,
@@ -373,8 +377,8 @@ class ArmMotionCalibration(Node):
         self._publish_zero()
         self._call_brake(True)
         if result_state != NavigationStatus.STATE_SUCCEEDED:
-            raise RuntimeError(result_message or "一次激光对齐/回原点失败或超时")
-        print("底盘已完成一次激光对齐并稳定到达地图原点，后续标定导航仅使用 /odom 直达")
+            raise RuntimeError(result_message or "激光定位/回原点失败或超时")
+        print("底盘已完成激光对齐并稳定到达地图原点，后续保持激光校正 /odom")
 
     def _navigate(self, arena: str, waypoint: str, safe_pose: dict) -> None:
         value = terminal_input(f"\n是否导航到 {waypoint} [y/N] > ").strip().lower()

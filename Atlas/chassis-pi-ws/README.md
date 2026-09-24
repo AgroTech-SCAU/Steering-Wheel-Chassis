@@ -2,7 +2,7 @@
 
 ## 当前比赛导航
 
-全自主任务默认使用 `atlas_nav_direct_backend`：开局用激光/Cartographer 只做一次 field-map 与 MCU odom 的绝对对齐，若切自动时不在中转区最优原点则先 odom 闭环回原点；随后进入原机械臂零位与智能分拣扫描流程，之后所有底盘点位均由 MCU 融合 `/odom` 直达；完整 Nav2 后端保留但不作为默认比赛控制器
+全自主任务默认使用 `atlas_nav_direct_backend`：开局用激光/Cartographer 完成 field-map 与 MCU odom 的严格全局对齐，之后保持激光定位并对 `map -> odom` 做限速持续校正；底盘仍由轻量直达控制器闭环，完整 Nav2 后端保留但不作为默认比赛控制器。
 
 
 `chassis-pi-ws` 是 Atlas 机器人 Pi 端比赛工作区；当前主线是“智械争锋全自主区”：MCU 触发自动任务，Pi 端运行 YASMIN 任务状态机，完成 A/B 场地识别、语义导航、视觉抓取、园区放置和结果上报
@@ -164,7 +164,7 @@ ros2 launch atlas_competition_bringup arm_motion_calibration.launch.py \
   competition_config:=/path/to/competition.yaml
 ```
 
-选择 A 时只标定 `sorting_scan_a`，选择 B 时只标定 `sorting_scan_b`；另一侧已有 scan 位姿会原样保留；机械臂标定启动后会先按所选 A/B 地图执行方案 A：Cartographer 只做一次激光绝对对齐，冻结 `map(field) -> odom` 后立即退出；如果底盘不在地图原点，则由 direct odom 控制自动回到 `(0,0,0)`，确认到达后才开始原来的 `zero -> sorting_scan_a/b -> navigation_safe -> pickup -> park_1 -> park_2` 机械臂标定流程；由于回原点发生在正式记录机械臂位姿之前，启动时必须先人工确认机械臂已经收拢且底盘周围安全
+选择 A 时只标定 `sorting_scan_a`，选择 B 时只标定 `sorting_scan_b`；另一侧已有 scan 位姿会原样保留；机械臂标定启动后会先按所选 A/B 地图执行激光绝对对齐，并保持定位进程持续校正 `map(field) -> odom`；如果底盘不在地图原点，则由 direct odom 控制自动回到 `(0,0,0)`，确认到达后才开始原来的 `zero -> sorting_scan_a/b -> navigation_safe -> pickup -> park_1 -> park_2` 机械臂标定流程；由于回原点发生在正式记录机械臂位姿之前，启动时必须先人工确认机械臂已经收拢且底盘周围安全
 
 ### 6. 完成配置后编译
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Optional
 
@@ -31,7 +32,7 @@ try:
 
     from atlas_mission_interfaces.msg import ManipulationStatus
     from atlas_mission_interfaces.srv import CancelManipulation, StartManipulation
-    from mcu_comm_bridge.srv import SetArmJoints, SetArmPose
+    from mcu_comm_bridge.srv import SetArmJoints, SetArmPose, SetArmPosition
     from mcu_comm_bridge.msg import ArmCommandResult
     from vison_topic_interfaces.msg import PickTarget, PickResult
 except ImportError:  # Unit tests exercise pure config helpers without ROS.
@@ -52,6 +53,7 @@ except ImportError:  # Unit tests exercise pure config helpers without ROS.
     StartManipulation = None
     SetArmJoints = None
     SetArmPose = None
+    SetArmPosition = None
     ArmCommandResult = None
     PickResult = None
     PickTarget = None
@@ -121,6 +123,14 @@ def compute_placement_target(
     )
 
 
+def calibrated_placement_direction(
+    arm_motion: dict, arena: str, park: str, slot: int
+) -> Optional[tuple[float, float]]:
+    """Return the release-point direction only when that point was calibrated in 5D."""
+    reference = resolve_placement_reference(arm_motion, arena, park, slot)
+    if "pitch_rad" in reference and "yaw_rad" in reference:
+        return float(reference["pitch_rad"]), float(reference["yaw_rad"])
+    return None
 
 
 class CompetitionManipulationBackend(Node):
@@ -163,6 +173,11 @@ class CompetitionManipulationBackend(Node):
         self.arm_pose_service = str(
             self.declare_parameter("arm_pose_service", "/mcu/set_arm_pose").value
         )
+        self.arm_position_service = str(
+            self.declare_parameter(
+                "arm_position_service", "/mcu/set_arm_position"
+            ).value
+        )
         self.suction_service = str(
             self.declare_parameter("suction_service", "/mcu/set_suction").value
         )
@@ -182,6 +197,21 @@ class CompetitionManipulationBackend(Node):
         )
         self.stable_delta_m = float(self.declare_parameter("stable_delta_m", 0.004).value)
         self.stable_samples = int(self.declare_parameter("stable_samples", 5).value)
+        # 竞速模式防卡死：命令已经被 MCU 接受后，如果机械臂连续一段时间没有
+        # 可观测运动，则不再长期等待“完全到位”，而是自动推进到下一步。
+        # 这不是动作总时长上限：只要机械臂仍在运动，等待会继续。
+        self.stall_auto_advance_s = max(0.0, float(
+            self.declare_parameter("stall_auto_advance_s", 0.5).value
+        ))
+        self.stall_joint_motion_rad = max(0.0, float(
+            self.declare_parameter("stall_joint_motion_rad", 0.002).value
+        ))
+        self.stall_position_motion_m = max(0.0, float(
+            self.declare_parameter("stall_position_motion_m", 0.0005).value
+        ))
+        self.stall_axis_motion_rad = math.radians(max(0.0, float(
+            self.declare_parameter("stall_axis_motion_deg", 0.2).value
+        )))
         self.min_pick_target_motion_m = float(
             self.declare_parameter("min_pick_target_motion_m", 0.005).value
         )
@@ -206,10 +236,10 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("pick_bridge.timeout_s", 10.0).value
         ))
         self.default_speed_rad_s = float(
-            self.declare_parameter("default_speed_rad_s", 0.8).value
+            self.declare_parameter("default_speed_rad_s", 3.14).value
         )
         self.joint_tolerance_rad = float(
-            self.declare_parameter("joint_tolerance_rad", 0.06).value
+            self.declare_parameter("joint_tolerance_rad", 0.10).value
         )
         self.pose_validation_tolerance_m = float(
             self.declare_parameter("pose_validation_tolerance_m", 0.08).value
@@ -313,6 +343,9 @@ class CompetitionManipulationBackend(Node):
         self.initial_pose_client = self.create_client(Trigger, self.initial_pose_service)
         self.arm_joints_client = self.create_client(SetArmJoints, self.arm_joints_service)
         self.arm_pose_client = self.create_client(SetArmPose, self.arm_pose_service)
+        self.arm_position_client = self.create_client(
+            SetArmPosition, self.arm_position_service
+        )
         self.suction_client = self.create_client(SetBool, self.suction_service)
         self.sorting_scan_a_srv = self.create_service(
             Trigger, "/atlas/manipulation/move_to_sorting_scan_a", self._on_sorting_scan_a,
@@ -449,6 +482,7 @@ class CompetitionManipulationBackend(Node):
                 if item is not None and item[0] >= since:
                     msg = item[1]
                     if int(msg.result) == 0:
+                        self.get_logger().info(f"机械臂命令已接受 seq={seq}")
                         return True
                     code = int(msg.result)
                     reason = names[code] if 0 <= code < len(names) else "UNKNOWN"
@@ -458,6 +492,10 @@ class CompetitionManipulationBackend(Node):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._last_failure = f"MCU_TIMEOUT seq={seq}"
+                    self.get_logger().error(
+                        f"等待机械臂接受超时 seq={seq}：MCU 未回 /mcu/arm_command_result "
+                        f"(命令可能没发出或 MCU 没跑运动回路)"
+                    )
                     return False
                 self._result_cv.wait(timeout=min(.05, remaining))
         return False
@@ -624,10 +662,23 @@ class CompetitionManipulationBackend(Node):
         return False
 
     def _wait_pose_target(self, target: XYZ, timeout_s: float, *,
-                          direction: tuple[float, float], since: float) -> bool:
+                          direction: Optional[tuple[float, float]], since: float) -> bool:
         deadline = time.monotonic() + timeout_s
+        next_diagnostic = time.monotonic() + 5.0
         stable = 0
         last_sample = since
+        saw_fresh_feedback = False
+        last_position_error = math.inf
+        last_axis_error = math.inf
+        last_pose = None
+        last_motion_pose = None
+        last_motion_direction = None
+        last_motion_time = since
+        stall_auto_advance_s = max(0.0, float(getattr(self, "stall_auto_advance_s", 0.0)))
+        stall_position_motion_m = max(0.0, float(
+            getattr(self, "stall_position_motion_m", 0.0005)))
+        stall_axis_motion_rad = max(0.0, float(
+            getattr(self, "stall_axis_motion_rad", math.radians(0.2))))
         with self._pose_cv:
             while time.monotonic() < deadline:
                 if self._cancelled():
@@ -635,15 +686,96 @@ class CompetitionManipulationBackend(Node):
                 stamp = self._latest_pose_time
                 if stamp > last_sample:
                     last_sample = stamp
-                    valid = (time.monotonic() - stamp <= self.pose_feedback_timeout_s and
-                             self._latest_pose is not None and self._latest_direction is not None and
-                             self._latest_pose.distance(target) <= self.position_tolerance_m and
-                             direction_error(self._latest_direction, direction) <= self.tool_axis_tolerance_rad)
+                    fresh = (
+                        time.monotonic() - stamp <= self.pose_feedback_timeout_s
+                        and self._latest_pose is not None
+                        and (direction is None or self._latest_direction is not None)
+                    )
+                    if fresh:
+                        saw_fresh_feedback = True
+                        now = time.monotonic()
+                        last_pose = XYZ(
+                            self._latest_pose.x, self._latest_pose.y, self._latest_pose.z)
+                        current_direction = (
+                            None if self._latest_direction is None
+                            else tuple(self._latest_direction)
+                        )
+                        # 只要 TCP 或工具轴还在实际移动，就刷新“未卡住”时间。
+                        if last_motion_pose is None:
+                            last_motion_time = now
+                        else:
+                            moved_position = (
+                                last_pose.distance(last_motion_pose)
+                                >= stall_position_motion_m
+                            )
+                            moved_axis = (
+                                current_direction is not None
+                                and last_motion_direction is not None
+                                and direction_error(current_direction, last_motion_direction)
+                                >= stall_axis_motion_rad
+                            )
+                            if moved_position or moved_axis:
+                                last_motion_time = now
+                        last_motion_pose = XYZ(last_pose.x, last_pose.y, last_pose.z)
+                        last_motion_direction = current_direction
+                        last_position_error = last_pose.distance(target)
+                        last_axis_error = (
+                            0.0 if direction is None else direction_error(
+                                tuple(self._latest_direction), direction)
+                        )
+                    valid = (
+                        fresh
+                        and last_position_error <= self.position_tolerance_m
+                        and (
+                            direction is None
+                            or last_axis_error <= self.tool_axis_tolerance_rad
+                        )
+                    )
                     stable = stable + 1 if valid else 0
                     if stable >= max(1, self.stable_samples):
                         return True
+                now = time.monotonic()
+                if (stall_auto_advance_s > 0.0 and
+                        now - last_motion_time >= stall_auto_advance_s):
+                    self._last_failure = ""
+                    self.get_logger().warn(
+                        f"竞速防卡死：机械臂位姿连续 {stall_auto_advance_s:.2f}s "
+                        "无明显运动，自动放行到下一步"
+                    )
+                    return True
+                if now >= next_diagnostic:
+                    feedback_age = (
+                        f"{now - self._latest_pose_time:.2f}s"
+                        if self._latest_pose is not None else "none"
+                    )
+                    actual = (
+                        None if last_pose is None else
+                        tuple(round(v, 3) for v in (
+                            last_pose.x, last_pose.y, last_pose.z))
+                    )
+                    self.get_logger().warn(
+                        f"等待位姿到位 elapsed={now - since:.1f}s "
+                        f"fresh_received={saw_fresh_feedback} feedback_age={feedback_age} "
+                        f"target=({target.x:.3f},{target.y:.3f},{target.z:.3f}) "
+                        f"actual={actual} "
+                        f"position_error={last_position_error:.3f}m "
+                        "axis_error="
+                        f"{('not_checked' if direction is None else f'{math.degrees(last_axis_error):.1f}deg')} "
+                        f"stable={stable}/{max(1, self.stable_samples)}"
+                    )
+                    next_diagnostic = now + 5.0
                 self._pose_cv.wait(timeout=0.05)
-        self._last_failure = "POSE_ARRIVAL_TIMEOUT"
+        if not saw_fresh_feedback:
+            self._last_failure = "POSE_FEEDBACK_TIMEOUT"
+        else:
+            self._last_failure = (
+                f"POSE_ARRIVAL_TIMEOUT position_error={last_position_error:.3f}m"
+                + (
+                    "" if direction is None else
+                    f" axis_error={math.degrees(last_axis_error):.1f}deg"
+                )
+            )
+        self.get_logger().error(self._last_failure)
         return False
 
     def _move_pose(self, target: XYZ, *, direction: tuple[float, float],
@@ -656,6 +788,11 @@ class CompetitionManipulationBackend(Node):
         req.speed_rad_s = float(self.default_speed_rad_s)
         req.suction_valid = bool(suction_valid)
         req.suction_enable = bool(suction_enable)
+        self.get_logger().info(
+            f"下发位姿目标 xyz=({target.x:.4f},{target.y:.4f},{target.z:.4f}) "
+            f"pitch={direction[0]:.4f} yaw={direction[1]:.4f} "
+            f"suction={'ON' if suction_valid and suction_enable else 'OFF' if suction_valid else 'KEEP'}"
+        )
         since = time.monotonic()
         result = self._call_service(self.arm_pose_client, req)
         if result is None or not result.success:
@@ -665,44 +802,161 @@ class CompetitionManipulationBackend(Node):
             return False
         return self._wait_pose_target(target, self.motion_timeout_s, direction=direction, since=since)
 
-    def _set_suction(self, enabled: bool) -> bool:
+    def _move_position(self, target: XYZ, *,
+                       suction_valid: bool, suction_enable: bool) -> bool:
+        """Move to XYZ with the MCU's 3D IK, leaving tool direction unconstrained."""
         if self._cancelled():
+            return False
+        req = SetArmPosition.Request()
+        req.x_m, req.y_m, req.z_m = float(target.x), float(target.y), float(target.z)
+        req.speed_rad_s = float(self.default_speed_rad_s)
+        req.suction_valid = bool(suction_valid)
+        req.suction_enable = bool(suction_enable)
+        self.get_logger().info(
+            f"下发位置目标 xyz=({target.x:.4f},{target.y:.4f},{target.z:.4f}) "
+            "3D_IK suction="
+            f"{'ON' if suction_valid and suction_enable else 'OFF' if suction_valid else 'KEEP'}"
+        )
+        since = time.monotonic()
+        result = self._call_service(self.arm_position_client, req)
+        if result is None or not result.success:
+            self._last_failure = "ARM_QUEUE_REJECTED"
+            return False
+        if not self._wait_arm_accepted(result.command_seq, since):
+            return False
+        return self._wait_pose_target(
+            target, self.motion_timeout_s, direction=None, since=since)
+
+    def _set_suction(self, enabled: bool, *, force: bool = False) -> bool:
+        if self._cancelled() and not force:
             return False
         req = SetBool.Request()
         req.data = bool(enabled)
         result = self._call_service(self.suction_client, req)
-        return result is not None and bool(result.success)
+        ok = result is not None and bool(result.success)
+        if ok:
+            self.get_logger().info(f"吸盘已下发 {'ON' if enabled else 'OFF'}")
+        else:
+            self._last_failure = f"SUCTION_{'ON' if enabled else 'OFF'}_FAILED"
+            self.get_logger().error(self._last_failure)
+        return ok
 
     def _wait_joint_target(self, target: list[float], timeout_s: float, since: float) -> bool:
         deadline = time.monotonic() + timeout_s
+        next_diagnostic = time.monotonic() + 5.0
         stable = 0
         last_sample = since
+        saw_fresh_feedback = False
+        last_error = math.inf
+        last_errors = None
+        last_joints = None
+        last_motion_joints = None
+        last_motion_time = since
+        stall_auto_advance_s = max(0.0, float(getattr(self, "stall_auto_advance_s", 0.0)))
+        stall_joint_motion_rad = max(0.0, float(
+            getattr(self, "stall_joint_motion_rad", 0.002)))
         with self._joint_cv:
             while time.monotonic() < deadline:
                 if self._cancelled():
                     return False
                 if (self._latest_joints is not None and self._latest_joint_time > last_sample and
                         time.monotonic() - self._latest_joint_time <= self.pose_feedback_timeout_s):
+                    saw_fresh_feedback = True
                     last_sample = self._latest_joint_time
-                    error = max(abs(a - b) for a, b in zip(self._latest_joints, target))
+                    # 关节角必须按 2π 归一化后比较：零位 q2 目标≈2π(6.28)，
+                    # 而舵机反馈常回绕到 0 附近，直接相减会永远到不了位。
+                    errors = [
+                        abs((a - b + math.pi) % (2.0 * math.pi) - math.pi)
+                        for a, b in zip(self._latest_joints, target)
+                    ]
+                    error = max(errors)
+                    last_error = error
+                    last_errors = errors
+                    current_joints = list(self._latest_joints)
+                    now = time.monotonic()
+                    if last_motion_joints is None:
+                        last_motion_time = now
+                    else:
+                        motion = max(
+                            abs((a - b + math.pi) % (2.0 * math.pi) - math.pi)
+                            for a, b in zip(current_joints, last_motion_joints)
+                        )
+                        if motion >= stall_joint_motion_rad:
+                            last_motion_time = now
+                    last_motion_joints = current_joints
+                    last_joints = current_joints
                     if error <= self.joint_tolerance_rad:
                         stable += 1
                         if stable >= max(1, self.stable_samples):
                             return True
                     else:
                         stable = 0
+                # The mission watchdog can cancel before this wait expires.
+                # Report feedback while waiting so cancellation cannot hide it.
+                now = time.monotonic()
+                if (stall_auto_advance_s > 0.0 and
+                        now - last_motion_time >= stall_auto_advance_s):
+                    self._last_failure = ""
+                    self.get_logger().warn(
+                        f"竞速防卡死：机械臂关节连续 {stall_auto_advance_s:.2f}s "
+                        f"无明显运动，当前最大误差={last_error:.3f}rad，自动放行到下一步"
+                    )
+                    return True
+                if now >= next_diagnostic:
+                    feedback_age = (
+                        f"{now - self._latest_joint_time:.2f}s"
+                        if self._latest_joints is not None else "none"
+                    )
+                    self.get_logger().warn(
+                        f"等待关节到位 elapsed={now - since:.1f}s "
+                        f"fresh_received={saw_fresh_feedback} feedback_age={feedback_age} "
+                        f"target={[round(v, 3) for v in target]} "
+                        f"actual={[round(v, 3) for v in (last_joints or [])]} "
+                        f"error={[round(v, 3) for v in (last_errors or [])]} "
+                        f"tol={self.joint_tolerance_rad:.3f}rad "
+                        f"stable={stable}/{max(1, self.stable_samples)}"
+                    )
+                    next_diagnostic = now + 5.0
                 self._joint_cv.wait(timeout=0.05)
+        if not saw_fresh_feedback:
+            # 区分两种卡死：反馈从没新鲜过（MCU/舵机数据断了） vs 到位但差一点点（关节超差）
+            self._last_failure = (
+                "JOINT_FEEDBACK_TIMEOUT：等待关节到位期间没有收到任何新鲜反馈，"
+                "说明 /arm/joint_states 没在更新（MCU 运动/传感回路未运行或串口数据断了）"
+            )
+            self.get_logger().error(
+                f"关节到位超时(无反馈) target={[round(v, 3) for v in target]} "
+                f"tol={self.joint_tolerance_rad:.3f}rad timeout={timeout_s:.1f}s"
+            )
+        else:
+            self._last_failure = (
+                f"JOINT_ARRIVAL_TIMEOUT max_error={last_error:.3f}rad "
+                f"(tol={self.joint_tolerance_rad:.3f}rad)"
+            )
+            self.get_logger().error(
+                f"关节到位超时(未收敛) target={[round(v, 3) for v in target]} "
+                f"actual={[round(v, 3) for v in (last_joints or [])]} "
+                f"error={[round(e, 3) for e in (last_errors or [])]} "
+                f"timeout={timeout_s:.1f}s"
+            )
         return False
 
-    def _move_named_pose(self, pose_name: str, arena: str = "", area: str = "", slot: int = 0) -> bool:
+    def _move_named_pose(
+        self, pose_name: str, arena: str = "", area: str = "", slot: int = 0,
+        *, suction_valid: bool = False, suction_enable: bool = False,
+    ) -> bool:
         pose = resolve_arm_pose(
             self.arm_motion, pose_name, arena=arena or None, area=area or None, slot=slot
+        )
+        self.get_logger().info(
+            f"下发关节目标 {pose_name}: arena={arena or '-'} slot={slot} "
+            f"joints_rad={[round(float(v), 4) for v in pose['joints_rad']]}"
         )
         req = SetArmJoints.Request()
         req.joints_rad = [float(v) for v in pose["joints_rad"]]
         req.speed_rad_s = float(pose["speed_rad_s"])
-        req.suction_valid = False
-        req.suction_enable = False
+        req.suction_valid = bool(suction_valid)
+        req.suction_enable = bool(suction_enable)
         since = time.monotonic()
         result = self._call_service(self.arm_joints_client, req)
         if result is None or not result.success:
@@ -817,6 +1071,11 @@ class CompetitionManipulationBackend(Node):
         self._last_failure = ""
         try:
             arena = str(getattr(request, "arena", "") or "").strip().upper()
+            self.get_logger().info(
+                f"机械臂任务开始 task={task!r} arena={arena!r} "
+                f"waypoint={request.waypoint_id!r} slot={int(request.slot)} "
+                f"layer={int(request.layer)}"
+            )
             if task == "pre_recognition":
                 ok = self._do_pre_recognition(arena, request.waypoint_id, int(request.slot))
             elif task == "view_scan":
@@ -860,7 +1119,10 @@ class CompetitionManipulationBackend(Node):
                     message=f"{task} 执行失败: {self._last_failure or '未到位'}",
                 )
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().exception(f"机械臂任务异常: {exc}")
+            # RcutilsLogger does not provide logging.Logger.exception().
+            self.get_logger().error(
+                f"机械臂任务异常: {exc}\n{traceback.format_exc()}"
+            )
             if not self._cancelled():
                 self._set_status(
                     ManipulationStatus.STATE_FAILED,
@@ -873,7 +1135,7 @@ class CompetitionManipulationBackend(Node):
         self._set_status(
             ManipulationStatus.STATE_RUNNING,
             step="move_to_observe_pose",
-            message=f"移动到 {area} 固定观察或预备位",
+            message=f"移动到 {arena} {area} slot={slot} 固定观察或预备位",
         )
         if area == "pickup":
             ok = self._move_named_pose("pickup_observe", arena=arena, slot=slot)
@@ -958,6 +1220,8 @@ class CompetitionManipulationBackend(Node):
         if hasattr(msg, "use_orientation"):
             msg.use_orientation = False
         if hasattr(msg, "use_approach"):
+            # 比赛货物区的第三层等待位由 bridge 根据实际层高自动生成。
+            # 这里不使用通用的固定 approach_m 覆盖它。
             msg.use_approach = False
         self._next_pick_id = (self._next_pick_id + 1) & 0xFFFFFFFF
         msg.request_id = self._next_pick_id
@@ -1011,38 +1275,69 @@ class CompetitionManipulationBackend(Node):
     def _do_place(
         self, arena: str, park: str, slot: int, existing_layer: int
     ) -> bool:
-        target = self._place_target(arena, park, slot, existing_layer)
-        above = XYZ(target.x, target.y, target.z + self.place_approach_m)
-        direction = (-math.pi / 2.0, 0.0)  # 水平放置面要求工具轴竖直向下
+        released = False
+        try:
+            target = self._place_target(arena, park, slot, existing_layer)
+            direction = calibrated_placement_direction(
+                self.arm_motion, arena, park, slot)
+            self._set_status(
+                ManipulationStatus.STATE_RUNNING,
+                step="place_descend",
+                message=(
+                    f"{park} slot={slot} 当前已有层={existing_layer}，"
+                    f"从已标定 park_prepare 直接下放到释放位 "
+                    f"({target.x:.3f},{target.y:.3f},{target.z:.3f})，"
+                    f"{'5D 标定位姿' if direction is not None else '3D 位置 IK'}"
+                ),
+            )
+            if direction is not None:
+                moved = self._move_pose(
+                    target,
+                    direction=direction,
+                    suction_valid=True,
+                    suction_enable=True,
+                )
+            else:
+                # 旧放置标定只有 XYZ，不得用 prepare 姿态伪造 5D 目标。
+                # MCU 的 POSITION 模式只约束 XYZ，更符合这类标定数据。
+                moved = self._move_position(
+                    target, suction_valid=True, suction_enable=True)
+            if not moved:
+                return False
 
-        self._set_status(
-            ManipulationStatus.STATE_RUNNING,
-            step="place_approach",
-            message=(
-                f"{park} slot={slot} 当前已有层={existing_layer}，到放置点上方"
-            ),
-        )
-        if not self._move_pose(above, direction=direction, suction_valid=True, suction_enable=True):
-            return False
+            if not self._set_suction(False):
+                return False
+            released = True
+            time.sleep(max(0.0, self.suction_settle_s))
 
-        self._set_status(
-            ManipulationStatus.STATE_RUNNING,
-            step="place_descend",
-            message="下降到释放高度",
-        )
-        if not self._move_pose(target, direction=direction, suction_valid=True, suction_enable=True):
-            return False
-
-        if not self._set_suction(False):
-            return False
-        time.sleep(max(0.0, self.suction_settle_s))
-
-        self._set_status(
-            ManipulationStatus.STATE_RUNNING,
-            step="place_retreat",
-            message="释放完成并抬起",
-        )
-        return self._move_pose(above, direction=direction, suction_valid=False, suction_enable=False)
+            self._set_status(
+                ManipulationStatus.STATE_RUNNING,
+                step="place_retreat",
+                message="释放完成，撤回已标定 park_prepare 关节位",
+            )
+            # 撤回使用已标定关节位，同帧再次携带 OFF，避免串口丢帧
+            # 导致吸盘保持开启。状态机随后重复进入该位是幂等的。
+            return self._move_named_pose(
+                "park_prepare", arena=arena, area=park,
+                suction_valid=True, suction_enable=False)
+        finally:
+            if not released:
+                failure = self._last_failure
+                self.get_logger().warn(
+                    "放置流程未完成释放，强制下发吸盘 OFF 兜底"
+                )
+                try:
+                    off_ok = self._set_suction(False, force=True)
+                except Exception as exc:  # noqa: BLE001
+                    off_ok = False
+                    self.get_logger().error(f"放置失败后关闭吸盘异常: {exc}")
+                if failure:
+                    self._last_failure = failure
+                if not off_ok:
+                    self._last_failure = (
+                        f"{self._last_failure}; SUCTION_OFF_FAILED"
+                        if self._last_failure else "SUCTION_OFF_FAILED"
+                    )
 
 
 def main(args=None) -> None:

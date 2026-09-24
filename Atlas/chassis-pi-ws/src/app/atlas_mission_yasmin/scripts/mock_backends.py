@@ -112,7 +112,10 @@ class MockBackends(Node):
             response.message = "arena must be A or B"
             return response
 
-        self.navigation_count += 1
+        # origin is the startup map-alignment step, not one of the task
+        # navigation legs targeted by the navigation failure scenarios.
+        if request.waypoint_id != "origin":
+            self.navigation_count += 1
         response.success = True
         response.message = "accepted"
         self.active_navigation = request
@@ -122,7 +125,7 @@ class MockBackends(Node):
         delay_s = self.get_parameter("navigation_delay_s").value
         terminal_state = NavigationStatus.STATE_SUCCEEDED
 
-        if self.navigation_count == 1:
+        if request.waypoint_id != "origin" and self.navigation_count == 1:
             if scenario == "navigation_failed":
                 terminal_state = NavigationStatus.STATE_FAILED
             elif scenario in INTERRUPT_SCENARIOS:

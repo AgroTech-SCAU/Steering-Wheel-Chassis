@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from atlas_competition_config.config import CompetitionConfigError, resolve_arm_pose
+from atlas_competition_config.config import (
+    CompetitionConfigError,
+    resolve_arm_pose,
+    resolve_pickup_layer_z,
+)
 
 
 def pickup_vision_pose_targets(arm_motion: dict, *, include_axis=False) -> list[tuple[str, tuple[float, float, float]]]:
@@ -22,6 +26,35 @@ def pickup_vision_pose_targets(arm_motion: dict, *, include_axis=False) -> list[
                 )
             )
     return targets
+
+
+def pickup_plane_calibrations(
+    arm_motion: dict,
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Return per-observation contact Z and derived observation distances."""
+    result = {}
+    for arena in ("A", "B"):
+        pickup = arm_motion.get("arenas", {}).get(arena, {}).get("pickup", {})
+        slots = range(4) if "observations" in pickup else (None,)
+        for slot in slots:
+            try:
+                pose = resolve_arm_pose(arm_motion, "pickup_observe", arena=arena, slot=slot)
+                layer_z = tuple(
+                    resolve_pickup_layer_z(arm_motion, arena, layer, slot=slot)
+                    for layer in (1, 2)
+                )
+            except CompetitionConfigError:
+                continue
+            suffix = "" if slot is None else f"_slot{slot}"
+            name = f"pickup_observe_{arena.lower()}{suffix}"
+            observe_z = float(pose["z_m"])
+            result[name] = {
+                "layer_z_m": layer_z,
+                "camera_to_plane_distance_m": tuple(
+                    round(observe_z - z, 6) for z in layer_z
+                ),
+            }
+    return result
 
 
 def park_vision_pose_targets(arm_motion: dict, *, include_axis=False) -> list[tuple[str, tuple[float, float, float]]]:

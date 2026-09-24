@@ -4,9 +4,9 @@
 
 主流程：
 
-`WAIT_AUTO -> ARM_ZERO -> NAV_ORIGIN -> INSPECT_SORT_ZONE -> ARM_NAV_SAFE_INITIAL -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> ...`
+`WAIT_AUTO -> ARM_ZERO -> INSPECT_SORT_ZONE -> NAV_ORIGIN -> ARM_NAV_SAFE_INITIAL -> NAV_PICKUP -> OBSERVE_PICKUP -> PICK -> ...`
 
-智能分拣区一次识别确定 `arena=A/B` 与 gear/t_bolt 的园区映射，导航后端按 arena 选择对应半图
+智能分拣区先由机械臂移动到观察位，一次识别确定 `arena=A/B` 与 gear/t_bolt 的园区映射；随后 `NAV_ORIGIN` 将该 arena 传给导航后端，只加载对应半图完成地图匹配与原点校正
 
 ## 货物调度
 
@@ -22,4 +22,9 @@
 
 ## 抓取职责
 
-`PICK` 只选择 `slot + layer`。机械臂接触位直接复用 `handeye_bridge/screw_pick.launch.py` 已实机验证链路：bridge 使用 `bridge_node.yaml` 的 plane1/plane2 高度、初始抓取姿态和顶层配置中的 `target_z_offset_m` 完成视觉到 `SetArmPose`。任务层不再覆盖 `target_z / pitch / yaw / approach`；bridge 到位后 manipulation backend 开吸盘、保持真空，再通过 3D `SetArmPosition` 抬升
+`PICK` 只选择 `slot + layer`。机械臂接触位直接复用 `handeye_bridge/screw_pick.launch.py` 链路：bridge 使用当前 A/B、slot 观察位标定的第一/二层 `layer_z_m`，第三层继续使用 `bridge_node.yaml` 的 `plane3_z_m`，并使用顶层配置中的 `target_z_offset_m` 完成视觉到 `SetArmPose`。抓第一/二层时，bridge 会先到同一目标 XY 的第三层等待高度，收到实时 FK 到位确认后再下探到目标层。任务层不覆盖 `target_z / pitch / yaw / approach`；bridge 到最终接触位后 manipulation backend 开吸盘、保持真空，再保持工具轴用 5D `SetArmPose` 抬升
+
+园区放置的工具方向优先使用每个 `placement_points` 的实测 `pitch_rad/yaw_rad`；
+兼容旧标定时复用对应 `park.prepare` 的工具方向，不再强制竖直向下。放置过程
+任一阶段失败或取消都会强制尝试关闭吸盘；正常退出的机械臂命令也会重复携带
+`suction OFF`，防止单帧命令丢失。

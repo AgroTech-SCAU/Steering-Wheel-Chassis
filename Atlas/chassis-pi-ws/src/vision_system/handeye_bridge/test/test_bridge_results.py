@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Callable, Optional, Tuple
 import numpy as np
+import pytest
 from handeye_bridge.pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection, tool_axis_angles
 from handeye_bridge.vision_pose_gate import *
 
@@ -42,6 +43,8 @@ def make_bridge():
     bridge._calibration_ready = True
     bridge._vision_pose_ready = True
     bridge._vision_ready_since_ns = 0
+    bridge._current_vision_pose_name = ""
+    bridge._competition_pickup_planes = {}
     bridge._detection_pose_cache_size = 2000
     bridge._latest_detections = None
     bridge._latest_detection_stamp_ns = 1_000_000_000
@@ -79,6 +82,84 @@ def test_contact_axis_uses_detection_pose_and_success_waits_for_mcu():
     kwargs['on_result'](True, 'ACCEPTED', 27)
     assert b.results[-1].success and b.results[-1].command_seq == 27
     assert b.results[-1].z_m == .034
+
+
+def test_pickup_uses_slot_calibrated_first_two_layers_and_global_third_layer():
+    b = make_bridge()
+    b._current_vision_pose_name = "pickup_observe_a_slot2"
+    b._competition_pickup_planes = {
+        "pickup_observe_a_slot2": {
+            "layer_z_m": (0.015, 0.055),
+            "camera_to_plane_distance_m": (0.242, 0.202),
+        }
+    }
+
+    assert b._pickup_plane_z(1, 0.031) == (0.015, 0.242)
+    assert b._pickup_plane_z(2, 0.070) == (0.055, 0.202)
+    assert b._pickup_plane_z(3, 0.109) == (0.109, None)
+
+    b._competition_pickup_planes = {}
+    with pytest.raises(ValueError, match="缺少第一/二层标定高度"):
+        b._pickup_plane_z(1, 0.031)
+
+
+def test_pick_request_projects_against_active_slot_calibrated_plane():
+    b = make_bridge()
+    b._current_vision_pose_name = "pickup_observe_b_slot1"
+    b._competition_pickup_planes = {
+        "pickup_observe_b_slot1": {
+            "layer_z_m": (0.028, 0.068),
+            "camera_to_plane_distance_m": (0.211, 0.171),
+        }
+    }
+    b._latest_detections = NS(
+        detections=[NS(corner_index=1, u=10., v=20., cls_name="x")])
+    projected_planes = []
+
+    def project(_u, _v, plane_z, _transform):
+        projected_planes.append(plane_z)
+        return np.array([0.20, 0.02, plane_z])
+
+    b._ray_plane_intersect = project
+    b._on_pick_target(NS(request_id=10, corner_index=1, layer=2))
+
+    assert projected_planes == [0.068]
+    # 识别成功后先到 vision 第三层等待高度。
+    approach_args, approach_kwargs = b.commands[0]
+    assert np.allclose(approach_args[:3], [0.145, 0.02, 0.112])
+    approach_kwargs["on_result"](True, "ACCEPTED", 31)
+    assert not b.results and len(b.commands) == 1
+
+    arrived = np.diag([1., -1., -1., 1.])
+    arrived[:3, 3] = approach_args[:3]
+    b._check_pick_approach(arrived, b.clock_ns)
+
+    # 实时 FK 确认第三层等待位到达后，再下探到第二层。
+    contact_args, contact_kwargs = b.commands[1]
+    assert np.allclose(contact_args[:3], [0.145, 0.02, 0.071])
+    contact_kwargs["on_result"](True, "ACCEPTED", 32)
+    assert b.results[-1].success
+    assert b.results[-1].z_m == pytest.approx(0.071)
+
+
+def test_competition_third_layer_pick_does_not_repeat_wait_move():
+    b = make_bridge()
+    b._current_vision_pose_name = "pickup_observe_a_slot0"
+    b._competition_pickup_planes = {
+        "pickup_observe_a_slot0": {
+            "layer_z_m": (0.02, 0.063),
+            "camera_to_plane_distance_m": (0.271, 0.228),
+        }
+    }
+    b._latest_detections = NS(
+        detections=[NS(corner_index=0, u=10., v=20., cls_name="x")])
+    b._on_pick_target(NS(request_id=11, corner_index=0, layer=3))
+
+    args, kwargs = b.commands[0]
+    assert args[2] == pytest.approx(0.112)
+    kwargs["on_result"](True, "ACCEPTED", 33)
+    assert len(b.commands) == 1
+    assert b.results[-1].success
 
 
 def test_queue_response_is_not_mcu_acceptance_and_wrong_seq_is_ignored():

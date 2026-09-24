@@ -43,14 +43,14 @@ yasmin::StateMachine::SharedPtr build_autonomous_machine(const Runtime::SharedPt
 
   machine->add_state(
     "ARM_ZERO", std::make_shared<ArmZeroState>(runtime),
-    action_transitions("NAV_ORIGIN"));
-
-  machine->add_state(
-    "NAV_ORIGIN", std::make_shared<NavOriginState>(runtime),
     action_transitions("INSPECT_SORT_ZONE"));
 
   machine->add_state(
     "INSPECT_SORT_ZONE", std::make_shared<InspectSortZoneState>(runtime),
+    action_transitions("NAV_ORIGIN"));
+
+  machine->add_state(
+    "NAV_ORIGIN", std::make_shared<NavOriginState>(runtime),
     action_transitions("ARM_NAV_SAFE_INITIAL"));
 
   machine->add_state(

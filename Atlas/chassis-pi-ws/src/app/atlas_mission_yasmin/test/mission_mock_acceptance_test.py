@@ -179,6 +179,12 @@ class MissionMockHarness:
     def nav_waypoints(self, state=NavigationStatus.STATE_RUNNING):
         return [msg.waypoint_id for msg in self.nav_statuses if msg.state == state]
 
+    def task_nav_waypoints(self, state=NavigationStatus.STATE_RUNNING):
+        return [
+            waypoint for waypoint in self.nav_waypoints(state)
+            if waypoint != "origin"
+        ]
+
     def manip_actions(self, state=ManipulationStatus.STATE_RUNNING):
         return [
             (msg.waypoint_id, msg.task_id)
@@ -243,7 +249,7 @@ def assert_normal_completion(harness):
         "pickup", "park_2",
         "pickup", "park_1",
     ]
-    assert harness.nav_waypoints() == expected_nav
+    assert harness.task_nav_waypoints() == expected_nav
 
     manip_actions = harness.manip_actions()
     assert ("sorting", "pre_recognition") not in manip_actions
@@ -255,14 +261,14 @@ def assert_normal_completion(harness):
 
     assert all(
         waypoint in {"pickup", "park_1", "park_2"}
-        for waypoint in harness.nav_waypoints()
+        for waypoint in harness.task_nav_waypoints()
     )
     harness.assert_final_motor_zero()
 
 
 def assert_navigation_failure(harness):
     harness.wait_for_state("WAIT_RESET")
-    assert harness.nav_waypoints() == ["pickup"]
+    assert harness.task_nav_waypoints() == ["pickup"]
     assert any(
         msg.waypoint_id == "pickup" and msg.state == NavigationStatus.STATE_FAILED
         for msg in harness.nav_statuses
@@ -280,7 +286,7 @@ def assert_reset_interrupt(harness):
         )
     )
     time.sleep(0.3)
-    assert harness.nav_waypoints() == ["pickup"]
+    assert harness.task_nav_waypoints() == ["pickup"]
     assert "REPORT_DONE" not in harness.states
     assert "REPORT_FAIL" not in harness.states
     assert "WAIT_RESET" in harness.states
@@ -295,7 +301,7 @@ def assert_recovery_interrupt(harness):
             for msg in harness.nav_statuses
         )
     )
-    assert harness.nav_waypoints() == ["pickup"]
+    assert harness.task_nav_waypoints() == ["pickup"]
     assert "WAIT_RESET" in harness.states
     assert "REPORT_DONE" not in harness.states
     assert "REPORT_FAIL" not in harness.states
@@ -307,7 +313,7 @@ def assert_mcu_timeout(harness):
     # The navigation backend is not required to publish a cancel terminal state:
     # timeout can happen before the cancel service round trip completes.
     harness.wait_for_state("RECOVERY")
-    assert harness.nav_waypoints() == ["pickup"]
+    assert harness.task_nav_waypoints() == ["pickup"]
     assert "WAIT_RESET" in harness.states
     assert "REPORT_DONE" not in harness.states
     assert "REPORT_FAIL" not in harness.states

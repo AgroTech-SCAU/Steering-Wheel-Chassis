@@ -1,6 +1,6 @@
-# Atlas ：一次激光对齐 + Odom 直达
+# Atlas：持续激光校正 + Odom 直达
 
-正式比赛默认使用 `atlas_nav_direct_backend`。进入全自主后，第一次 `origin` 导航会临时启动 Cartographer 纯定位，通过已标定地图确认机器人相对中转区最优位姿（地图原点）的真实偏差；定位稳定后冻结 `map -> odom` 并关闭临时定位进程。若存在偏差，底盘先仅靠 MCU 融合 `/odom` 回到 `(0,0,0)`，成功后才开始原有智能分拣扫描。后续 `pickup / park_1 / park_2` 全部使用冻结坐标关系和 `/odom` 直接闭环，不再让 Navfn、DWB、costmap 或 BT Navigator 参与控制。
+正式比赛默认使用 `atlas_nav_direct_backend`。进入全自主后，机械臂/视觉先完成智能分拣观察并判定 `arena=A/B`；随后第一次 `origin` 导航只加载该 arena 对应的已标定地图与 pbstream，启动 Cartographer 纯定位完成地图匹配。定位稳定后保持 Cartographer 运行，对 `map -> odom` 做限速、防跳变的持续校正。后续 `pickup / park_1 / park_2` 依然由轻量 `/odom` 直达控制器闭环，不让 Navfn、DWB、costmap 或 BT Navigator 参与控制。
 
 速度输出仍为 `/atlas/navigation/cmd_vel`，由 YASMIN 安全门控后转发到 `/motor_cmd_vel`。原 `atlas_nav_full_backend + at_nav2` 完整 Nav2 链路仍保留在仓库中作为备用和调试方案。
 
@@ -16,7 +16,7 @@
 
 | 后端 | 包 | 用途 |
 | --- | --- | --- |
-| `direct` | `atlas_nav_direct_backend` + `at_nav2` 启动定位 | **正式比赛默认**；开局一次激光对齐，随后全部 `/odom` 直达。 |
+| `direct` | `atlas_nav_direct_backend` + `at_nav2` 启动定位 | **正式比赛默认**；激光持续校正，`/odom` 轻量直达。 |
 | `full` | `atlas_nav_full_backend` + `at_nav2` | 备用；通过 Nav2 `NavigateToPose` 执行完整导航。 |
 | `pseudo` | `atlas_nav_pseudo_backend` | 仅联调；不依赖地图，用 `/odom` 做相对位移。 |
 
@@ -30,7 +30,7 @@ ros2 launch atlas_competition_bringup competition_stack.launch.py
 
 # navigation_system — AGT 比赛轮式机器人导航系统
 
-> **ROS2 Humble 比赛导航系统**：正式比赛采用一次 Cartographer 对齐 + odom 直达；同时保留完整 Nav2 链路用于备用调试。
+> **ROS2 Humble 比赛导航系统**：正式比赛采用 Cartographer 持续校正 + odom 直达；同时保留完整 Nav2 链路用于备用调试。
 
 本系统面向 AGT 比赛场景，采用 **ROS2 Humble** 作为中间件框架，**Cartographer 2D 纯定位** 提供全局位姿估计，**Nav2（Navfn + DWB）** 负责全局规划与局部运动控制，**LSLIDAR N10P** 单线激光雷达为感知输入。
 

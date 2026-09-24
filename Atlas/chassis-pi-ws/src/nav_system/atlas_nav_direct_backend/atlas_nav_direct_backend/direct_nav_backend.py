@@ -34,6 +34,7 @@ from .direct_nav_model import (
     evaluate_localization_candidate,
     limit_acceleration,
     normalize_angle,
+    slew_pose,
     target_map_to_odom,
     compose_pose,
 )
@@ -97,18 +98,52 @@ class DirectNavBackend(Node):
             0.0,
             float(self.declare_parameter("startup_localization.post_constraint_settle_s", 0.8).value),
         )
+        self.continuous_localization_enabled = bool(
+            self.declare_parameter("continuous_localization.enabled", True).value
+        )
+        self.localization_tf_timeout_s = max(
+            0.05, float(self.declare_parameter("continuous_localization.tf_timeout_s", 0.50).value)
+        )
+        self.localization_max_correction_speed = max(
+            0.0,
+            float(
+                self.declare_parameter(
+                    "continuous_localization.max_correction_speed_m_s", 0.30
+                ).value
+            ),
+        )
+        self.localization_max_correction_yaw_rate = max(
+            0.0,
+            float(
+                self.declare_parameter(
+                    "continuous_localization.max_correction_yaw_rate_rad_s", 0.60
+                ).value
+            ),
+        )
+        self.localization_max_tf_jump_m = max(
+            0.0,
+            float(self.declare_parameter("continuous_localization.max_tf_jump_m", 0.50).value),
+        )
+        self.localization_max_tf_jump_yaw_rad = max(
+            0.0,
+            float(
+                self.declare_parameter(
+                    "continuous_localization.max_tf_jump_yaw_rad", 0.70
+                ).value
+            ),
+        )
 
-        self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.20).value)
-        self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 1.50).value)
-        self.max_linear_speed = float(self.declare_parameter("control.max_linear_speed_m_s", 0.45).value)
-        self.max_angular_speed = float(self.declare_parameter("control.max_angular_speed_rad_s", 0.60).value)
-        self.max_linear_accel = float(self.declare_parameter("control.max_linear_accel_m_s2", 0.50).value)
-        self.max_angular_accel = float(self.declare_parameter("control.max_angular_accel_rad_s2", 1.00).value)
-        self.slowdown_distance = float(self.declare_parameter("control.slowdown_distance_m", 0.30).value)
+        self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.80).value)
+        self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 2.20).value)
+        self.max_linear_speed = float(self.declare_parameter("control.max_linear_speed_m_s", 1.00).value)
+        self.max_angular_speed = float(self.declare_parameter("control.max_angular_speed_rad_s", 4.00).value)
+        self.max_linear_accel = float(self.declare_parameter("control.max_linear_accel_m_s2", 2.00).value)
+        self.max_angular_accel = float(self.declare_parameter("control.max_angular_accel_rad_s2", 8.00).value)
+        self.slowdown_distance = float(self.declare_parameter("control.slowdown_distance_m", 0.20).value)
         self.position_tolerance = float(self.declare_parameter("control.position_tolerance_m", 0.025).value)
         self.yaw_tolerance = float(self.declare_parameter("control.yaw_tolerance_rad", 0.060).value)
         self.require_yaw_reached = bool(self.declare_parameter("control.require_yaw_reached", True).value)
-        self.brake_hold_s = float(self.declare_parameter("control.brake_hold_s", 0.30).value)
+        self.brake_hold_s = float(self.declare_parameter("control.brake_hold_s", 0.20).value)
 
         if not self.competition_config_path:
             raise RuntimeError("competition_config is required for direct competition navigation")
@@ -138,6 +173,48 @@ class DirectNavBackend(Node):
                     startup_cfg.get(
                         "post_constraint_settle_s",
                         self.localization_post_constraint_settle_s,
+                    )
+                ),
+            )
+        continuous_cfg = nav_cfg.get("continuous_localization", {})
+        if isinstance(continuous_cfg, dict):
+            self.continuous_localization_enabled = bool(
+                continuous_cfg.get("enabled", self.continuous_localization_enabled)
+            )
+            self.localization_tf_timeout_s = max(
+                0.05,
+                float(continuous_cfg.get("tf_timeout_s", self.localization_tf_timeout_s)),
+            )
+            self.localization_max_correction_speed = max(
+                0.0,
+                float(
+                    continuous_cfg.get(
+                        "max_correction_speed_m_s", self.localization_max_correction_speed
+                    )
+                ),
+            )
+            self.localization_max_correction_yaw_rate = max(
+                0.0,
+                float(
+                    continuous_cfg.get(
+                        "max_correction_yaw_rate_rad_s",
+                        self.localization_max_correction_yaw_rate,
+                    )
+                ),
+            )
+            self.localization_max_tf_jump_m = max(
+                0.0,
+                float(
+                    continuous_cfg.get(
+                        "max_tf_jump_m", self.localization_max_tf_jump_m
+                    )
+                ),
+            )
+            self.localization_max_tf_jump_yaw_rad = max(
+                0.0,
+                float(
+                    continuous_cfg.get(
+                        "max_tf_jump_yaw_rad", self.localization_max_tf_jump_yaw_rad
                     )
                 ),
             )
@@ -191,6 +268,8 @@ class DirectNavBackend(Node):
         self.localization_global_constraint_baseline: Optional[int] = None
         self.localization_global_constraint_count = 0
         self.localization_global_constraint_seen_at: Optional[Time] = None
+        self.localization_tf_rejection_logged = False
+        self.localization_process_loss_logged = False
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -298,6 +377,17 @@ class DirectNavBackend(Node):
             response.message = "waypoint_id is required"
             return response
 
+        try:
+            # Arena must be decided by the sorting observation before any
+            # navigation starts. Lock it here so origin localization can only
+            # load/match the already selected arena map.
+            arena = self.arena_lock.accept(request.arena)
+        except CompetitionConfigError as exc:
+            response.success = False
+            response.message = str(exc)
+            self.fail(3104, response.message)
+            return response
+
         timeout = float(request.timeout_s) if request.timeout_s > 0.0 else self.default_waypoint_timeout_s
         self.active_waypoint = waypoint_id
         self.active_timeout_s = timeout
@@ -312,17 +402,17 @@ class DirectNavBackend(Node):
         if waypoint_id == "origin":
             self.target_map = Pose2D(0.0, 0.0, 0.0)
             if self.frozen_map_to_odom is None:
-                if not self.begin_startup_localization(str(request.arena or "").strip().upper()):
+                if not self.begin_startup_localization(arena):
                     response.success = False
                     response.message = self.message
                     return response
                 response.success = True
-                response.message = "startup localization accepted"
+                response.message = f"startup localization accepted for arena {arena}"
                 self.publish_status()
                 return response
             self.begin_tracking_target()
             response.success = True
-            response.message = "origin correction accepted"
+            response.message = f"origin correction accepted for arena {arena}"
             return response
 
         if self.frozen_map_to_odom is None:
@@ -332,7 +422,6 @@ class DirectNavBackend(Node):
             return response
 
         try:
-            arena = self.arena_lock.accept(request.arena)
             semantic = resolve_navigation_waypoint(
                 self.competition.navigation,
                 arena,
@@ -353,7 +442,8 @@ class DirectNavBackend(Node):
 
     def on_cancel(self, request: CancelNavigation.Request, response: CancelNavigation.Response):
         reason = str(request.reason or "cancel requested")
-        self.localization_launcher.shutdown()
+        if self.phase == self.PHASE_LOCALIZING and self.frozen_map_to_odom is None:
+            self.localization_launcher.shutdown()
         self.stop_with_state(NavigationStatus.STATE_CANCELLED, reason, 0)
         response.success = True
         response.message = reason
@@ -527,6 +617,12 @@ class DirectNavBackend(Node):
                 f"robot=({evaluation.robot_pose_map.x:.3f},{evaluation.robot_pose_map.y:.3f},"
                 f"{evaluation.robot_pose_map.yaw:.3f})"
             )
+            # The arena is locked before localization, so this is the only
+            # relevant candidate. Keep this connected Cartographer trajectory
+            # alive to correct odometry drift throughout the mission.
+            if self.continuous_localization_enabled:
+                self.finish_startup_localization()
+                return
         else:
             reason = evaluation.reason if self.localization_tf_samples else fallback_reason or evaluation.reason
             self.get_logger().warn(f"candidate {candidate.label} rejected: {reason}")
@@ -560,7 +656,8 @@ class DirectNavBackend(Node):
             return 0.0, 0
 
     def finish_startup_localization(self) -> bool:
-        self.localization_launcher.shutdown()
+        if not self.continuous_localization_enabled:
+            self.localization_launcher.shutdown()
         if not self.localization_results:
             self.fail(3113, "no startup localization candidate matched the saved map")
             return False
@@ -575,8 +672,69 @@ class DirectNavBackend(Node):
         self.begin_tracking_target()
         return True
 
+    def refresh_live_localization(self, now: Time, dt: float) -> None:
+        """Continuously fold laser localization into the odom target frame.
+
+        Cartographer remains the sole map->odom broadcaster while it is alive.
+        Corrections are rate-limited and implausible pose-graph jumps are
+        rejected so a localization update cannot create an abrupt drive command.
+        """
+        if not self.continuous_localization_enabled or self.frozen_map_to_odom is None:
+            return
+        if not self.localization_launcher.running():
+            if not self.localization_process_loss_logged:
+                self.get_logger().error(
+                    "continuous Cartographer localization stopped; holding last valid map->odom"
+                )
+                self.localization_process_loss_logged = True
+            return
+        self.localization_process_loss_logged = False
+        try:
+            tf = self.tf_buffer.lookup_transform(self.map_frame, self.odom_frame, Time())
+        except TransformException:
+            return
+        stamp = Time.from_msg(tf.header.stamp)
+        if stamp.nanoseconds:
+            age_s = (now - stamp).nanoseconds * 1e-9
+            if age_s < 0.0 or age_s > self.localization_tf_timeout_s:
+                return
+
+        t = tf.transform.translation
+        q = tf.transform.rotation
+        measured = Pose2D(float(t.x), float(t.y), yaw_from_quaternion(q))
+        current = self.frozen_map_to_odom
+        jump_m = math.hypot(measured.x - current.x, measured.y - current.y)
+        jump_yaw = abs(normalize_angle(measured.yaw - current.yaw))
+        if (
+            jump_m > self.localization_max_tf_jump_m
+            or jump_yaw > self.localization_max_tf_jump_yaw_rad
+        ):
+            if not self.localization_tf_rejection_logged:
+                self.get_logger().warn(
+                    f"rejecting localization jump: translation={jump_m:.3f}m "
+                    f"yaw={jump_yaw:.3f}rad"
+                )
+                self.localization_tf_rejection_logged = True
+            return
+
+        self.localization_tf_rejection_logged = False
+        self.frozen_map_to_odom = slew_pose(
+            current,
+            measured,
+            dt,
+            max_linear_rate_m_s=self.localization_max_correction_speed,
+            max_angular_rate_rad_s=self.localization_max_correction_yaw_rate,
+        )
+        if self.target_map is not None:
+            self.target_odom = target_map_to_odom(self.frozen_map_to_odom, self.target_map)
+
     def publish_frozen_map_tf(self) -> None:
         if self.frozen_map_to_odom is None:
+            return
+        # Never compete with Cartographer for the same TF edge. If continuous
+        # localization exits unexpectedly, this fallback preserves the last
+        # accepted alignment so odom-only stopping remains deterministic.
+        if self.continuous_localization_enabled and self.localization_launcher.running():
             return
         transform = TransformStamped()
         transform.header.stamp = self.get_clock().now().to_msg()
@@ -600,16 +758,16 @@ class DirectNavBackend(Node):
 
     def on_timer(self) -> None:
         now = self.get_clock().now()
-        self.publish_frozen_map_tf()
         dt = max(0.001, (now - self.last_update_time).nanoseconds * 1e-9)
         self.last_update_time = now
+        self.refresh_live_localization(now, dt)
+        self.publish_frozen_map_tf()
         if self.state != NavigationStatus.STATE_RUNNING:
             self.publish_status()
             return
         if self.active_started_at is not None:
             elapsed = (now - self.active_started_at).nanoseconds * 1e-9
             if elapsed > self.active_timeout_s:
-                self.localization_launcher.shutdown()
                 self.fail(3121, "waypoint timeout")
                 return
         if self.phase == self.PHASE_LOCALIZING:
@@ -667,6 +825,19 @@ class DirectNavBackend(Node):
 
     def update_brake(self, now: Time) -> None:
         self.publish_zero()
+        if self.latest_odom is not None and self.target_odom is not None:
+            distance = math.hypot(
+                self.target_odom.x - self.latest_odom.x,
+                self.target_odom.y - self.latest_odom.y,
+            )
+            yaw_error = abs(normalize_angle(self.target_odom.yaw - self.latest_odom.yaw))
+            if distance > self.position_tolerance or (
+                self.require_yaw_reached and yaw_error > self.yaw_tolerance
+            ):
+                self.phase = self.PHASE_TRACKING
+                self.brake_started_at = None
+                self.message = "localization correction requires final approach"
+                return
         if self.brake_started_at is None:
             self.brake_started_at = now
             return
@@ -681,7 +852,8 @@ class DirectNavBackend(Node):
         self.cmd_pub.publish(Twist())
 
     def fail(self, error_code: int, message: str) -> None:
-        self.localization_launcher.shutdown()
+        if self.frozen_map_to_odom is None:
+            self.localization_launcher.shutdown()
         self.publish_zero()
         self.state = NavigationStatus.STATE_FAILED
         self.phase = self.PHASE_IDLE

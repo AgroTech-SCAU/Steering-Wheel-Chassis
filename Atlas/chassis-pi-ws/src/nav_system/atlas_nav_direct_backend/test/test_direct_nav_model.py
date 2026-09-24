@@ -11,7 +11,11 @@ from atlas_nav_direct_backend.direct_nav_model import (  # noqa: E402
     compute_body_tracking_command,
     evaluate_localization_candidate,
     inverse_pose,
+    limit_acceleration,
+    normalize_angle,
+    slew_pose,
     target_map_to_odom,
+    VelocityCommand,
 )
 
 
@@ -127,3 +131,41 @@ def test_body_tracking_command_rotates_world_error_into_robot_frame():
     assert cmd.vx == pytest.approx(0.0, abs=1e-6)
     assert cmd.vy == pytest.approx(-0.5, abs=1e-6)
     assert cmd.wz == pytest.approx(0.0, abs=1e-6)
+
+
+def test_slowdown_is_a_speed_ceiling_not_a_second_proportional_gain():
+    cmd = compute_body_tracking_command(
+        Pose2D(0.0, 0.0, 0.0),
+        Pose2D(0.10, 0.0, 0.0),
+        kp_xy=1.8,
+        kp_yaw=2.2,
+        max_linear_speed_m_s=1.0,
+        max_angular_speed_rad_s=1.2,
+        slowdown_distance_m=0.20,
+    )
+    assert cmd.vx == pytest.approx(0.18)
+    assert cmd.vy == pytest.approx(0.0)
+
+
+def test_linear_acceleration_limit_applies_to_vector_magnitude():
+    cmd = limit_acceleration(
+        VelocityCommand(1.0, 1.0, 0.0),
+        VelocityCommand(0.0, 0.0, 0.0),
+        0.1,
+        max_linear_accel_m_s2=1.0,
+        max_angular_accel_rad_s2=1.0,
+    )
+    assert math.hypot(cmd.vx, cmd.vy) == pytest.approx(0.1)
+
+
+def test_live_localization_correction_is_rate_limited_across_yaw_wrap():
+    corrected = slew_pose(
+        Pose2D(0.0, 0.0, math.pi - 0.05),
+        Pose2D(1.0, 0.0, -math.pi + 0.25),
+        0.1,
+        max_linear_rate_m_s=0.3,
+        max_angular_rate_rad_s=0.6,
+    )
+    assert corrected.x == pytest.approx(0.03)
+    assert corrected.y == pytest.approx(0.0)
+    assert abs(normalize_angle(corrected.yaw - (math.pi - 0.05))) == pytest.approx(0.06)

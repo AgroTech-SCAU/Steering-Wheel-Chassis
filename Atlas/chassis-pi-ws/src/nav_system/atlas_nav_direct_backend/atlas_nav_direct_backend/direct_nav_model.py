@@ -61,6 +61,38 @@ def target_map_to_odom(map_to_odom: Pose2D, target_map: Pose2D) -> Pose2D:
     return compose_pose(inverse_pose(map_to_odom), target_map)
 
 
+def slew_pose(
+    previous: Pose2D,
+    measured: Pose2D,
+    dt_s: float,
+    *,
+    max_linear_rate_m_s: float,
+    max_angular_rate_rad_s: float,
+) -> Pose2D:
+    """Rate-limit an SE(2) correction without breaking yaw wrap-around."""
+    dt = max(0.0, dt_s)
+    dx = measured.x - previous.x
+    dy = measured.y - previous.y
+    distance = math.hypot(dx, dy)
+    max_distance = max(0.0, max_linear_rate_m_s) * dt
+    if distance > max_distance > 0.0:
+        scale = max_distance / distance
+        dx *= scale
+        dy *= scale
+    elif max_distance <= 0.0:
+        dx = 0.0
+        dy = 0.0
+
+    dyaw = normalize_angle(measured.yaw - previous.yaw)
+    max_yaw = max(0.0, max_angular_rate_rad_s) * dt
+    dyaw = clamp(dyaw, -max_yaw, max_yaw)
+    return Pose2D(
+        previous.x + dx,
+        previous.y + dy,
+        normalize_angle(previous.yaw + dyaw),
+    )
+
+
 def circular_mean(values: Sequence[float]) -> float:
     if not values:
         return 0.0
@@ -180,15 +212,17 @@ def compute_body_tracking_command(
     ex_body = c * dx + s * dy
     ey_body = -s * dx + c * dy
 
-    scale = 1.0
-    if slowdown_distance_m > 1e-9:
-        scale = clamp(distance / slowdown_distance_m, 0.15, 1.0)
-
-    vx = kp_xy * ex_body * scale
-    vy = kp_xy * ey_body * scale
+    vx = kp_xy * ex_body
+    vy = kp_xy * ey_body
     speed = math.hypot(vx, vy)
-    if speed > max_linear_speed_m_s > 0.0:
-        factor = max_linear_speed_m_s / speed
+    # Use the slowdown ramp as a speed ceiling. Multiplying the proportional
+    # command by distance/slowdown_distance makes speed quadratic in the
+    # remaining error and caused the final few decimetres to crawl.
+    speed_limit = max_linear_speed_m_s
+    if slowdown_distance_m > 1e-9:
+        speed_limit *= clamp(distance / slowdown_distance_m, 0.15, 1.0)
+    if speed > speed_limit > 0.0:
+        factor = speed_limit / speed
         vx *= factor
         vy *= factor
 
@@ -208,8 +242,18 @@ def limit_acceleration(
     dt = max(0.001, dt_s)
     dv = max_linear_accel_m_s2 * dt
     dw = max_angular_accel_rad_s2 * dt
+    delta_vx = desired.vx - previous.vx
+    delta_vy = desired.vy - previous.vy
+    delta_speed = math.hypot(delta_vx, delta_vy)
+    if delta_speed > dv > 0.0:
+        scale = dv / delta_speed
+        delta_vx *= scale
+        delta_vy *= scale
+    elif dv <= 0.0:
+        delta_vx = 0.0
+        delta_vy = 0.0
     return VelocityCommand(
-        clamp(desired.vx, previous.vx - dv, previous.vx + dv),
-        clamp(desired.vy, previous.vy - dv, previous.vy + dv),
+        previous.vx + delta_vx,
+        previous.vy + delta_vy,
         clamp(desired.wz, previous.wz - dw, previous.wz + dw),
     )
