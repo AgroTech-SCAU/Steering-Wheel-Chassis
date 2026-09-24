@@ -46,8 +46,8 @@ atlas_competition_manipulation_backend:
     pick_suction_hold_s: 1.50
     # 放置释放后的静置时间，和抓取保持时间分开配置
     suction_settle_s: 0.45
-    # 与 MCU 遥控器机械臂高速档一致
-    default_speed_rad_s: 50.24
+    # 与 MCU 上电调零 ARM_SERVO_SPEED_RAD_S 一致
+    default_speed_rad_s: 3.14
     # 到位判断放宽到与 handeye_bridge 的 5° 轴容差同级(≈5.7°)，
     # 避免舵机回程差/微抖把"已到位"误判成超时。TCP 位置另有 pose_validation 把关。
     joint_tolerance_rad: 0.10

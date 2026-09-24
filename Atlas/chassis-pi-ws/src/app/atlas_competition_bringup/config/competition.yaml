@@ -38,8 +38,8 @@ competition:
 
     # ── 运动参数 ──
     # 机械臂移动速度 (rad/s)
-    # 与 MCU 遥控器机械臂高速档 servo_speed_rad_s 一致
-    default_speed_rad_s: 50.24
+    # 与 MCU 上电调零 ARM_SERVO_SPEED_RAD_S 一致
+    default_speed_rad_s: 3.14
     # 末端在目标上方偏移 (避免碰撞)
     target_z_offset_m: 0.003
 
@@ -177,7 +177,7 @@ competition:
         z_m: 0.088
         pitch_rad: 0.066446084
         yaw_rad: -0.056843765
-        speed_rad_s: 50.24
+        speed_rad_s: 3.14
       sorting_scan_a:
         configured: true
         joints_rad:
@@ -191,7 +191,7 @@ competition:
         z_m: 0.304
         pitch_rad: -0.071483975
         yaw_rad: -1.602948094
-        speed_rad_s: 50.24
+        speed_rad_s: 3.14
       sorting_scan_b:
         configured: true
         joints_rad:
@@ -205,7 +205,7 @@ competition:
         z_m: 0.297
         pitch_rad: 0.032785933
         yaw_rad: 1.337677169
-        speed_rad_s: 50.24
+        speed_rad_s: 3.14
       navigation_safe:
         configured: true
         joints_rad:
@@ -219,7 +219,7 @@ competition:
         z_m: 0.088
         pitch_rad: 0.064900199
         yaw_rad: -0.003154335
-        speed_rad_s: 50.24
+        speed_rad_s: 3.14
     arenas:
       A:
         pickup:
@@ -236,7 +236,7 @@ competition:
             z_m: 0.291
             pitch_rad: -0.007026225
             yaw_rad: 0.04300418
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m:
             - 0.02
             - 0.063
@@ -254,7 +254,7 @@ competition:
             z_m: 0.245
             pitch_rad: -0.023906709
             yaw_rad: -0.343566747
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m:
             - 0.024
             - 0.065
@@ -272,7 +272,7 @@ competition:
             z_m: 0.257
             pitch_rad: -0.080644362
             yaw_rad: -0.236132764
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m:
             - 0.015
             - 0.055
@@ -290,7 +290,7 @@ competition:
             z_m: 0.197
             pitch_rad: -0.048456988
             yaw_rad: 0.109015256
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m:
             - 0.014
             - 0.061
@@ -310,7 +310,7 @@ competition:
             z_m: 0.286
             pitch_rad: -0.122088457
             yaw_rad: -1.67962515
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
           placement_points:
           - configured: true
             x_m: 0.049
@@ -342,7 +342,7 @@ competition:
             z_m: 0.291
             pitch_rad: 0.127966872
             yaw_rad: 1.715079331
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
           placement_points:
           - configured: true
             x_m: -0.034
@@ -374,7 +374,7 @@ competition:
             z_m: 0.306
             pitch_rad: 0.037496746
             yaw_rad: 1.701287125
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
           placement_points:
           - configured: true
             x_m: -0.046
@@ -403,7 +403,7 @@ competition:
             z_m: 0.212
             pitch_rad: 0.063371776
             yaw_rad: 0.072033193
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m: [0.02, 0.062]
             camera_to_plane1_distance_m: 0.192
             camera_to_plane2_distance_m: 0.15
@@ -414,7 +414,7 @@ competition:
             z_m: 0.239
             pitch_rad: 0.022060066
             yaw_rad: -0.374204339
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m: [0.028, 0.068]
             camera_to_plane1_distance_m: 0.211
             camera_to_plane2_distance_m: 0.171
@@ -425,7 +425,7 @@ competition:
             z_m: 0.239
             pitch_rad: -0.038961355
             yaw_rad: -0.328300703
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m: [0.015, 0.061]
             camera_to_plane1_distance_m: 0.224
             camera_to_plane2_distance_m: 0.178
@@ -436,7 +436,7 @@ competition:
             z_m: 0.193
             pitch_rad: -0.051116441
             yaw_rad: 0.041377665
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
             layer_z_m: [0.022, 0.074]
             camera_to_plane1_distance_m: 0.171
             camera_to_plane2_distance_m: 0.119
@@ -449,7 +449,7 @@ competition:
             z_m: 0.293
             pitch_rad: 0.008340071
             yaw_rad: 1.679823581
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
           placement_points:
           - {configured: true, x_m: -0.072, y_m: 0.29, first_layer_z_m: 0.01}
           - {configured: true, x_m: -0.075, y_m: 0.286, first_layer_z_m: 0.052}
@@ -464,7 +464,7 @@ competition:
             z_m: 0.273
             pitch_rad: 0.046455926
             yaw_rad: -1.701246438
-            speed_rad_s: 50.24
+            speed_rad_s: 3.14
           placement_points:
           - {configured: true, x_m: 0.091, y_m: -0.344, first_layer_z_m: 0.012}
           - {configured: true, x_m: 0.084, y_m: -0.347, first_layer_z_m: 0.061}
