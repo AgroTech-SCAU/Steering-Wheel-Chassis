@@ -149,8 +149,9 @@ competition:
             configured: true
 
   arm_motion:
-    # 抓取接触位的高度与姿态不在这里二次定义。比赛 PICK 仅发布 slot+layer，
-    # 直接复用 handeye_bridge/bridge_node.yaml 中 screw_pick 已实机验证参数。
+    # 比赛 PICK 仅发布 slot+layer。货物区第一/二层接触高度复用
+    # 当前 A/B、slot observation 中实机标定的 layer_z_m；第三层仍由
+    # handeye_bridge/bridge_node.yaml 的 plane3_z_m 提供。
     fixed_poses:
       zero:
         configured: true
@@ -462,6 +463,8 @@ competition:
   manipulation:
     placement:
       enabled: true
+      # 新标定会为每个 placement_point 同时保存 pitch/yaw。
+      # 当前旧标定只有 XYZ，运行时用 MCU 3D 位置 IK，不伪造未标定姿态。
       approach_m: 0.06
       layer_step_m: 0.05
       slot_offsets_xy_m:

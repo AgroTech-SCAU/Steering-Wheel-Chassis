@@ -74,6 +74,18 @@ def test_pose_move_sends_direction_and_waits_accept_then_arrival(monkeypatch):
     assert (calls[0][1].pitch_rad,calls[0][1].yaw_rad)==direction
 
 
+def test_position_move_uses_3d_service_and_does_not_check_axis(monkeypatch):
+    n=node(); calls=[]
+    monkeypatch.setattr(b,'SetArmPosition',NS(Request=lambda:NS()))
+    n.arm_position_client=object(); n.default_speed_rad_s=.5; n.motion_timeout_s=1.
+    n._call_service=lambda client,req: calls.append(('send',req)) or NS(success=True,command_seq=5)
+    n._wait_arm_accepted=lambda seq,since: calls.append(('accept',seq)) or True
+    n._wait_pose_target=lambda *args,**kwargs: calls.append(('arrive',args,kwargs)) or True
+    assert n._move_position(b.XYZ(.2,.1,.3),suction_valid=True,suction_enable=True)
+    assert [c[0] for c in calls]==['send','accept','arrive']
+    assert calls[-1][2]['direction'] is None
+
+
 def test_stale_pose_cannot_be_counted_as_multiple_stable_samples():
     n=node(); n._pose_cv=threading.Condition(); n._latest_pose=b.XYZ(.2,.1,.3)
     n._latest_direction=(-math.pi/2,0.)
@@ -83,18 +95,57 @@ def test_stale_pose_cannot_be_counted_as_multiple_stable_samples():
     assert not n._wait_pose_target(n._latest_pose,.03,direction=n._latest_direction,since=time.monotonic())
 
 
-def test_place_all_stages_keep_downward_axis(monkeypatch):
-    n=node(); moves=[]
+def test_place_legacy_xyz_uses_3d_descent_and_calibrated_joint_retreat(monkeypatch):
+    n=node(); positions=[]; poses=[]; named=[]
     monkeypatch.setattr(b,'ManipulationStatus',NS(STATE_RUNNING=1))
+    monkeypatch.setattr(b,'calibrated_placement_direction',lambda *args:None)
     n._place_target=lambda *args:b.XYZ(.3,.1,.04)
+    n.arm_motion={}
     n.place_approach_m=.06; n.suction_settle_s=0
     n._set_status=lambda *args,**kwargs:None
     n._set_suction=lambda enabled: not enabled
-    n._move_pose=lambda target,**kwargs:moves.append((target,kwargs)) or True
+    n._move_position=lambda target,**kwargs:positions.append((target,kwargs)) or True
+    n._move_pose=lambda target,**kwargs:poses.append((target,kwargs)) or True
+    n._move_named_pose=lambda *args,**kwargs:named.append((args,kwargs)) or True
     assert n._do_place('A','park_1',0,0)
-    assert len(moves)==3
-    assert [x[0].z for x in moves]==pytest.approx([.1,.04,.1])
-    assert all(x[1]['direction']==(-math.pi/2,0.) for x in moves)
+    assert len(positions)==1 and not poses
+    assert positions[0][0].z==pytest.approx(.04)
+    assert positions[0][1]['suction_enable'] is True
+    assert named == [(('park_prepare',), {
+        'arena':'A', 'area':'park_1',
+        'suction_valid':True, 'suction_enable':False})]
+
+
+def test_place_new_calibration_uses_exact_5d_release_pose(monkeypatch):
+    n=node(); positions=[]; poses=[]
+    monkeypatch.setattr(b,'ManipulationStatus',NS(STATE_RUNNING=1))
+    monkeypatch.setattr(b,'calibrated_placement_direction',lambda *args:(-.2,.7))
+    n._place_target=lambda *args:b.XYZ(.3,.1,.04)
+    n.arm_motion={}; n.suction_settle_s=0
+    n._set_status=lambda *args,**kwargs:None
+    n._set_suction=lambda enabled:not enabled
+    n._move_position=lambda target,**kwargs:positions.append((target,kwargs)) or True
+    n._move_pose=lambda target,**kwargs:poses.append((target,kwargs)) or True
+    n._move_named_pose=lambda *args,**kwargs:True
+    assert n._do_place('A','park_1',0,0)
+    assert not positions and len(poses)==1
+    assert poses[0][1]['direction']==(-.2,.7)
+
+
+def test_place_failure_forces_suction_off_even_when_cancelled(monkeypatch):
+    n=node(); suction=[]
+    monkeypatch.setattr(b,'ManipulationStatus',NS(STATE_RUNNING=1))
+    monkeypatch.setattr(b,'calibrated_placement_direction',lambda *args:None)
+    n._place_target=lambda *args:b.XYZ(.3,.1,.04)
+    n.arm_motion={}; n.place_approach_m=.06; n.suction_settle_s=0
+    n._set_status=lambda *args,**kwargs:None
+    n._move_position=lambda *args,**kwargs:False
+    n._set_suction=lambda enabled,force=False:suction.append((enabled,force)) or True
+    n._last_failure='POSE_ARRIVAL_TIMEOUT'
+
+    assert not n._do_place('A','park_1',0,0)
+    assert suction == [(False, True)]
+    assert n._last_failure == 'POSE_ARRIVAL_TIMEOUT'
 
 
 def test_view_scan_keeps_measured_axis(monkeypatch):

@@ -13,6 +13,7 @@ atlas_competition_manipulation_backend:
     arm_joint_state_topic: "/arm/joint_states"
     arm_joints_service: "/mcu/set_arm_joints"
     arm_pose_service: "/mcu/set_arm_pose"
+    arm_position_service: "/mcu/set_arm_position"
     arm_result_timeout_s: 3.0
     pose_feedback_timeout_s: 0.5
     tool_axis_tolerance_deg: 3.0
@@ -67,7 +68,8 @@ atlas_competition_manipulation_backend:
       # 实机“向右转”若与 +joint1 相反，只需改为 -1.0，不改代码
       joint1_right_sign: 1.0
 
-    # 园区放置基准点由 competition.yaml 的 arm_motion.arenas.* 提供
+    # 园区放置基准点由 competition.yaml 的 arm_motion.arenas.* 提供。
+    # 新标定带工具方向时使用 5D IK；旧标定只有 XYZ 时使用 3D IK。
     placement:
       enabled: false
       approach_m: 0.060

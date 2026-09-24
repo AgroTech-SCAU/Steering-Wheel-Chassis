@@ -63,20 +63,21 @@ handeye_bridge:
     # (设得比 initial_position_tolerance_m 大，允许微小的FK漂移)
     initial_pose_departure_tolerance_m: 0.05
 
-    # ── 已实机验证工作平面 (base 坐标系下的 Z 坐标, 单位米) ──
-    # screw_pick 与正式比赛抓取统一使用这里的 plane1/plane2。
-    # competition.yaml 中各 observation 的 layer_z_m 继续作为槽位标定记录/复核数据，
-    # 不再由任务层通过 PickTarget 强制覆盖这组已验证高度。
+    # ── 工作平面 (base 坐标系下的 Z 坐标, 单位米) ──
+    # 比赛货物区第一/二层优先使用 competition.yaml 中当前 A/B + slot
+    # observation.layer_z_m 的标定高度。plane1/plane2 作为非比赛模式或
+    # 未加载顶层配置时的回退；第三层始终使用 plane3。
     # 测量方法: 机械臂末端碰平面 → ros2 topic echo /arm/pose --once → 读 z 值
     plane1_z_m: 0.031      # 第一层高度 ← 改! 实测后填入
     plane2_z_m: 0.07      # 第二层高度 ← 改! 实测后填入
+    # 同时作为货物区抓第一/二层前的安全等待高度。
     plane3_z_m: 0.109      # 第三层高度 ← 改! 实测后填入
     # 三层高度实测并复核后才改为 true；false 时即使 auto_send=true 也拒绝发送
     plane_heights_configured: true
     # /pick_target 层号无效时回退到此层
     default_plane: 1
 
-    # 第三层历史测量参考；货物区两层距离随各观察位由机械臂标定生成
+    # 第三层历史测量参考；货物区前两层距离由观察位 Z-layer Z 自动派生
     camera_to_plane3_distance_m: 0.255  # ← 改! 实测后填入
 
     # 比赛抓取参数由 competition.yaml 的 competition.handeye_bridge 提供。

@@ -69,8 +69,8 @@ def load_competition_config(path: str | os.PathLike[str]) -> CompetitionConfig:
 
     navigation = dict(competition.get("navigation", {}) or {})
     navigation["_source_path"] = str(config_path)
-    arm_motion = dict(competition.get("arm_motion", {}) or {})
-    _validate_observation_distances(arm_motion)
+    arm_motion = copy.deepcopy(dict(competition.get("arm_motion", {}) or {}))
+    _derive_observation_distances(arm_motion)
     vision = _vision_with_arm_motion_compatibility(
         dict(competition.get("vision", {}) or {}),
         arm_motion,
@@ -86,26 +86,34 @@ def load_competition_config(path: str | os.PathLike[str]) -> CompetitionConfig:
     )
 
 
-def _validate_observation_distances(arm_motion: Mapping[str, Any]) -> None:
+def _derive_observation_distances(arm_motion: dict[str, Any]) -> None:
+    """Derive pickup plane distances from one source of truth.
+
+    ``layer_z_m`` stores the calibrated contact height in the arm base frame.
+    The observation TCP height is stored in ``z_m``.  Keeping a separately
+    edited camera-to-plane value in YAML lets the two drift apart, so runtime
+    config always derives the diagnostic distance from those two measurements.
+    """
     for arena, arena_cfg in _mapping(arm_motion.get("arenas")).items():
         observations = _mapping(_mapping(arena_cfg).get("pickup")).get("observations") or []
         for slot, observation in enumerate(observations):
-            if not isinstance(observation, Mapping) or not observation.get("configured", False):
+            if not isinstance(observation, dict) or not observation.get("configured", False):
                 continue
-            keys = ("camera_to_plane1_distance_m", "camera_to_plane2_distance_m")
-            if not any(key in observation for key in keys):
-                continue  # Existing calibration files without derived distances remain readable.
-            heights = observation.get("layer_z_m", [])
-            if len(heights) != 2 or not all(key in observation for key in keys):
-                raise CompetitionConfigError(f"arena {arena} pickup slot {slot} needs two plane distances")
-            for layer, (key, plane_z) in enumerate(zip(keys, heights), start=1):
-                distance = float(observation[key])
-                expected = float(observation["z_m"]) - float(plane_z)
-                if (not math.isfinite(distance) or not math.isfinite(expected)
-                        or distance <= 0.0 or abs(distance - expected) > 0.001):
+            heights = list(observation.get("layer_z_m", []) or [])
+            if len(heights) != 2 or "z_m" not in observation:
+                raise CompetitionConfigError(
+                    f"arena {arena} pickup slot {slot} needs observation z_m "
+                    "and two layer_z_m values"
+                )
+            observe_z = float(observation["z_m"])
+            for layer, plane_z in enumerate(heights, start=1):
+                distance = observe_z - float(plane_z)
+                if not math.isfinite(distance) or distance <= 0.0:
                     raise CompetitionConfigError(
-                        f"arena {arena} pickup slot {slot} layer {layer} plane distance mismatch"
+                        f"arena {arena} pickup slot {slot} layer {layer} "
+                        "plane distance must be positive"
                     )
+                observation[f"camera_to_plane{layer}_distance_m"] = round(distance, 6)
 
 
 def load_optional_competition_config(
@@ -289,7 +297,18 @@ def resolve_placement_reference(
         raise CompetitionConfigError(
             f"arena {normalized_arena} {park_name}.placement_reference configured=false"
         )
-    return {key: float(reference[key]) for key in required}
+    result = {key: float(reference[key]) for key in required}
+    # New calibrations retain the tool direction measured at the release point.
+    # Keep older XYZ-only files valid; their direction falls back to park.prepare.
+    orientation = ("pitch_rad", "yaw_rad")
+    if all(key in reference for key in orientation):
+        result.update({key: float(reference[key]) for key in orientation})
+    elif any(key in reference for key in orientation):
+        raise CompetitionConfigError(
+            f"arena {normalized_arena} {park_name} placement direction needs "
+            "both pitch_rad and yaw_rad"
+        )
+    return result
 
 
 def _vision_with_arm_motion_compatibility(

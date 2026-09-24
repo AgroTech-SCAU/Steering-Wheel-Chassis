@@ -157,6 +157,13 @@ target_z_offset_m: 0.03
 ```
 
 `plane1_z_m` 等参数是基座坐标系中的绝对平面 Z，不是相机到平面的距离。
+比赛货物区第一、第二层会优先使用当前 A/B、slot 观察位标定的 `layer_z_m`；
+`plane1_z_m`、`plane2_z_m` 只作为非比赛或缺少顶层配置时的回退。第三层继续
+使用 `plane3_z_m`。
+
+货物区识别到第一/二层目标后，bridge 先以目标 XY 和检测帧工具轴前往
+`plane3_z_m + target_z_offset_m` 等待位；只有实时 `/arm/pose` 确认到位后，才发送
+第一/二层接触位。目标本身为第三层时不重复发送等待位。
 
 测量方式：让末端到达工作平面，读取：
 
@@ -172,17 +179,16 @@ plane_heights_configured: true
 
 #### camera_to_plane 参数
 
-货物区每个 `competition.arm_motion.arenas.*.pickup.observations` 仍保存 slot-specific
-`layer_z_m`、`camera_to_plane1_distance_m` 和 `camera_to_plane2_distance_m` 作为标定记录与复核数据。
-正式抓取当前以 `bridge_node.yaml` 中已经实机验证的 plane1/plane2 为执行真值。机械臂标定导出时距离记录计算：
+货物区每个 `competition.arm_motion.arenas.*.pickup.observations` 保存 slot-specific
+`layer_z_m`。配置加载和机械臂标定导出都会自动计算两个观察深度：
 
 ```text
 第 n 层距离 = 观察位 TCP 的 z_m - 第 n 层吸取接触高度 layer_z_m[n-1]
 ```
 
-加载顶层配置时会检查这两个差值与记录的 Z 值一致且为正。这里使用的是 TCP
-高度差；它不能代替相机光心到平面的实测距离。当前 manual 模式仍使用手眼变换后的
-相机射线与 `plane_z` 求交，这两个距离只用于记录和近似像素比例参考：
+加载顶层配置时会用公式覆盖旧的派生值，并检查距离为正。这里使用的是 TCP
+高度差；它不能代替相机光心到平面的实测距离。manual 模式使用手眼变换后的
+相机射线与对应 slot 的绝对 `layer_z_m` 求交，这两个距离用于日志、复核和近似像素比例参考：
 
 ```text
 mm_per_pixel ≈ camera_to_plane_distance_m × 1000 / fx_px
@@ -317,7 +323,8 @@ plane_heights_configured: true
 
 ### 改 camera_to_plane 深度但坐标不变
 
-这是当前代码的预期行为。manual 模式使用 `planeX_z_m` 射线求交，未使用 `camera_to_planeX_distance_m`。
+这是当前代码的预期行为。该值由观察位 Z 和层高自动派生，不能作为独立调参项。
+要改变货物区第一、第二层接触高度，应重新标定对应观察位的 `layer_z_m`。
 
 ### 一个目标正确，四个目标误差不同
 

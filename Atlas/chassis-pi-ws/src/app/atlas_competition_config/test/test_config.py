@@ -22,13 +22,11 @@ def _write_config(tmp_path: Path, payload: dict) -> Path:
     return path
 
 
-def test_handeye_parameters_load_from_competition_and_check_observation_distances(tmp_path):
+def test_handeye_parameters_load_and_observation_distances_are_derived(tmp_path):
     observation = {
         "configured": True,
         "z_m": 0.35,
         "layer_z_m": [0.03, 0.08],
-        "camera_to_plane1_distance_m": 0.32,
-        "camera_to_plane2_distance_m": 0.27,
     }
     payload = {"competition": {
         "handeye_bridge": {"manual_offset_x_m": -0.055, "plane1_z_m": 0.03},
@@ -38,10 +36,41 @@ def test_handeye_parameters_load_from_competition_and_check_observation_distance
     config = load_competition_config(config_path)
     assert config.handeye_bridge["manual_offset_x_m"] == -0.055
     assert config.handeye_bridge["plane1_z_m"] == 0.03
+    loaded = config.arm_motion["arenas"]["A"]["pickup"]["observations"][0]
+    assert loaded["camera_to_plane1_distance_m"] == 0.32
+    assert loaded["camera_to_plane2_distance_m"] == 0.27
 
-    observation["camera_to_plane1_distance_m"] = 0.36
+    observation["camera_to_plane1_distance_m"] = 99.0
     _write_config(tmp_path, payload)
-    with pytest.raises(CompetitionConfigError, match="plane distance mismatch"):
+    loaded = load_competition_config(config_path).arm_motion[
+        "arenas"]["A"]["pickup"]["observations"][0]
+    assert loaded["camera_to_plane1_distance_m"] == 0.32
+
+
+def test_observation_distance_rejects_observe_pose_below_contact_height(tmp_path):
+    config_path = _write_config(
+        tmp_path,
+        {
+            "competition": {
+                "arm_motion": {
+                    "arenas": {
+                        "A": {
+                            "pickup": {
+                                "observations": [
+                                    {
+                                        "configured": True,
+                                        "z_m": 0.05,
+                                        "layer_z_m": [0.03, 0.08],
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+    with pytest.raises(CompetitionConfigError, match="distance must be positive"):
         load_competition_config(config_path)
 
 
@@ -249,6 +278,8 @@ def test_arm_motion_resolves_shared_and_arena_specific_poses(tmp_path):
                                     "x_m": 0.20,
                                     "y_m": 0.10,
                                     "first_layer_z_m": 0.05,
+                                    "pitch_rad": -0.3,
+                                    "yaw_rad": 0.4,
                                 },
                             },
                         }
@@ -273,7 +304,9 @@ def test_arm_motion_resolves_shared_and_arena_specific_poses(tmp_path):
     assert pickup["x_m"] == 0.31
     assert park["yaw_rad"] == 0.2
     assert resolve_pickup_layer_z(config.arm_motion, "A", 2) == 0.08
-    assert resolve_placement_reference(config.arm_motion, "A", "park_1")["first_layer_z_m"] == 0.05
+    reference = resolve_placement_reference(config.arm_motion, "A", "park_1")
+    assert reference["first_layer_z_m"] == 0.05
+    assert (reference["pitch_rad"], reference["yaw_rad"]) == (-0.3, 0.4)
 
 
 def test_arm_motion_rejects_unconfigured_pose_and_bad_layer(tmp_path):

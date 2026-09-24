@@ -215,7 +215,8 @@ scp wheeltec@192.168.0.100:screw_pick/calib/debug/calib_debug.jpg .
 ## 7. 深度与坐标变换
 
 比赛深度模式在 `competition.yaml` 的 `competition.handeye_bridge` 中选择；
-默认平面高度在 `handeye_bridge/config/bridge_node.yaml` 中配置。
+货物区第一、第二层高度来自顶层比赛配置中各观察位的标定结果；第三层以及
+非比赛模式的回退高度在 `handeye_bridge/config/bridge_node.yaml` 中配置。
 
 ### 7.1 manual：固定工作平面，默认
 
@@ -227,7 +228,7 @@ plane3_z_m: 0.19
 target_z_offset_m: 0.03
 ```
 
-计算过程：像素去畸变后形成相机射线，经手眼矩阵和机械臂 FK 转换到 base 坐标系，再与 `Z=planeX_z_m` 的平面求交。
+计算过程：像素去畸变后形成相机射线，经手眼矩阵和机械臂 FK 转换到 base 坐标系，再与目标层的绝对 Z 平面求交。比赛货物区 layer 1/2 使用当前 A/B、slot 对应的 `layer_z_m`；layer 3 使用 `plane3_z_m`。第一/二层识别成功后，机械臂先到目标 XY 的第三层等待高度，实时 FK 确认到位后再下探到目标层。
 
 `planeX_z_m` 是机械臂基座坐标系中的平面高度，不是相机到平面的距离。测量方式：
 
@@ -241,10 +242,15 @@ ros2 topic echo /arm/pose --once
 目标 Z = planeX_z_m + target_z_offset_m + manual_offset_z_m
 ```
 
-比赛配置中每个货物观察位的 `camera_to_plane1_distance_m`、
-`camera_to_plane2_distance_m` 由机械臂标定按观察位 Z 减去对应层高自动生成。
-这些 TCP 高度差用于记录和复核；manual 模式的射线求交仍使用手眼变换和
-`plane_z`，不读取这些距离。
+比赛配置加载时会根据每个货物观察位自动派生：
+
+```text
+camera_to_plane1_distance_m = observation.z_m - layer_z_m[0]
+camera_to_plane2_distance_m = observation.z_m - layer_z_m[1]
+```
+
+这两个 TCP 高度差用于诊断和复核；manual 模式射线求交直接使用同一标定中的
+绝对 `layer_z_m`，不需要人工维护第二份深度值。
 
 ### 7.2 pnp：四点矩形深度
 

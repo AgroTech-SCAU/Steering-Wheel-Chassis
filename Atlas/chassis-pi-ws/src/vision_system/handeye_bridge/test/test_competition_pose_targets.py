@@ -1,4 +1,5 @@
 from handeye_bridge.competition_pose_targets import (
+    pickup_plane_calibrations,
     pickup_vision_pose_targets,
     park_vision_pose_targets,
 )
@@ -55,6 +56,22 @@ def test_pickup_vision_pose_targets_include_all_four_observations():
         "pickup_observe_a_slot0", "pickup_observe_a_slot1",
         "pickup_observe_a_slot2", "pickup_observe_a_slot3",
     ]
+
+
+def test_pickup_plane_calibrations_use_slot_heights_and_derive_distances():
+    pose = _pose(0.2)
+    observations = [
+        {**pose, "z_m": 0.30 + slot * 0.01,
+         "layer_z_m": [0.02 + slot * 0.001, 0.06 + slot * 0.001]}
+        for slot in range(4)
+    ]
+    arm_motion = {"arenas": {"A": {"pickup": {"observations": observations}}}}
+
+    calibrations = pickup_plane_calibrations(arm_motion)
+
+    slot2 = calibrations["pickup_observe_a_slot2"]
+    assert slot2["layer_z_m"] == (0.022, 0.062)
+    assert slot2["camera_to_plane_distance_m"] == (0.298, 0.258)
 
 
 def test_park_vision_pose_targets_include_only_configured_prepare_poses():

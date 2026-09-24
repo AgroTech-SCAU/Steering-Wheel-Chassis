@@ -264,11 +264,15 @@ class ArmMotionCalibration(Node):
             try:
                 _joints, pose = self._snapshot()
                 p = pose.pose.position
+                q = pose.pose.orientation
+                pitch, yaw = quaternion_to_pitch_yaw(q.x, q.y, q.z, q.w)
                 result = {
                     "configured": True,
                     "x_m": round(float(p.x), 6),
                     "y_m": round(float(p.y), 6),
                     "first_layer_z_m": round(float(p.z), 6),
+                    "pitch_rad": round(float(pitch), 9),
+                    "yaw_rad": round(float(yaw), 9),
                 }
                 print(f"记录完成  {result}")
                 return result

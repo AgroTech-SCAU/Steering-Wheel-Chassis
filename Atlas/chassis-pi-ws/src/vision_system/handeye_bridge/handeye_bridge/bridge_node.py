@@ -42,11 +42,21 @@ from atlas_competition_config.config import (
 try:
     from .vision_pose_gate import VisionPoseTarget, vision_pose_for_position, vision_pose_for_transform, direction_axis, tcp_is_stable
     from .pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection, tool_axis_angles
-    from .competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets, calibrated_tool_axis
+    from .competition_pose_targets import (
+        calibrated_tool_axis,
+        park_vision_pose_targets,
+        pickup_plane_calibrations,
+        pickup_vision_pose_targets,
+    )
 except ImportError:  # 兼容直接运行源码文件
     from vision_pose_gate import VisionPoseTarget, vision_pose_for_position, vision_pose_for_transform, direction_axis, tcp_is_stable
     from pick_target_config import pick_command_z, resolve_pick_target_parameters, select_pick_detection, tool_axis_angles
-    from competition_pose_targets import pickup_vision_pose_targets, park_vision_pose_targets, calibrated_tool_axis
+    from competition_pose_targets import (
+        calibrated_tool_axis,
+        park_vision_pose_targets,
+        pickup_plane_calibrations,
+        pickup_vision_pose_targets,
+    )
 
 # 延迟导入: mcu_comm_bridge 可能未安装 (仅 handeye_bridge 需要)
 _SetArmPose = None
@@ -182,6 +192,7 @@ class HandEyeBridgeNode(Node):
         self.declare_parameter("pick_approach_timeout_s", 15.0)
         self._sorting_scan_axes = {}
         self._sorting_scan_overrides = self._load_sorting_scan_overrides()
+        self._competition_pickup_planes = {}
         self._competition_pickup_vision_targets = self._load_pickup_vision_targets()
 
         # ── 深度模式 ──
@@ -376,9 +387,27 @@ class HandEyeBridgeNode(Node):
         )
         if competition is None:
             return []
+        self._competition_pickup_planes = pickup_plane_calibrations(
+            competition.arm_motion)
         return (
             pickup_vision_pose_targets(competition.arm_motion, include_axis=True) +
             park_vision_pose_targets(competition.arm_motion, include_axis=True)
+        )
+
+    def _pickup_plane_z(self, layer: int, fallback_z: float) -> tuple[float, float | None]:
+        """Resolve calibrated pickup Z for the active slot; keep layer 3 global."""
+        if layer not in (1, 2):
+            return float(fallback_z), None
+        calibration = self._competition_pickup_planes.get(
+            self._current_vision_pose_name)
+        if calibration is None:
+            if self._current_vision_pose_name.startswith("pickup_observe_"):
+                raise ValueError(
+                    f"{self._current_vision_pose_name} 缺少第一/二层标定高度")
+            return float(fallback_z), None
+        return (
+            float(calibration["layer_z_m"][layer - 1]),
+            float(calibration["camera_to_plane_distance_m"][layer - 1]),
         )
 
     def _scan_value(self, key: str, field: str):
@@ -1032,7 +1061,14 @@ class HandEyeBridgeNode(Node):
                 layer = 1
             self.get_logger().warn(f"无效 layer={msg.layer}, 回退到 layer={layer}")
 
-        default_plane_z = float(self.get_parameter(f"plane{layer}_z_m").value)
+        fallback_plane_z = float(self.get_parameter(f"plane{layer}_z_m").value)
+        default_plane_z, camera_to_plane_m = self._pickup_plane_z(
+            layer, fallback_plane_z)
+        if camera_to_plane_m is not None:
+            self.get_logger().info(
+                f"使用 {self._current_vision_pose_name} 标定层高: "
+                f"layer={layer} plane_z={default_plane_z:.4f}m "
+                f"camera_to_plane={camera_to_plane_m:.4f}m")
         default_pitch, default_yaw = -np.pi / 2, 0.0
         plane_z, target_pitch, target_yaw, explicit_target_z = resolve_pick_target_parameters(
             msg, default_plane_z, default_pitch, default_yaw
@@ -1162,8 +1198,9 @@ class HandEyeBridgeNode(Node):
         # 手动偏置 (补偿系统误差，通常标定后微调用)
         x += float(self.get_parameter("manual_offset_x_m").value)
         y += float(self.get_parameter("manual_offset_y_m").value)
+        manual_z_offset = float(self.get_parameter("manual_offset_z_m").value)
         if not explicit_target_z:
-            z += float(self.get_parameter("manual_offset_z_m").value)
+            z += manual_z_offset
 
         corner_names = {0: "左上", 1: "右上", 2: "右下", 3: "左下"}
         cn = corner_names.get(corner, f"角{corner}")
@@ -1207,13 +1244,42 @@ class HandEyeBridgeNode(Node):
                 self.get_parameter("plane_heights_configured").value):
             self._publish_pick_result(request_id, False, "HEIGHTS_NOT_CONFIGURED")
             return
-        use_approach = bool(getattr(msg, "use_approach", False)) and float(getattr(msg, "approach_m", 0.0)) > 0.0
-        contact_z = z - float(msg.approach_m) if use_approach else z
-        if not z_min <= contact_z <= z_max:
+        explicit_approach = (
+            bool(getattr(msg, "use_approach", False))
+            and float(getattr(msg, "approach_m", 0.0)) > 0.0
+        )
+        if explicit_approach:
+            # 保留 PickTarget 显式 approach 的通用接口语义。
+            approach_z = z
+            contact_z = z - float(msg.approach_m)
+        else:
+            contact_z = z
+            is_competition_pickup = (
+                self._current_vision_pose_name in self._competition_pickup_planes
+            )
+            if is_competition_pickup and layer in (1, 2) and not explicit_target_z:
+                # 货物区先到同一目标 XY 的第三层等待高度，到位后再
+                # 下探到第一/二层。第三层始终复用 vision 全局标定。
+                plane3_z = float(self.get_parameter("plane3_z_m").value)
+                approach_z = plane3_z + z_offset + manual_z_offset
+                if approach_z <= contact_z:
+                    raise ValueError(
+                        "plane3_z_m must be above the calibrated layer 1/2 contact height"
+                    )
+                self.get_logger().info(
+                    f"货物区两段抓取: 先到第三层等待 Z={approach_z:.4f}m，"
+                    f"再下探层{layer} Z={contact_z:.4f}m"
+                )
+            else:
+                approach_z = contact_z
+
+        use_approach = explicit_approach or approach_z != contact_z
+        if not (z_min <= contact_z <= z_max and z_min <= approach_z <= z_max):
             self._publish_pick_result(request_id, False, "WORKSPACE_REJECTED")
             return
         pick = dict(request_id=request_id, x=x, y=y, z=contact_z, pitch=target_pitch,
-                    yaw=target_yaw, speed=speed, approach_z=z, stage="approach" if use_approach else "contact",
+                    yaw=target_yaw, speed=speed, approach_z=approach_z,
+                    stage="approach" if use_approach else "contact",
                     accepted=False, seq=0, deadline_ns=0)
         self._active_pick = pick
         self._send_pick_stage(pick)

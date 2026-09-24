@@ -102,6 +102,20 @@ def test_compute_placement_target_uses_arena_reference_slot_and_layer():
     assert target.z == pytest.approx(0.10)
 
 
+def test_placement_direction_requires_point_calibration():
+    from atlas_competition_manipulation_backend.backend import (
+        calibrated_placement_direction,
+    )
+
+    motion = _arm_motion_config()
+    assert calibrated_placement_direction(motion, "A", "park_1", 0) is None
+    reference = motion["arenas"]["A"]["park_1"]["placement_reference"]
+    reference.update(pitch_rad=-0.25, yaw_rad=0.75)
+    assert calibrated_placement_direction(motion, "A", "park_1", 0) == pytest.approx(
+        (-0.25, 0.75)
+    )
+
+
 def test_four_observations_and_four_placement_points_use_selected_slot():
     from atlas_competition_manipulation_backend.backend import compute_placement_target
 
