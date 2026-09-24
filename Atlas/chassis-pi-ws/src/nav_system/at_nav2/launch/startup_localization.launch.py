@@ -1,4 +1,4 @@
-"""Cartographer-only one-shot localization for Atlas direct odom navigation."""
+"""Cartographer localization for Atlas laser-corrected direct odom navigation."""
 
 import os
 
@@ -36,7 +36,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "pbstream",
             default_value=default_pbstream,
-            description="Cartographer localization state used only for startup field/odom alignment",
+            description="Cartographer state used for startup alignment and continuous correction",
         ),
         cartographer_node,
     ])

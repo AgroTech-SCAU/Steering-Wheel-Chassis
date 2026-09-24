@@ -31,11 +31,11 @@ options = {
 MAP_BUILDER.use_trajectory_builder_2d = true                                                          -- 使用2D轨迹构建器：2D模式建图/定位
 
 TRAJECTORY_BUILDER_2D.min_range = 0.4                                                                 -- 激光最小有效距离(m)：0.4m，过滤近距离噪点
-TRAJECTORY_BUILDER_2D.max_range = 3.5                                                                 -- 激光最大有效距离(m)：3.5m，匹配LSN10P激光雷达量程
+TRAJECTORY_BUILDER_2D.max_range = 8.0                                                                 -- 与建图量程一致，保留远处墙面特征抑制长距离偏移
 TRAJECTORY_BUILDER_2D.missing_data_ray_length = 5.0                                                   -- 缺失数据射线长度(m)：5m，激光无回波时假想的射线长度
 TRAJECTORY_BUILDER_2D.use_imu_data = false                                                            -- 是否使用IMU数据：false，本车不使用IMU
 TRAJECTORY_BUILDER_2D.use_online_correlative_scan_matching = true                                     -- 是否启用在线相关扫描匹配：true，实时CSM提高定位精度
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.1                   -- 实时CSM线性搜索窗口(m)：±0.1m
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.2                   -- 与建图搜索窗一致，允许激光修正较大里程计偏差
 TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.angular_search_window = math.rad(20.)        -- 实时CSM角度搜索窗口(rad)：±20°
 TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.translation_delta_cost_weight = 1e-1         -- 实时CSM平移代价权重：0.1，惩罚偏离初始位姿的平移量
 TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.rotation_delta_cost_weight = 1e-1            -- 实时CSM旋转代价权重：0.1，惩罚偏离初始位姿的旋转量
@@ -45,7 +45,7 @@ TRAJECTORY_BUILDER_2D.motion_filter.max_distance_meters = 0.1                   
 TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(1.)                                  -- 或旋转1度才取一帧
 
 POSE_GRAPH.optimization_problem.huber_scale = 1e2                                                     -- 位姿图优化Huber损失尺度：100，降低外点对优化的影响
-POSE_GRAPH.optimize_every_n_nodes = 1                                                                 -- 纯定位启动阶段尽快执行位姿图优化
+POSE_GRAPH.optimize_every_n_nodes = 5                                                                 -- 兼顾启动收敛与全程定位 CPU 占用
 POSE_GRAPH.constraint_builder.min_score = 0.55                                                        -- 局部约束最低匹配分数
 POSE_GRAPH.constraint_builder.global_localization_min_score = 0.60                                    -- 全局重定位约束必须比普通局部约束更可信
 POSE_GRAPH.constraint_builder.sampling_ratio = 1.0                                                    -- 一次性启动重定位优先保证能尽快建立旧地图约束
