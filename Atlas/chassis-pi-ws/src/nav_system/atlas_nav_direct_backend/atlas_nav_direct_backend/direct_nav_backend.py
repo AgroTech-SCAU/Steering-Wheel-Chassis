@@ -98,17 +98,17 @@ class DirectNavBackend(Node):
             float(self.declare_parameter("startup_localization.post_constraint_settle_s", 0.8).value),
         )
 
-        self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.20).value)
-        self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 1.50).value)
-        self.max_linear_speed = float(self.declare_parameter("control.max_linear_speed_m_s", 0.45).value)
-        self.max_angular_speed = float(self.declare_parameter("control.max_angular_speed_rad_s", 0.60).value)
-        self.max_linear_accel = float(self.declare_parameter("control.max_linear_accel_m_s2", 0.50).value)
-        self.max_angular_accel = float(self.declare_parameter("control.max_angular_accel_rad_s2", 1.00).value)
-        self.slowdown_distance = float(self.declare_parameter("control.slowdown_distance_m", 0.30).value)
+        self.kp_xy = float(self.declare_parameter("control.kp_xy", 1.35).value)
+        self.kp_yaw = float(self.declare_parameter("control.kp_yaw", 1.70).value)
+        self.max_linear_speed = float(self.declare_parameter("control.max_linear_speed_m_s", 0.60).value)
+        self.max_angular_speed = float(self.declare_parameter("control.max_angular_speed_rad_s", 0.80).value)
+        self.max_linear_accel = float(self.declare_parameter("control.max_linear_accel_m_s2", 0.75).value)
+        self.max_angular_accel = float(self.declare_parameter("control.max_angular_accel_rad_s2", 1.40).value)
+        self.slowdown_distance = float(self.declare_parameter("control.slowdown_distance_m", 0.24).value)
         self.position_tolerance = float(self.declare_parameter("control.position_tolerance_m", 0.025).value)
         self.yaw_tolerance = float(self.declare_parameter("control.yaw_tolerance_rad", 0.060).value)
         self.require_yaw_reached = bool(self.declare_parameter("control.require_yaw_reached", True).value)
-        self.brake_hold_s = float(self.declare_parameter("control.brake_hold_s", 0.30).value)
+        self.brake_hold_s = float(self.declare_parameter("control.brake_hold_s", 0.20).value)
 
         if not self.competition_config_path:
             raise RuntimeError("competition_config is required for direct competition navigation")

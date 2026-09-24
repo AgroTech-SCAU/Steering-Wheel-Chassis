@@ -197,6 +197,21 @@ class CompetitionManipulationBackend(Node):
         )
         self.stable_delta_m = float(self.declare_parameter("stable_delta_m", 0.004).value)
         self.stable_samples = int(self.declare_parameter("stable_samples", 5).value)
+        # 竞速模式防卡死：命令已经被 MCU 接受后，如果机械臂连续一段时间没有
+        # 可观测运动，则不再长期等待“完全到位”，而是自动推进到下一步。
+        # 这不是动作总时长上限：只要机械臂仍在运动，等待会继续。
+        self.stall_auto_advance_s = max(0.0, float(
+            self.declare_parameter("stall_auto_advance_s", 0.5).value
+        ))
+        self.stall_joint_motion_rad = max(0.0, float(
+            self.declare_parameter("stall_joint_motion_rad", 0.002).value
+        ))
+        self.stall_position_motion_m = max(0.0, float(
+            self.declare_parameter("stall_position_motion_m", 0.0005).value
+        ))
+        self.stall_axis_motion_rad = math.radians(max(0.0, float(
+            self.declare_parameter("stall_axis_motion_deg", 0.2).value
+        )))
         self.min_pick_target_motion_m = float(
             self.declare_parameter("min_pick_target_motion_m", 0.005).value
         )
@@ -221,7 +236,7 @@ class CompetitionManipulationBackend(Node):
             self.declare_parameter("pick_bridge.timeout_s", 10.0).value
         ))
         self.default_speed_rad_s = float(
-            self.declare_parameter("default_speed_rad_s", 0.8).value
+            self.declare_parameter("default_speed_rad_s", 1.0).value
         )
         self.joint_tolerance_rad = float(
             self.declare_parameter("joint_tolerance_rad", 0.10).value
@@ -656,6 +671,14 @@ class CompetitionManipulationBackend(Node):
         last_position_error = math.inf
         last_axis_error = math.inf
         last_pose = None
+        last_motion_pose = None
+        last_motion_direction = None
+        last_motion_time = since
+        stall_auto_advance_s = max(0.0, float(getattr(self, "stall_auto_advance_s", 0.0)))
+        stall_position_motion_m = max(0.0, float(
+            getattr(self, "stall_position_motion_m", 0.0005)))
+        stall_axis_motion_rad = max(0.0, float(
+            getattr(self, "stall_axis_motion_rad", math.radians(0.2))))
         with self._pose_cv:
             while time.monotonic() < deadline:
                 if self._cancelled():
@@ -670,8 +693,31 @@ class CompetitionManipulationBackend(Node):
                     )
                     if fresh:
                         saw_fresh_feedback = True
+                        now = time.monotonic()
                         last_pose = XYZ(
                             self._latest_pose.x, self._latest_pose.y, self._latest_pose.z)
+                        current_direction = (
+                            None if self._latest_direction is None
+                            else tuple(self._latest_direction)
+                        )
+                        # 只要 TCP 或工具轴还在实际移动，就刷新“未卡住”时间。
+                        if last_motion_pose is None:
+                            last_motion_time = now
+                        else:
+                            moved_position = (
+                                last_pose.distance(last_motion_pose)
+                                >= stall_position_motion_m
+                            )
+                            moved_axis = (
+                                current_direction is not None
+                                and last_motion_direction is not None
+                                and direction_error(current_direction, last_motion_direction)
+                                >= stall_axis_motion_rad
+                            )
+                            if moved_position or moved_axis:
+                                last_motion_time = now
+                        last_motion_pose = XYZ(last_pose.x, last_pose.y, last_pose.z)
+                        last_motion_direction = current_direction
                         last_position_error = last_pose.distance(target)
                         last_axis_error = (
                             0.0 if direction is None else direction_error(
@@ -689,6 +735,14 @@ class CompetitionManipulationBackend(Node):
                     if stable >= max(1, self.stable_samples):
                         return True
                 now = time.monotonic()
+                if (stall_auto_advance_s > 0.0 and
+                        now - last_motion_time >= stall_auto_advance_s):
+                    self._last_failure = ""
+                    self.get_logger().warn(
+                        f"竞速防卡死：机械臂位姿连续 {stall_auto_advance_s:.2f}s "
+                        "无明显运动，自动放行到下一步"
+                    )
+                    return True
                 if now >= next_diagnostic:
                     feedback_age = (
                         f"{now - self._latest_pose_time:.2f}s"
@@ -796,6 +850,11 @@ class CompetitionManipulationBackend(Node):
         last_error = math.inf
         last_errors = None
         last_joints = None
+        last_motion_joints = None
+        last_motion_time = since
+        stall_auto_advance_s = max(0.0, float(getattr(self, "stall_auto_advance_s", 0.0)))
+        stall_joint_motion_rad = max(0.0, float(
+            getattr(self, "stall_joint_motion_rad", 0.002)))
         with self._joint_cv:
             while time.monotonic() < deadline:
                 if self._cancelled():
@@ -813,7 +872,19 @@ class CompetitionManipulationBackend(Node):
                     error = max(errors)
                     last_error = error
                     last_errors = errors
-                    last_joints = list(self._latest_joints)
+                    current_joints = list(self._latest_joints)
+                    now = time.monotonic()
+                    if last_motion_joints is None:
+                        last_motion_time = now
+                    else:
+                        motion = max(
+                            abs((a - b + math.pi) % (2.0 * math.pi) - math.pi)
+                            for a, b in zip(current_joints, last_motion_joints)
+                        )
+                        if motion >= stall_joint_motion_rad:
+                            last_motion_time = now
+                    last_motion_joints = current_joints
+                    last_joints = current_joints
                     if error <= self.joint_tolerance_rad:
                         stable += 1
                         if stable >= max(1, self.stable_samples):
@@ -823,6 +894,14 @@ class CompetitionManipulationBackend(Node):
                 # The mission watchdog can cancel before this wait expires.
                 # Report feedback while waiting so cancellation cannot hide it.
                 now = time.monotonic()
+                if (stall_auto_advance_s > 0.0 and
+                        now - last_motion_time >= stall_auto_advance_s):
+                    self._last_failure = ""
+                    self.get_logger().warn(
+                        f"竞速防卡死：机械臂关节连续 {stall_auto_advance_s:.2f}s "
+                        f"无明显运动，当前最大误差={last_error:.3f}rad，自动放行到下一步"
+                    )
+                    return True
                 if now >= next_diagnostic:
                     feedback_age = (
                         f"{now - self._latest_joint_time:.2f}s"

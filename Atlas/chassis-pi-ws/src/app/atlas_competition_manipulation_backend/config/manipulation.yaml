@@ -27,6 +27,13 @@ atlas_competition_manipulation_backend:
     stable_delta_m: 0.004
     stable_samples: 5
 
+    # 竞速防卡死：动作已下发后，如果连续 0.5 秒检测不到关节/TCP 实际运动，
+    # 将当前到位等待视为完成并自动进入下一步。正常运动中的动作不会被 0.5 秒截断。
+    stall_auto_advance_s: 0.5
+    stall_joint_motion_rad: 0.002
+    stall_position_motion_m: 0.0005
+    stall_axis_motion_deg: 0.2
+
     # 抓取直接复用 handeye_bridge/screw_pick 已实机验证链路。
     # 本节点只发布 corner+layer，不覆盖 bridge 的平面高度、target_z_offset，工具轴由检测帧姿态提取。
     min_pick_target_motion_m: 0.005
@@ -39,14 +46,14 @@ atlas_competition_manipulation_backend:
     pick_suction_hold_s: 1.50
     # 放置释放后的静置时间，和抓取保持时间分开配置
     suction_settle_s: 0.45
-    default_speed_rad_s: 0.8
+    default_speed_rad_s: 1.0
     # 到位判断放宽到与 handeye_bridge 的 5° 轴容差同级(≈5.7°)，
     # 避免舵机回程差/微抖把"已到位"误判成超时。TCP 位置另有 pose_validation 把关。
     joint_tolerance_rad: 0.10
     pose_validation_tolerance_m: 0.08
 
     # 到位后静置时间：机械臂完全静止后再开始视觉检测，避免"还没稳定就开"
-    settle_before_observe_s: 0.5
+    settle_before_observe_s: 0.3
 
     # 视觉恢复的机械臂换视角；识别失败时按 offsets_m 逐次做小范围自检
     # offsets_m 为扁平 (dx,dy,dz) 三元组序列：上 / 右 / 后，逐次尝试
@@ -64,7 +71,7 @@ atlas_competition_manipulation_backend:
       # 每次约 4°，最多约 8°；保持在 handeye_bridge 视觉观察位容差附近
       joint1_step_rad: 0.07
       joint1_max_offset_rad: 0.14
-      joint1_settle_s: 0.35
+      joint1_settle_s: 0.25
       # 实机“向右转”若与 +joint1 相反，只需改为 -1.0，不改代码
       joint1_right_sign: 1.0
 

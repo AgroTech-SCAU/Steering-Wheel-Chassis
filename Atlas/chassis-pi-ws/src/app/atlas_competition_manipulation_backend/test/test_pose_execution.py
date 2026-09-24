@@ -232,3 +232,36 @@ def test_joint_target_real_error_still_times_out():
     since=time.monotonic()-0.01
     assert not n._wait_joint_target(target, 0.05, since)
     assert 'JOINT_ARRIVAL_TIMEOUT' in n._last_failure
+
+
+def test_race_stall_watchdog_auto_advances_pose_without_feedback():
+    n=node()
+    n._pose_cv=threading.Condition()
+    n._latest_pose=None
+    n._latest_direction=None
+    n._latest_pose_time=0.0
+    n.pose_feedback_timeout_s=.5
+    n.position_tolerance_m=.015
+    n.tool_axis_tolerance_rad=math.radians(3)
+    n.stable_samples=2
+    n.stall_auto_advance_s=.02
+    n.stall_position_motion_m=.0005
+    n.stall_axis_motion_rad=math.radians(.2)
+    start=time.monotonic()
+    assert n._wait_pose_target(b.XYZ(.2,.1,.3),.2,direction=None,since=start)
+    assert time.monotonic()-start < .12
+
+
+def test_race_stall_watchdog_auto_advances_joint_without_feedback():
+    n=node()
+    n._joint_cv=threading.Condition()
+    n._latest_joints=None
+    n._latest_joint_time=0.0
+    n.pose_feedback_timeout_s=.5
+    n.joint_tolerance_rad=.1
+    n.stable_samples=2
+    n.stall_auto_advance_s=.02
+    n.stall_joint_motion_rad=.002
+    start=time.monotonic()
+    assert n._wait_joint_target([0.,0.,0.,0.,0.],.2,start)
+    assert time.monotonic()-start < .12
